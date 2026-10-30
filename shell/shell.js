@@ -238,12 +238,18 @@ function visibleItems() {
   return out;
 }
 function validItem(i) {
-  return i && typeof i === "object" && str(i.id) && str(i.title) && GROUPS.some(([g]) => g === i.group) && Array.isArray(i.verbs) && i.link && str(i.link.panel);
+  return i && typeof i === "object" && str(i.id) && str(i.title) && GROUPS.some(([g]) => g === i.group) && Array.isArray(i.verbs) && i.verbs.every((v) => v && typeof v === "object" && str(v.id) && str(v.label)) && i.link && str(i.link.panel);
 }
+let inboxSeq = 0;
+const inboxApplied = new Map();
 async function pollInbox() {
+  const seq = ++inboxSeq;
   const tools = readyTools().filter((t) => t.capabilities?.inbox);
   await Promise.all(tools.map(async (t) => {
     const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox" });
+    // An older response that arrives late never overwrites a newer one.
+    if ((inboxApplied.get(t.tool) ?? 0) > seq) return;
+    inboxApplied.set(t.tool, seq);
     if (r.status === 200 && Array.isArray(r.data.items)) {
       const items = r.data.items.filter(validItem);
       if (items.length !== r.data.items.length) clientError(t.tool, "inbox", new Error(`${r.data.items.length - items.length} malformed inbox items were skipped`));
@@ -346,7 +352,7 @@ async function runVerb(item, verb) {
   const list = sortedItems();
   const i = list.findIndex((x) => x.key === item.key);
   const next = list[i + 1] ?? list[i - 1];
-  const result = await runAction(item.tool, { action: verb.id, id: item.id }, { label: verb.label });
+  const result = await runAction(item.tool, { action: verb.id, id: item.id }, { label: verb.label, inbox: false });
   if (!result?.ok) return;
   await pollInbox();
   // Triage flow: the next item takes the handled one's place, in the list and in the peek.
@@ -496,18 +502,22 @@ async function pollPanel() {
 async function runAction(tool, input, opts) {
   const r = await post(`/p/${tool}/action`, input);
   const d = r.data;
-  if (d?.needsConfirm) return confirmFlow(tool, input, d, opts);
+  if (d?.needsConfirm) {
+    // One confirmation at a time: a second preview never replaces an open one.
+    if (confirmResolve || $("confirm").open) { toast("Finish the open confirmation first.", { tone: "err" }); return { ok: false, busy: true }; }
+    return confirmFlow(tool, input, d, opts);
+  }
   if (d?.ok) {
     toast(str(d.message) || `${opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo" }) } : {});
-    afterAction(tool);
+    afterAction(tool, opts);
   } else if (r.status !== 401) toast(str(d?.error) || "The action failed.", { tone: "err" });
   return d;
 }
-function afterAction(tool) {
+function afterAction(tool, opts = {}) {
   const p = state.panels.get(tool);
   if (p) p.next = 0;
   pollPanel();
-  if (toolById(tool)?.capabilities?.inbox) pollInbox();
+  if (opts.inbox !== false && toolById(tool)?.capabilities?.inbox) pollInbox();
 }
 async function confirmFlow(tool, input, first, opts) {
   let current = first;
@@ -522,7 +532,7 @@ async function confirmFlow(tool, input, first, opts) {
     closeConfirm();
     if (d?.ok) {
       toast(str(d.message) || `${current.verb ?? opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo" }) } : {});
-      afterAction(tool);
+      afterAction(tool, opts);
     } else if (r.status !== 401) toast(str(d?.error) || "The action failed.", { tone: "err" });
     return d;
   }
@@ -797,7 +807,7 @@ function tick() {
   const now = Date.now();
   if (document.visibilityState === "visible") {
     renderLive();
-    if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox(); }
+    if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox().catch((error) => clientError("acon", "inbox", error)); }
     if (now >= state.nextTools) { state.nextTools = now + TOOLS_MS; loadTools(); }
     pollPanel();
   } else if (now - state.lastRequest >= PING_MS) post("/ping");
@@ -815,8 +825,8 @@ async function boot() {
   state.nextTools = Date.now() + TOOLS_MS;
   route();
   state.nextInbox = Date.now() + INBOX_MS;
-  await pollInbox();
-  renderLive();
   setInterval(tick, 1000);
+  try { await pollInbox(); } catch (error) { clientError("acon", "inbox", error); }
+  renderLive();
 }
 boot();

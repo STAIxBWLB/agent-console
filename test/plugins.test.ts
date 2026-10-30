@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { realpathSync } from "node:fs";
 import { loadPlugins, pluginDir, scanPlugins } from "../src/plugins.ts";
 
 const fixture = join(import.meta.dir, "fixtures", "demo-plugin.ts");
@@ -103,4 +104,11 @@ describe("plugin discovery", () => {
     const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
     expect(loaded.map((p) => p.status)).toEqual(["failed", "ready"]);
   }, 10_000);
+
+  test("a symlinked module is hashed and imported by its resolved path", () => {
+    const link = join(mkdtempSync(join(tmpdir(), "acon-link-")), "plugin.ts");
+    symlinkSync(fixture, link);
+    const dir = home({ "demo.json": { api: 1, tool: "demo", module: link, sha256: sha(fixture) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "verified", module: realpathSync(fixture) }));
+  });
 });

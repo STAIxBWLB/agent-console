@@ -85,9 +85,11 @@ function readEntry(file: string): PluginEntry {
   if (!existsSync(module) || !statSync(module).isFile()) return { tool, file, module, status: "stale", reason: `module is missing; re-run \`${tool} setup\`` };
   const unsafe = replaceableBy(module);
   if (unsafe) return { tool, file, module, status: "invalid", reason: unsafe };
-  const actual = createHash("sha256").update(readFileSync(module)).digest("hex");
-  if (actual !== m.sha256) return { tool, file, module, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\`` };
-  return { tool, file, module, status: "verified" };
+  // Hash and import the resolved path that was checked, so a symlink on the way cannot be swapped afterwards.
+  const real = realpathSync(module);
+  const actual = createHash("sha256").update(readFileSync(real)).digest("hex");
+  if (actual !== m.sha256) return { tool, file, module: real, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\`` };
+  return { tool, file, module: real, status: "verified" };
 }
 
 /** Problems with a plugin manifest, empty when valid. Shared with the conformance suite. */
