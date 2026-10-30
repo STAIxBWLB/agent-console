@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { CONSOLE_API, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
@@ -9,6 +9,7 @@ export const pluginDir = (home: string): string => join(home, "console", "plugin
 
 const MANIFEST_MAX = 64 * 1024;
 const OPEN_MS = 5_000;
+const IMPORT_MS = 5_000;
 
 export type PluginStatus = "verified" | "ready" | "stale" | "invalid" | "failed";
 export interface PluginEntry {
@@ -25,6 +26,25 @@ export interface Scan { dir: string; entries: PluginEntry[]; error?: string }
 const writableByOthers = (mode: number) => (mode & 0o022) !== 0;
 const foreignOwner = (uid: number) => typeof process.getuid === "function" && uid !== process.getuid();
 
+/**
+ * Nobody but you (or root) can replace the module: the file and every directory above it are owned by you or root,
+ * and none is group- or world-writable unless it is a sticky directory (like /tmp) holding a file you own.
+ */
+export function replaceableBy(path: string): string | undefined {
+  if (typeof process.getuid !== "function") return undefined;
+  const me = process.getuid();
+  const real = realpathSync(path);
+  const file = statSync(real);
+  if (file.uid !== me && file.uid !== 0) return "module is owned by another user";
+  if (writableByOthers(file.mode)) return "module is writable by others";
+  for (let dir = dirname(real), prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
+    const info = statSync(dir);
+    if (info.uid !== me && info.uid !== 0) return `${dir} is owned by another user`;
+    if (writableByOthers(info.mode) && !(info.mode & 0o1000)) return `${dir} is writable by others`;
+  }
+  return undefined;
+}
+
 /** Reads every manifest and verifies the module hash. Nothing is imported here. */
 export function scanPlugins(home: string): Scan {
   const dir = pluginDir(home);
@@ -33,7 +53,13 @@ export function scanPlugins(home: string): Scan {
   if (!info.isDirectory()) return { dir, entries: [], error: "plugin path is not a directory" };
   // Manifests choose code that runs in this process, so only the owner may write them.
   if (writableByOthers(info.mode) || foreignOwner(info.uid)) return { dir, entries: [], error: `plugin directory must be owned by you and not group- or world-writable; run chmod 700 ${dir}` };
-  const entries = readdirSync(dir).filter((name) => name.endsWith(".json")).sort().map((name) => readEntry(join(dir, name)));
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return { dir, entries: [], error: "plugin directory cannot be read" }; }
+  const entries = names.filter((name) => name.endsWith(".json")).sort().map((name) => {
+    const file = join(dir, name);
+    // One unreadable manifest or module marks that plugin invalid; the others still load.
+    try { return readEntry(file); } catch { return { tool: basename(name, ".json"), file, status: "invalid" as const, reason: "manifest or module cannot be read" }; }
+  });
   return { dir, entries };
 }
 
@@ -57,6 +83,8 @@ function readEntry(file: string): PluginEntry {
   if (typeof m.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(m.sha256)) return bad("sha256 must be 64 lowercase hex characters");
   const module = m.module;
   if (!existsSync(module) || !statSync(module).isFile()) return { tool, file, module, status: "stale", reason: `module is missing; re-run \`${tool} setup\`` };
+  const unsafe = replaceableBy(module);
+  if (unsafe) return { tool, file, module, status: "invalid", reason: unsafe };
   const actual = createHash("sha256").update(readFileSync(module)).digest("hex");
   if (actual !== m.sha256) return { tool, file, module, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\`` };
   return { tool, file, module, status: "verified" };
@@ -110,8 +138,8 @@ export async function loadPlugins(scan: Scan, ctx: ConsoleContext): Promise<Plug
   for (const entry of scan.entries) {
     if (entry.status !== "verified" || !entry.module) { out.push(entry); continue; }
     try {
-      // ponytail: hash-then-import leaves a race against the owner rewriting the file; the owner-only directory bounds it.
-      const mod = await import(entry.module) as { default?: ConsolePlugin; plugin?: ConsolePlugin };
+      // ponytail: the verified bytes are re-read by import(); only you or root can swap them (replaceableBy), and the module's own imports are not hashed.
+      const mod = await withTimeout(import(entry.module), IMPORT_MS, "import") as { default?: ConsolePlugin; plugin?: ConsolePlugin };
       const plugin = mod.default ?? mod.plugin;
       if (!plugin || typeof plugin.open !== "function") { out.push({ ...entry, status: "failed", reason: "module exports no console plugin" }); continue; }
       const problems = manifestProblems(plugin.manifest, entry.tool);

@@ -36,7 +36,8 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
     { id: "n3", title: "Lint is stale for 9 days", status: "open" },
   ];
   const fp = (id: string) => createHash("sha256").update(JSON.stringify(notes.find((n) => n.id === id) ?? null)).digest("hex");
-  const at = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const opened = Date.now();
+  const at = (minutes: number) => new Date(opened - minutes * 60_000).toISOString();
   const groups: Record<string, InboxItem["group"]> = { n1: "decision", n2: "candidate", n3: "alert" };
   const item = (n: Note, i: number): InboxItem => ({
     id: n.id,

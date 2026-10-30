@@ -77,4 +77,30 @@ describe("plugin discovery", () => {
     const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
     expect(loaded.map((p) => p.status)).toEqual(["failed", "ready"]);
   });
+
+  test("an unreadable module marks only its plugin invalid", () => {
+    const mod = join(mkdtempSync(join(tmpdir(), "acon-mod-")), "locked.ts");
+    writeFileSync(mod, "export default {};\n");
+    const hash = sha(mod);
+    chmodSync(mod, 0o000);
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: hash }, "demo.json": { api: 1, tool: "demo", module: fixture, sha256: sha(fixture) } });
+    expect(scanPlugins(dir).entries.map((e) => e.status)).toEqual(["invalid", "verified"]);
+  });
+
+  test("a module others can replace is refused before import", () => {
+    const folder = mkdtempSync(join(tmpdir(), "acon-mod-"));
+    const mod = join(folder, "open.ts");
+    writeFileSync(mod, "export default {};\n");
+    chmodSync(folder, 0o777);
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("writable by others") }));
+  });
+
+  test("a module that never finishes loading times out without blocking the others", async () => {
+    const mod = join(mkdtempSync(join(tmpdir(), "acon-mod-")), "hang.ts");
+    writeFileSync(mod, "await new Promise(() => {});\nexport default {};\n");
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) }, "demo.json": { api: 1, tool: "demo", module: fixture, sha256: sha(fixture) } });
+    const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(loaded.map((p) => p.status)).toEqual(["failed", "ready"]);
+  }, 10_000);
 });

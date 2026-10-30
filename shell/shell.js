@@ -195,10 +195,12 @@ function renderTabs() {
   const tool = toolById(r.tool);
   tabs.hidden = false;
   tabs.setAttribute("aria-label", `${tool.title} views`);
+  const hadFocus = tabs.contains(document.activeElement);
   tabs.replaceChildren(...panelsOf(tool).map((p) => h("button", {
     type: "button", role: "tab", class: "tab", "aria-selected": String(p.id === r.panel), tabindex: p.id === r.panel ? "0" : "-1",
     onclick: () => navigate(tool.tool, p.id), text: p.title,
   })));
+  if (hadFocus) tabs.querySelector('[aria-selected="true"]')?.focus();
 }
 tabsKeys();
 function tabsKeys() {
@@ -316,6 +318,8 @@ function rowFor(item) {
     h("button", {
       type: "button", class: "row-main", "aria-current": selected ? "true" : undefined,
       "aria-keyshortcuts": "Space Enter 1 2 H", onclick: () => { selectKey(item.key); openPeek(item.key); },
+      // Keys act on the focused row, so focus and selection never disagree.
+      onfocus: () => { if (state.selectedKey !== item.key) selectKey(item.key, false); },
     }, whose(item), h("span", { class: "row-text" }, h("span", { class: "row-title", text: item.title }), h("span", { class: "row-sub", text: subline(item) })), item.chip ? h("span", { class: `chip ${toneClass(item.chip.tone)}`, text: str(item.chip.text) }) : null),
     h("div", { class: "row-verbs" }, verbButtons(item, 2)));
 }
@@ -378,6 +382,7 @@ function showSheet(title, key, moveFocus) {
   return $("sheet-body");
 }
 function closeSheet() {
+  peekSig = "";
   if ($("sheet").hidden) return;
   $("sheet").hidden = true;
   $("app").classList.remove("peeking");
@@ -390,9 +395,16 @@ function openPeek(key) {
   state.peekKey = `item:${key}`;
   renderPeek();
 }
+let peekSig = "";
 function renderPeek() {
   const key = state.peekKey?.slice(5);
   const item = sortedItems().find((i) => i.key === key);
+  const sig = JSON.stringify([key, item ?? null]);
+  if (sig === peekSig && !$("sheet").hidden) return;
+  peekSig = sig;
+  // Keep keyboard focus on the same control when the data changes under it.
+  const old = [...$("sheet-body").querySelectorAll("button")];
+  const focusAt = old.indexOf(document.activeElement);
   const body = showSheet(item ? item.title : "No longer waiting", state.peekKey, false);
   if (!item) { body.replaceChildren(h("p", { class: "sub", text: "This item was handled or withdrawn." })); return; }
   const dl = h("dl", { class: "kv" });
@@ -406,6 +418,7 @@ function renderPeek() {
     h("div", { class: "sheet-verbs" }, verbButtons(item, 8)),
     h("div", { class: "sheet-verbs" }, h("button", { type: "button", class: "btn", onclick: () => openItem(item) }, h("span", { text: `Open in ${toolById(item.tool)?.title ?? item.tool}` }), icon("go"))),
   );
+  if (focusAt >= 0) (body.querySelectorAll("button")[focusAt] ?? $("sheet-close")).focus({ preventScroll: true });
 }
 
 // ---------- tool panels ----------
@@ -424,7 +437,7 @@ function hostFor(tool, p) {
     onSnapshot: (cb) => { p.snapListeners.push(cb); },
     onTheme: (cb) => { p.themeListeners.push(cb); },
     toast: (text, options = {}) => toast(String(text), options),
-    sheet: { open: (title) => { const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, close: closeSheet },
+    sheet: { open: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, close: closeSheet },
   };
 }
 async function showTool(r) {
@@ -433,7 +446,7 @@ async function showTool(r) {
   if (!p) {
     const banner = h("p", { class: "notice", role: "status", hidden: true });
     const body = h("div", { class: "panel-body" });
-    p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null };
+    p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0 };
     state.panels.set(tool.tool, p);
     $("main").append(p.mount);
     document.head.append(h("link", { rel: "stylesheet", href: `/p/${tool.tool}/panel.css` }));
@@ -448,7 +461,8 @@ async function showTool(r) {
   p.mount.hidden = false;
   await p.loading;
   if (state.route.area !== "tool" || state.route.tool !== tool.tool || !p.instance) return;
-  if (p.panel !== r.panel) { p.cursor = 0; }
+  const view = JSON.stringify([r.panel, r.params]);
+  if (p.view !== view) { p.cursor = 0; p.view = view; p.gen += 1; }
   p.panel = r.panel;
   safe(tool.tool, "show", () => p.instance.show?.(r.panel, r.params));
   p.next = 0;
@@ -461,10 +475,13 @@ async function pollPanel() {
   if (!p?.instance || p.busy || Date.now() < p.next) return;
   const tool = toolById(r.tool);
   p.busy = true;
+  const gen = p.gen;
   const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after: p.cursor, panel: r.panel });
   p.busy = false;
   p.next = Date.now() + Math.min(60000, Math.max(2000, tool?.pollMs ?? 5000));
-  if (state.route.tool !== r.tool || state.route.panel !== r.panel) return;
+  // A response for an earlier panel or item never reaches the view now shown.
+  if (state.route.tool !== r.tool) return;
+  if (gen !== p.gen) { p.next = 0; pollPanel(); return; }
   if (res.status === 200) {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
