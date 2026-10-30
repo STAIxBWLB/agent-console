@@ -26,21 +26,44 @@ export interface Scan { dir: string; entries: PluginEntry[]; error?: string }
 const writableByOthers = (mode: number) => (mode & 0o022) !== 0;
 const foreignOwner = (uid: number) => typeof process.getuid === "function" && uid !== process.getuid();
 
+const TREE_MAX = 50_000;
+
 /**
- * Nobody but you (or root) can replace the module: the file and every directory above it are owned by you or root,
- * and none is group- or world-writable unless it is a sticky directory (like /tmp) holding a file you own.
+ * Why another user could change the code a plugin runs, or undefined when nobody but you or root can.
+ * The boundary is the plugin's package root: the nearest directory above the resolved entry that holds a package.json.
+ * Every file, directory and symlink target in that tree and every ancestor of the root must be owned by you or root and
+ * not group- or world-writable; a world-writable directory passes only when it is sticky (like /tmp).
+ * node_modules and .git are skipped: installed dependencies are the installer's responsibility.
  */
 export function replaceableBy(path: string): string | undefined {
   if (typeof process.getuid !== "function") return undefined;
   const me = process.getuid();
-  const real = realpathSync(path);
-  const file = statSync(real);
-  if (file.uid !== me && file.uid !== 0) return "module is owned by another user";
-  if (writableByOthers(file.mode)) return "module is writable by others";
-  for (let dir = dirname(real), prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
-    const info = statSync(dir);
-    if (info.uid !== me && info.uid !== 0) return `${dir} is owned by another user`;
-    if (writableByOthers(info.mode) && !(info.mode & 0o1000)) return `${dir} is writable by others`;
+  const entry = realpathSync(path);
+  const problem = (where: string, info: { uid: number; mode: number }, dir: boolean) =>
+    info.uid !== me && info.uid !== 0 ? `${where} is owned by another user`
+      : writableByOthers(info.mode) && !(dir && info.mode & 0o1000) ? `${where} is writable by others` : undefined;
+  let root = dirname(entry);
+  while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
+  if (!existsSync(join(root, "package.json"))) root = dirname(entry);
+  for (let dir = dirname(root), prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
+    const bad = problem(dir, statSync(dir), true);
+    if (bad) return bad;
+  }
+  // ponytail: a full walk on every start; fine for a package of a few thousand files, cache by mtime if it grows.
+  const stack = [root];
+  let seen = 0;
+  while (stack.length) {
+    const current = stack.pop()!;
+    if (++seen > TREE_MAX) return `${root} has more than ${TREE_MAX} entries to verify`;
+    const info = lstatSync(current);
+    if (info.isSymbolicLink()) {
+      const target = realpathSync(current);
+      if (target !== root && !target.startsWith(`${root}/`)) return `${current} links outside the plugin package`;
+      continue;
+    }
+    const bad = problem(current, info, info.isDirectory());
+    if (bad) return bad;
+    if (info.isDirectory()) for (const name of readdirSync(current)) if (name !== ".git" && name !== "node_modules") stack.push(join(current, name));
   }
   return undefined;
 }

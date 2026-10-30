@@ -211,9 +211,9 @@ export function startServer(options: ServerOptions) {
     sessions.clear();
     confirms.clear();
     server.stop(true);
-    for (const entry of tools.values()) {
-      try { await entry.provider!.close?.(); } catch (error) { log(`${entry.tool} close failed: ${error instanceof Error ? error.message : String(error)}`); }
-    }
+    // Each provider gets 5 s to close; a hanging one never keeps the process alive.
+    await Promise.all([...tools.values()].map((entry) => withTimeout(Promise.resolve(entry.provider!.close?.()), 5_000, `${entry.tool} close`)
+      .catch((error) => log(`${entry.tool} close failed: ${error instanceof Error ? error.message : String(error)}`))));
   };
   /** True when no request arrived for idleMs; then the server stops and onIdle runs. */
   const checkIdle = () => {

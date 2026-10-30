@@ -111,4 +111,16 @@ describe("plugin discovery", () => {
     const dir = home({ "demo.json": { api: 1, tool: "demo", module: link, sha256: sha(fixture) } });
     expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "verified", module: realpathSync(fixture) }));
   });
+
+  test("a file others can write anywhere in the plugin package is refused", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    mkdirSync(join(pkg, "src"));
+    writeFileSync(join(pkg, "src", "plugin.ts"), 'import "./helper.ts";\nexport default {};\n');
+    writeFileSync(join(pkg, "src", "helper.ts"), "export {};\n");
+    chmodSync(join(pkg, "src", "helper.ts"), 0o666);
+    const mod = join(pkg, "src", "plugin.ts");
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("helper.ts is writable by others") }));
+  });
 });

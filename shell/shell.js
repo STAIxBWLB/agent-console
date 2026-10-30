@@ -171,17 +171,23 @@ function route() {
 
 // ---------- rail, crumbs, tabs, liveness ----------
 function needsMeCount() { return visibleItems().filter((i) => NEEDS_ME.has(i.group)).length; }
+let railSig = "";
 function renderRail() {
   const r = state.route;
   const count = needsMeCount();
   document.title = count ? `acon (${count})` : "acon";
   const issues = state.serverErrors.length + state.clientErrors.length + state.tools.filter((t) => t.status !== "ready").length + (state.node?.pluginsError ? 1 : 0);
+  const sig = JSON.stringify([r.area, r.tool, count, issues, readyTools().map((t) => [t.tool, t.title, t.icon])]);
+  if (sig === railSig) return;
+  railSig = sig;
+  const focused = $("areas").contains(document.activeElement) ? document.activeElement.getAttribute("href") : null;
   const item = (href, iconName, label, current, badge) => h("li", {}, h("a", { href, "aria-current": current ? "page" : undefined }, icon(iconName), h("span", { class: "label", text: label }), badge));
   $("areas").replaceChildren(
     item(hashFor("inbox"), "inbox", "Inbox", r.area === "inbox", count ? h("span", { class: "badge", "aria-label": `${count} waiting`, text: String(count) }) : null),
     ...readyTools().map((t) => item(hashFor(t.tool), toolIcon(t), t.title, r.area === "tool" && r.tool === t.tool)),
     item(hashFor("system"), "system", "System", r.area === "system", issues ? h("span", { class: "badge warn", "aria-label": `${issues} issues`, text: "!" }) : null),
   );
+  if (focused) $("areas").querySelector(`a[href="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
 }
 function renderCrumbs() {
   const r = state.route;
@@ -699,7 +705,7 @@ async function searchPalette() {
   }));
   if (seq === palSeq && $("palette").open) renderPalette(groups);
 }
-$("palette-input").addEventListener("input", () => { palActive = 0; renderPalette([]); clearTimeout(palTimer); palTimer = setTimeout(searchPalette, 150); });
+$("palette-input").addEventListener("input", () => { palSeq += 1; palActive = 0; renderPalette([]); clearTimeout(palTimer); palTimer = setTimeout(searchPalette, 150); });
 $("palette-input").addEventListener("keydown", (e) => {
   if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); if (palOptions.length) setActive((palActive + (e.key === "ArrowDown" ? 1 : palOptions.length - 1)) % palOptions.length); }
   else if (e.key === "Enter") { e.preventDefault(); runOption(palActive, e.metaKey || e.ctrlKey); }
