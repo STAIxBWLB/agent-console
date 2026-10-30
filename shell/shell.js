@@ -286,7 +286,7 @@ function renderInbox(force = false) {
   const view = $("view-inbox");
   const items = sortedItems();
   const failed = [...state.inbox].filter(([, e]) => e.failed).map(([t]) => toolById(t)?.title ?? t);
-  const sig = JSON.stringify([items.map((i) => [i.key, i.at, i.title, i.chip, i.verbs]), failed, state.selectedKey, readyTools().length]);
+  const sig = JSON.stringify([items, failed, state.selectedKey, readyTools().length]);
   if (!force && sig === state.inboxSig) return;
   state.inboxSig = sig;
   const focusKey = document.activeElement?.closest?.(".row")?.dataset.key;
@@ -628,6 +628,7 @@ let palActive = 0;
 function openPalette() {
   const dlg = $("palette");
   if (dlg.open) return;
+  palSeq += 1; // a search from an earlier opening never fills this one
   $("palette-input").value = "";
   dlg.showModal();
   renderPalette([]);
@@ -811,6 +812,8 @@ $("sheet-close").append(icon("close"));
 $("brand-icon").replaceWith(icon("brand"));
 $("sheet-close").addEventListener("click", closeSheet);
 $("palette-open").addEventListener("click", openPalette);
+// The skip link moves focus only; "#main" must not reach the router.
+document.querySelector(".skip").addEventListener("click", (e) => { e.preventDefault(); $("main").focus(); });
 $("palette-open").prepend(icon("search"));
 $("palette-key").textContent = isMac ? "⌘K" : "Ctrl K";
 window.addEventListener("hashchange", route);

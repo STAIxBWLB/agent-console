@@ -134,4 +134,29 @@ describe("plugin discovery", () => {
     const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
     expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("shared is writable by others") }));
   });
+
+  test("an import that leaves the plugin package is refused", () => {
+    const base = mkdtempSync(join(tmpdir(), "acon-esc-"));
+    const pkg = join(base, "pkg");
+    mkdirSync(pkg);
+    writeFileSync(join(pkg, "package.json"), "{}");
+    writeFileSync(join(base, "helper.ts"), "export const x = 1;\n");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'import { x } from "../helper.ts";\nexport default { x };\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("outside the plugin package") }));
+  });
+
+  test("imports inside the package and of installed dependencies pass", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-ok-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    mkdirSync(join(pkg, "node_modules", "dep"), { recursive: true });
+    writeFileSync(join(pkg, "node_modules", "dep", "package.json"), '{"name":"dep","main":"index.js"}');
+    writeFileSync(join(pkg, "node_modules", "dep", "index.js"), "export const y = 2;\n");
+    writeFileSync(join(pkg, "helper.ts"), "export const x = 1;\n");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'import { x } from "./helper.ts";\nimport { y } from "dep";\nimport "node:fs";\nexport default { x, y };\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]?.status).toBe("verified");
+  });
 });

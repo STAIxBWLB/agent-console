@@ -34,7 +34,8 @@ const TREE_MAX = 50_000;
  * Every file, directory and symlink in that tree must be owned by you or root and not group- or world-writable, and
  * every symlink must point inside the tree. Ancestors of the root follow the same rule, except that a sticky
  * world-writable ancestor (like /tmp) passes: inside the package no other user may create or replace anything.
- * node_modules and .git are skipped: installed dependencies are the installer's responsibility.
+ * node_modules and .git are skipped: installed dependencies are the installer's responsibility. Imports must stay inside
+ * the tree or reach node_modules (importEscapes).
  */
 export function replaceableBy(path: string): string | undefined {
   if (typeof process.getuid !== "function") return undefined;
@@ -67,6 +68,43 @@ export function replaceableBy(path: string): string | undefined {
     const bad = problem(current, info, false);
     if (bad) return bad;
     if (info.isDirectory()) for (const name of readdirSync(current)) if (name !== ".git" && name !== "node_modules") stack.push(join(current, name));
+  }
+  return importEscapes(entry, root);
+}
+
+const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+const LOADER = (file: string) => (/\.(ts|mts|cts)$/.test(file) ? "ts" : /\.tsx$/.test(file) ? "tsx" : /\.jsx$/.test(file) ? "jsx" : "js");
+
+/**
+ * Follows the static import graph from the entry: every file it reaches must be inside the verified package tree or in
+ * a node_modules directory of the root or one of its ancestors, or Bun's install cache (installed dependencies, the
+ * installer's responsibility).
+ * ponytail: dynamic import() with a computed specifier cannot be followed; literal ones are.
+ */
+function importEscapes(entry: string, root: string): string | undefined {
+  const dependencyDirs: string[] = [];
+  for (let dir = root, prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) dependencyDirs.push(`${join(dir, "node_modules")}/`);
+  // Bun's install cache serves dependencies when a package has no node_modules (auto-install).
+  dependencyDirs.push(`${process.env.BUN_INSTALL_CACHE_DIR || join(process.env.BUN_INSTALL || join(homedir(), ".bun"), "install", "cache")}/`);
+  const inside = (file: string) => file.startsWith(`${root}/`) && !file.slice(root.length).includes("/node_modules/");
+  const seen = new Set<string>();
+  const queue = [entry];
+  while (queue.length) {
+    const file = queue.pop()!;
+    if (seen.has(file)) continue;
+    seen.add(file);
+    if (seen.size > TREE_MAX) return `${root} imports more than ${TREE_MAX} files`;
+    if (!CODE.test(file)) continue;
+    for (const { path } of new Bun.Transpiler({ loader: LOADER(file) }).scanImports(readFileSync(file, "utf8"))) {
+      if (/^(node|bun):/.test(path) || path === "bun") continue;
+      let resolved: string;
+      try { resolved = Bun.resolveSync(path, dirname(file)); } catch { continue; } // import() itself will fail and the plugin is marked failed
+      if (!isAbsolute(resolved)) continue; // builtin module
+      if (dependencyDirs.some((d) => resolved.startsWith(d))) continue;
+      const real = realpathSync(resolved);
+      if (!inside(real)) return `${file} imports ${path}, which is outside the plugin package`;
+      queue.push(real);
+    }
   }
   return undefined;
 }
