@@ -7,11 +7,12 @@ type Server = ReturnType<typeof startServer>;
 const running: Server[] = [];
 afterEach(async () => { while (running.length) await running.pop()!.stop(); });
 
-async function boot(opts: { now?: () => number; idleMs?: number; onIdle?: () => void; throwOn?: string; hangClose?: boolean } = {}) {
+async function boot(opts: { now?: () => number; idleMs?: number; onIdle?: () => void; throwOn?: string; hangClose?: boolean; throwClose?: boolean } = {}) {
   const plugin = createDemoPlugin();
   const provider = await plugin.open({ home: "/tmp", log: () => {} });
   if (opts.throwOn) provider.snapshot = async () => { throw new Error(opts.throwOn); };
   if (opts.hangClose) provider.close = () => new Promise<void>(() => {});
+  if (opts.throwClose) provider.close = () => { throw new Error("close exploded"); };
   const entry: PluginEntry = { tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider };
   const server = startServer({ plugins: [entry], version: "0.0.0-test", pluginsDir: "/tmp/plugins", log: () => {}, ...opts });
   running.push(server);
@@ -165,6 +166,16 @@ describe("actions and confirm tokens", () => {
 });
 
 describe("idle exit", () => {
+  test("a close() that throws at once still stops and runs onIdle", async () => {
+    let t = Date.now();
+    let idled = false;
+    const { server } = await boot({ now: () => t, throwClose: true, onIdle: () => { idled = true; } });
+    t += 6 * 60_000;
+    expect(server.checkIdle()).toBe(true);
+    await Bun.sleep(20);
+    expect(idled).toBe(true);
+  });
+
   test("a provider that never closes does not keep the server from stopping", async () => {
     const { server } = await boot({ hangClose: true });
     const started = performance.now();

@@ -212,13 +212,13 @@ export function startServer(options: ServerOptions) {
     confirms.clear();
     server.stop(true);
     // Each provider gets 5 s to close; a hanging one never keeps the process alive.
-    await Promise.all([...tools.values()].map((entry) => withTimeout(Promise.resolve(entry.provider!.close?.()), 5_000, `${entry.tool} close`)
+    await Promise.all([...tools.values()].map((entry) => withTimeout(Promise.resolve().then(() => entry.provider!.close?.()), 5_000, `${entry.tool} close`)
       .catch((error) => log(`${entry.tool} close failed: ${error instanceof Error ? error.message : String(error)}`))));
   };
   /** True when no request arrived for idleMs; then the server stops and onIdle runs. */
   const checkIdle = () => {
     if (stopped || now() - lastSeen < idleMs) return false;
-    void stop().then(() => options.onIdle?.());
+    void stop().finally(() => options.onIdle?.());
     return true;
   };
   const timer = setInterval(checkIdle, Math.min(30_000, Math.max(1_000, idleMs / 4)));

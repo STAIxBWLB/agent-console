@@ -67,7 +67,7 @@ export async function main(argv: string[]): Promise<number> {
     for (const p of plugins) if (p.status !== "ready") log(`${p.tool} not loaded (${p.status}): ${p.reason}`);
   }
   if (!flags.has("--no-open")) openBrowser(url);
-  const shutdown = () => { void server.stop().then(() => process.exit(0)); };
+  const shutdown = () => { void server.stop().finally(() => process.exit(0)); };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   return await new Promise<number>(() => {});

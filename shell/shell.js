@@ -545,13 +545,16 @@ async function confirmFlow(tool, input, first, opts) {
 }
 let confirmResolve = null;
 let confirmTimer = null;
+let confirmBusy = false;
 function closeConfirm() {
+  confirmBusy = false;
   clearInterval(confirmTimer);
   state.confirmOpen = false;
   const dlg = $("confirm");
   if (dlg.open) dlg.close();
 }
 function showConfirm(tool, d, note, opts) {
+  confirmBusy = false;
   return new Promise((resolve) => {
     confirmResolve = resolve;
     const dlg = $("confirm");
@@ -577,7 +580,12 @@ function showConfirm(tool, d, note, opts) {
     function finish(choice) {
       clearInterval(confirmTimer);
       if (choice === "cancel") closeConfirm();
-      else { ok.disabled = true; refresh.disabled = true; }
+      else {
+        // The request is on its way and cannot be taken back: no Cancel, no Esc until it answers.
+        ok.disabled = true; refresh.disabled = true; cancel.disabled = true; confirmBusy = true;
+        validity.className = "validity";
+        validity.textContent = choice === "confirm" ? "Working... this cannot be cancelled now." : "Refreshing the preview...";
+      }
       confirmResolve = null;
       resolve(choice);
     }
@@ -601,7 +609,7 @@ function showConfirm(tool, d, note, opts) {
     (expired() ? refresh : cancel).focus();
   });
 }
-$("confirm").addEventListener("cancel", (e) => { e.preventDefault(); if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
+$("confirm").addEventListener("cancel", (e) => { e.preventDefault(); if (confirmBusy) return; if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
 
 // ---------- toast ----------
 function toast(text, { undo, tone } = {}) {

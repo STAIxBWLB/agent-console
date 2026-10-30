@@ -31,17 +31,18 @@ const TREE_MAX = 50_000;
 /**
  * Why another user could change the code a plugin runs, or undefined when nobody but you or root can.
  * The boundary is the plugin's package root: the nearest directory above the resolved entry that holds a package.json.
- * Every file, directory and symlink target in that tree and every ancestor of the root must be owned by you or root and
- * not group- or world-writable; a world-writable directory passes only when it is sticky (like /tmp).
+ * Every file, directory and symlink in that tree must be owned by you or root and not group- or world-writable, and
+ * every symlink must point inside the tree. Ancestors of the root follow the same rule, except that a sticky
+ * world-writable ancestor (like /tmp) passes: inside the package no other user may create or replace anything.
  * node_modules and .git are skipped: installed dependencies are the installer's responsibility.
  */
 export function replaceableBy(path: string): string | undefined {
   if (typeof process.getuid !== "function") return undefined;
   const me = process.getuid();
   const entry = realpathSync(path);
-  const problem = (where: string, info: { uid: number; mode: number }, dir: boolean) =>
+  const problem = (where: string, info: { uid: number; mode: number }, stickyOk: boolean) =>
     info.uid !== me && info.uid !== 0 ? `${where} is owned by another user`
-      : writableByOthers(info.mode) && !(dir && info.mode & 0o1000) ? `${where} is writable by others` : undefined;
+      : writableByOthers(info.mode) && !(stickyOk && info.mode & 0o1000) ? `${where} is writable by others` : undefined;
   let root = dirname(entry);
   while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
   if (!existsSync(join(root, "package.json"))) root = dirname(entry);
@@ -57,11 +58,13 @@ export function replaceableBy(path: string): string | undefined {
     if (++seen > TREE_MAX) return `${root} has more than ${TREE_MAX} entries to verify`;
     const info = lstatSync(current);
     if (info.isSymbolicLink()) {
+      // Link modes are meaningless; only the owner can retarget a link inside a directory others cannot write.
+      if (info.uid !== me && info.uid !== 0) return `${current} is owned by another user`;
       const target = realpathSync(current);
       if (target !== root && !target.startsWith(`${root}/`)) return `${current} links outside the plugin package`;
       continue;
     }
-    const bad = problem(current, info, info.isDirectory());
+    const bad = problem(current, info, false);
     if (bad) return bad;
     if (info.isDirectory()) for (const name of readdirSync(current)) if (name !== ".git" && name !== "node_modules") stack.push(join(current, name));
   }

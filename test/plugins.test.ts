@@ -123,4 +123,15 @@ describe("plugin discovery", () => {
     const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
     expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("helper.ts is writable by others") }));
   });
+
+  test("a sticky world-writable directory inside the package is refused", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, "export default {};\n");
+    mkdirSync(join(pkg, "shared"));
+    chmodSync(join(pkg, "shared"), 0o1777);
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("shared is writable by others") }));
+  });
 });
