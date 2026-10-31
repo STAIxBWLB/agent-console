@@ -134,8 +134,8 @@ export interface ServeArgs { host?: string; port?: string; origins: string[] }
 export function serveConfig(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | string {
   const hostname = args.host ?? "127.0.0.1";
   if (!/^[A-Za-z0-9.:[\]-]+$/.test(hostname)) return `--host ${hostname} is not a host name or address`;
-  const port = Number(args.port ?? "8787");
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) return "--port must be 1-65535";
+  const port = Number(args.port ?? (env.ACON_PORT || "8787"));
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) return "--port (or ACON_PORT) must be 1-65535";
   const origins: string[] = [];
   for (const raw of [...args.origins, ...(env.ACON_ORIGINS ?? "").split(",").map((v) => v.trim()).filter(Boolean)]) {
     let url: URL;

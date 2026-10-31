@@ -176,6 +176,9 @@ describe("start-up refusals (AC3)", () => {
     expect(serveConfig({ origins: ["http://console.example.com"] }, {})).toContain("exact https origin");
     expect(serveConfig({ origins: [`${ORIGIN}/path`] }, {})).toContain("without a path");
     expect(typeof serveConfig({ origins: [] }, {})).toBe("object"); // loopback without auth is allowed
+    expect((serveConfig({ origins: [] }, { ACON_PORT: "9100" }) as ServeOptions).port).toBe(9100);
+    expect((serveConfig({ port: "9200", origins: [] }, { ACON_PORT: "9100" }) as ServeOptions).port).toBe(9200);
+    expect(serveConfig({ origins: [] }, { ACON_PORT: "0" })).toContain("ACON_PORT");
   });
 
   test("the CLI exits 2 with the message", async () => {

@@ -112,7 +112,7 @@ Rules:
 acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.com]... [--json]
 ```
 
-- No ticket link, no idle exit and no browser opening. The process stays up until it is stopped.
+- No ticket link, no idle exit and no browser opening. The process stays up until it is stopped. `--port` defaults to `ACON_PORT`, or 8787 when that is unset.
 - `--origin` (repeatable, or comma-separated in `ACON_ORIGINS`) lists the exact browser origins. POST needs one of them as `Origin`. `Host` must be one of their hosts or the bind address, which local health checks use.
 - `GET /healthz` answers 204 with no body and no authentication. Every other route, the shell files included, needs authentication.
 - Authentication is required unless `--host` is a loopback address. Starting on another address without it is refused. There are two modes:
@@ -132,7 +132,9 @@ docker run -d --name acon -p 127.0.0.1:8787:8787 -v acon-data:/data \
   -e ACON_ACCESS_TEAM=<team>.cloudflareaccess.com -e ACON_ACCESS_AUD=<aud-tag> acon
 ```
 
-For bearer mode, mount the token file read-only instead (for example `-v /path/token:/run/acon-token:ro -e ACON_TOKEN_FILE=/run/acon-token`). The file must be owned by the container user (uid 1000) with mode 0600. Install packages into the volume with `docker exec acon bun bin/acon.js install <name>`, then restart the container.
+For bearer mode, mount the token file read-only instead (for example `-v /path/token:/run/acon-token:ro -e ACON_TOKEN_FILE=/run/acon-token`). The file must be owned by the container user with mode 0600. Install packages into the volume with `docker exec acon bun bin/acon.js install <name>`, then restart the container.
+
+The app files are world-readable whatever the build checkout's umask, so `--user <uid>:<gid>` works too. Use it with a host directory owned by that uid as `/data` (`-v /srv/acon:/data`), and no chown is needed. To change the port, set `ACON_PORT` rather than passing `--port`: serve and the `HEALTHCHECK` both read it.
 
 ### Cloudflare Tunnel and Access (outline)
 
