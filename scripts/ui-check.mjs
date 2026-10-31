@@ -792,7 +792,17 @@ async function runSpaceViews(ticket) {
         transform: getComputedStyle(view.querySelector(".space-plane")).transform,
         preserve: getComputedStyle(view.querySelector(".space-plane")).transformStyle,
         transition: getComputedStyle(view.querySelector(".space-plane")).transitionDuration,
+        // Every billboard must be reachable by scrolling: none may sit above or left of the scroll origin.
+        outside: (() => {
+          const scroll = view.querySelector(".space-scroll"), box = scroll.getBoundingClientRect();
+          return [...view.querySelectorAll(".space-actor,.space-card")].map((el) => {
+            const r = el.getBoundingClientRect();
+            const x = r.left - box.left + scroll.scrollLeft, y = r.top - box.top + scroll.scrollTop;
+            return { key: el.dataset.key, x: Math.round(x), y: Math.round(y), right: Math.round(x + r.width), bottom: Math.round(y + r.height), sw: scroll.scrollWidth, sh: scroll.scrollHeight };
+          }).filter((p) => p.x < -1 || p.y < -1 || p.right > p.sw + 1 || p.bottom > p.sh + 1);
+        })(),
       }));
+      if (evidence.room.outside.length) findings.push({ kind: "space-room-clipped", detail: JSON.stringify(evidence.room.outside.slice(0, 6)) });
       if (JSON.stringify(keys) !== JSON.stringify(evidence.room.keys) || evidence.room.view !== "room" || evidence.room.preserve !== "preserve-3d" || evidence.room.transform === "none" || evidence.room.transition !== "0s") findings.push({ kind: "space-room-contract", detail: JSON.stringify(evidence.room) });
       await page.locator(".space-scroll").focus(); await page.keyboard.press("ArrowRight"); await settle(page);
       const rotated = await page.locator(".space-plane").evaluate((el) => getComputedStyle(el).transform);
@@ -838,6 +848,11 @@ async function runSpaceViews(ticket) {
         if (!sample.canvasVisible || sample.view !== "3d" || JSON.stringify(sample.keys) !== JSON.stringify(keys) || sample.errors.some((error) => !Number.isFinite(error) || error > 8)) findings.push({ kind: "space-projected-overlay", detail: JSON.stringify(sample) });
         if (!(Number(sample.modelCount) > 0)) findings.push({ kind: "space-model-fixture", detail: "Installed GLB fixture did not produce model furniture" });
       }
+      // At the default camera each model must read as furniture, not a few pixels: 40 px on its longer side on
+      // desktop. A 375 px phone fits a 10-unit floor into ~340 px, so its floor is 24 px; zoom in for detail there.
+      // 200% text grows the DOM-measured layout (not the furniture), so the floor applies at 100% text; 200% is recorded.
+      const modelFloor = width >= 1024 ? 40 : 24;
+      if (textPercent === 100 && Number(evidence.initial3d.modelCount) > 0 && !(Number(evidence.initial3d.modelMinPx) >= modelFloor)) findings.push({ kind: "space-model-size", detail: `smallest model ${evidence.initial3d.modelMinPx}px on its longer side (needs ${modelFloor}); ${evidence.initial3d.modelSides}` });
       await page.locator(".space-scroll").scrollIntoViewIfNeeded();
       await capture(page, { width, theme, textPercent }, "space-3d");
       if (width === 1440 && theme === "light" && textPercent === 100) {

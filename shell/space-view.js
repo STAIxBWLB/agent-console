@@ -24,13 +24,14 @@ export function createSpaceViewController(host) {
   try { saved = localStorage.getItem(STORAGE_KEY) ?? "flat"; } catch { /* Storage may be disabled. */ }
   let state = null, webgl = null, lastReady = null, generation = 0, destroyed = false;
   let camera = { yaw: 45, pitch: 60, zoom: 1 };
+  let cameraTouched = false;
   const buttons = new Map();
   for (const [id, label] of [["flat", "Flat"], ["room", "Room"], ...(available ? [["3d", "3D"]] : [])]) {
     const button = h("button", { type: "button", class: "btn", text: label, "data-space-view": id, "aria-pressed": "false", onclick: () => select(id) });
     choices.append(button); buttons.set(id, button);
   }
-  const rotate = (step) => { camera = { ...camera, yaw: camera.yaw + step }; apply(); };
-  const zoom = (step) => { camera = { ...camera, zoom: Math.max(.65, Math.min(1.35, Number((camera.zoom + step).toFixed(2)))) }; apply(); };
+  const rotate = (step) => { cameraTouched = true; camera = { ...camera, yaw: camera.yaw + step }; apply(); };
+  const zoom = (step) => { cameraTouched = true; camera = { ...camera, zoom: Math.max(.65, Math.min(1.35, Number((camera.zoom + step).toFixed(2)))) }; apply(); };
   controls.append(h("button", { type: "button", class: "btn", text: "Rotate left", onclick: () => rotate(-90) }),
     h("button", { type: "button", class: "btn", text: "Rotate right", onclick: () => rotate(90) }),
     h("button", { type: "button", class: "btn", text: "Zoom out", onclick: () => zoom(-.35) }),
@@ -80,23 +81,30 @@ export function createSpaceViewController(host) {
     }
     if (view === "room") {
       const width = state.layout.width, height = state.layout.height;
-      const yaw = radians(camera.yaw), pitch = radians(camera.pitch), scale = camera.zoom;
-      // Orthographic bounds of the four floor corners plus space for upright billboards.
-      const spanX = (Math.abs(Math.cos(yaw)) * width + Math.abs(Math.sin(yaw)) * height) * scale;
-      const spanY = (Math.abs(Math.sin(yaw)) * width + Math.abs(Math.cos(yaw)) * height) * Math.cos(pitch) * scale;
-      const marginX = Math.max(200, ...state.actors.map((item) => item.width * scale * 2), ...state.cards.map((item) => item.width * scale * 2));
-      const marginY = Math.max(250, ...state.actors.map((item) => item.height * scale * 2), ...state.cards.map((item) => item.height * scale * 2));
+      const scale = camera.zoom, pad = 24;
       scroll.style.perspective = `${Math.max(4000, Math.hypot(width, height) * 12)}px`;
-      const stageWidth = Math.max(scroll.clientWidth - 2, spanX + marginX * 2), stageHeight = spanY + marginY * 2;
-      stage.style.width = `${stageWidth}px`; stage.style.height = `${stageHeight}px`;
       plane.style.width = `${width}px`; plane.style.minWidth = `${width}px`;
-      plane.style.transform = `translate3d(${stageWidth / 2}px, ${stageHeight / 2}px, 0) scale(${scale}) rotateX(${camera.pitch}deg) rotateZ(${camera.yaw}deg) translate(${-width / 2}px, ${-height}px)`;
+      // Frame the camera on what it actually shows: project the plane corners and every billboard's corners
+      // through the same transforms (the long perspective is close to orthographic), then offset the plane so
+      // nothing lands above or left of the scroll box, where it could not be scrolled to.
+      const camera3d = `scale(${scale}) rotateX(${camera.pitch}deg) rotateZ(${camera.yaw}deg) translate(${-width / 2}px, ${-height}px)`;
+      const planeMatrix = new DOMMatrix(camera3d);
+      const xs = [], ys = [];
+      const add = (matrix, w, hgt) => { for (const [x, y] of [[0, 0], [w, 0], [0, hgt], [w, hgt]]) { const p = matrix.transformPoint(new DOMPoint(x, y, 0, 1)); xs.push(p.x / (p.w || 1)); ys.push(p.y / (p.w || 1)); } };
+      add(planeMatrix, width, height);
       for (const kind of ["actors", "cards"]) for (const item of state[kind]) {
-        item.el.style.transform = roomTransform(state.layout[kind].get(item.id), item.width, item.height, camera);
+        const transform = roomTransform(state.layout[kind].get(item.id), item.width, item.height, camera);
+        item.el.style.transform = transform;
+        add(planeMatrix.multiply(new DOMMatrix(transform)), item.width, item.height);
       }
+      const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+      const stageWidth = Math.max(scroll.clientWidth - 2, maxX - minX + pad * 2), stageHeight = maxY - minY + pad * 2;
+      const offsetX = (stageWidth - (maxX - minX)) / 2 - minX, offsetY = pad - minY;
+      stage.style.width = `${stageWidth}px`; stage.style.height = `${stageHeight}px`;
+      plane.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0) ${camera3d}`;
       for (const item of state.zones) { const p = state.layout.zones.get(item.id); item.el.style.transform = `translate3d(${p.x}px, ${p.y}px, 1px)`; }
       scroll.scrollLeft = Math.max(0, (stageWidth - scroll.clientWidth) / 2);
-      scroll.scrollTop = Math.max(0, (stageHeight - scroll.clientHeight) / 2);
+      scroll.scrollTop = 0;
       return;
     }
     scroll.scrollLeft = 0; scroll.scrollTop = 0;
@@ -104,6 +112,8 @@ export function createSpaceViewController(host) {
     stage.style.width = `${width}px`; stage.style.height = `${height}px`;
     plane.style.width = `${width}px`; plane.style.minWidth = "0"; plane.style.height = `${height}px`;
     if (webgl) {
+      // On a portrait canvas the wide layout fits best with its long axis running down the screen.
+      if (!cameraTouched) camera = { ...camera, yaw: width < height ? 90 : 45 };
       const input = { ...state, width, height, theme: getComputedStyle(root).color };
       webgl.update(input); webgl.setCamera(camera);
       const current = webgl, turn = generation;
@@ -126,7 +136,7 @@ export function createSpaceViewController(host) {
       try {
         const { createSpace3D } = await import("/space3d.js");
         if (id !== generation || destroyed) return;
-        const created = await createSpace3D({ mount, onProjection: project, onCamera: (next) => { camera = next; }, onFallback: () => select("room", "3D is unavailable. Room view is active.") });
+        const created = await createSpace3D({ mount, onProjection: project, onCamera: (next) => { cameraTouched = true; camera = next; }, onFallback: () => select("room", "3D is unavailable. Room view is active.") });
         if (id !== generation || destroyed) { created.destroy(); return; }
         webgl = created; apply();
       } catch (error) {
