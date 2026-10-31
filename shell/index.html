@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>acon</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/shell.css">
+<script type="module" src="/shell.js"></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<div class="app" id="app">
+  <nav class="rail" aria-label="Areas">
+    <a class="brand" href="#/local/inbox" aria-label="acon home"><span id="brand-icon"></span><span>acon</span></a>
+    <ul class="areas" id="areas"></ul>
+  </nav>
+  <div class="column">
+    <header class="top">
+      <div class="crumbs" id="crumbs"></div>
+      <button type="button" class="search-open" id="palette-open" aria-keyshortcuts="Meta+K Control+K" aria-label="Search or run a command"><span class="search-label" aria-hidden="true">Search or run a command</span><kbd id="palette-key">Ctrl K</kbd></button>
+      <span class="live" id="live" role="status" aria-live="off"></span>
+    </header>
+    <div class="tabs" id="tabs" role="tablist" hidden></div>
+    <main id="main" tabindex="-1">
+      <section id="view-inbox" class="view" aria-labelledby="inbox-lead" hidden></section>
+      <section id="view-system" class="view" aria-labelledby="system-title" hidden></section>
+      <section id="view-ended" class="view ended" hidden></section>
+    </main>
+  </div>
+</div>
+<aside class="sheet" id="sheet" role="dialog" aria-modal="false" aria-labelledby="sheet-title" hidden>
+  <header class="sheet-head"><h2 id="sheet-title"></h2><button type="button" class="icon-btn" id="sheet-close" aria-label="Close"></button></header>
+  <div class="sheet-body" id="sheet-body"></div>
+</aside>
+<dialog class="confirm" id="confirm" aria-labelledby="confirm-title"></dialog>
+<dialog class="palette" id="palette" aria-label="Command palette">
+  <div class="palette-field">
+    <input id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Search, or type tool: is:needs-me #id">
+  </div>
+  <ul id="palette-list" role="listbox" aria-label="Results"></ul>
+  <p class="palette-hint">Enter opens · Ctrl or Cmd + Enter peeks an inbox item · Esc closes</p>
+</dialog>
+<dialog class="keys" id="keys" aria-labelledby="keys-title"></dialog>
+<div class="toasts" id="toasts"></div>
+</body>
+</html>
