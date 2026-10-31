@@ -22,14 +22,17 @@ const ICONS = {
   close: "M6 6l12 12M18 6L6 18",
   go: "M5 12h14M13 6l6 6-6 6",
   search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
+  popout: "M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   brand: "M6 4h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM7 9l3 3-3 3M12 15h5",
 };
 const TOOL_ICON = { ahub: "agents", amem: "memory", vmem: "vault" };
 const toolIcon = (t) => (t?.icon && ICONS[t.icon] ? t.icon : TOOL_ICON[t?.tool] ?? "box");
 
 const $ = (id) => document.getElementById(id);
+// Module references: these move into a Picture-in-Picture document with Mini, where getElementById cannot find them.
+const confirmEl = $("confirm");
 const state = {
-  tools: [], node: null, serverErrors: [], clientErrors: [],
+  tools: [], pets: [], node: null, serverErrors: [], clientErrors: [],
   route: { area: "inbox", params: {} },
   inbox: new Map(), inboxSig: "", selectedKey: null, peekKey: null,
   panels: new Map(),
@@ -182,6 +185,7 @@ function applyTheme(choice = themeChoice()) {
   if (choice === "system") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = choice;
   store("acon.theme", choice);
+  if (pip) syncPipTheme();
   const theme = currentTheme();
   for (const p of state.panels.values()) for (const cb of p.themeListeners) safe(p.tool, "onTheme", () => cb(theme));
   if (state.route.area === "system") renderSystem();
@@ -207,7 +211,7 @@ function parseRoute() {
   if (!m) return { area: "inbox", params: {} };
   const params = Object.fromEntries(new URLSearchParams(m[4] ?? ""));
   if (m[1] !== NODE) return { area: "inbox", params: {} };
-  if (m[2] === "inbox" || m[2] === "system") return { area: m[2], params };
+  if (m[2] === "inbox" || m[2] === "system" || m[2] === "mini") return { area: m[2], params };
   const tool = toolById(m[2]);
   if (!tool) return { area: "inbox", params: {} };
   const panels = panelsOf(tool);
@@ -221,12 +225,15 @@ function route() {
   if (prev.tool && prev.tool !== r.tool) { const p = state.panels.get(prev.tool); if (p?.instance) safe(prev.tool, "hide", () => p.instance.hide?.()); }
   $("view-inbox").hidden = r.area !== "inbox";
   $("view-system").hidden = r.area !== "system";
+  if (!pip) miniView.hidden = r.area !== "mini";
+  $("app").classList.toggle("mini-mode", r.area === "mini");
   for (const [id, p] of state.panels) p.mount.hidden = r.area !== "tool" || r.tool !== id;
   renderRail();
   renderCrumbs();
   renderTabs();
   if (r.area === "inbox") { renderInbox(true); if (r.params.id) selectKey(r.params.id, true); }
   if (r.area === "system") renderSystem();
+  if (r.area === "mini") renderMini(true);
   if (r.area === "tool") showTool(r);
   if (prev.area !== r.area || prev.tool !== r.tool) $("main").focus({ preventScroll: true });
 }
@@ -238,6 +245,7 @@ function renderRail() {
   const r = state.route;
   const count = needsMeCount();
   document.title = count ? `acon (${count})` : "acon";
+  renderPet();
   const issues = state.serverErrors.length + state.clientErrors.length + state.tools.filter((t) => t.status !== "ready").length + (state.node?.pluginsError ? 1 : 0);
   const sig = JSON.stringify([r.area, r.tool, count, issues, readyTools().map((t) => [t.tool, t.title, t.icon])]);
   if (sig === railSig) return;
@@ -253,7 +261,7 @@ function renderRail() {
 }
 function renderCrumbs() {
   const r = state.route;
-  const parts = r.area === "tool" ? [toolById(r.tool)?.title ?? r.tool, panelsOf(toolById(r.tool)).find((p) => p.id === r.panel)?.title] : [r.area === "system" ? "System" : "Inbox"];
+  const parts = r.area === "tool" ? [toolById(r.tool)?.title ?? r.tool, panelsOf(toolById(r.tool)).find((p) => p.id === r.panel)?.title] : [r.area === "system" ? "System" : r.area === "mini" ? "Mini" : "Inbox"];
   $("crumbs").replaceChildren(...parts.flatMap((p, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true", text: "/" }), h("span", { class: "sub", text: p })] : [h("span", { text: p })])));
 }
 function renderTabs() {
@@ -346,6 +354,7 @@ async function pollInbox() {
   }));
   for (const tool of [...state.inbox.keys()]) if (!tools.some((t) => t.tool === tool)) state.inbox.delete(tool);
   renderRail();
+  renderMini();
   if (state.route.area === "inbox") renderInbox();
   if (state.peekKey?.startsWith("item:")) renderPeek();
 }
@@ -439,12 +448,12 @@ function moveSelection(step) {
   selectKey(next.key);
 }
 const selectedItem = () => sortedItems().find((i) => i.key === state.selectedKey);
-async function runVerb(item, verb, reason) {
+async function runVerb(item, verb, reason, extra = {}) {
   if ((verb.reason === "required" || verb.reason === "optional") && reason === undefined) { askReason(item, verb); return; }
   const list = sortedItems();
   const i = list.findIndex((x) => x.key === item.key);
   const next = list[i + 1] ?? list[i - 1];
-  const result = await runAction(item.tool, { action: verb.id, id: item.id, ...(reason ? { reason } : {}) }, { label: verb.label, inbox: false });
+  const result = await runAction(item.tool, { action: verb.id, id: item.id, ...(reason ? { reason } : {}) }, { label: verb.label, inbox: false, ...extra });
   if (!result?.ok) return;
   await pollInbox();
   // Triage flow: the next item takes the handled one's place, in the list and in the peek.
@@ -551,13 +560,13 @@ function renderPeek() {
   const add = (k, v) => { if (v) dl.append(h("dt", { text: k }), h("dd", { text: v })); };
   add("Kind", item.kind); add("Tool", toolById(item.tool)?.title ?? item.tool); add("Project", item.project); add("From", item.actor);
   add("Waiting since", `${new Date(item.at).toLocaleString()} (${ago(item.at)})`);
-  body.replaceChildren(
+  body.replaceChildren(...[
     h("div", { class: "sheet-verbs" }, item.chip ? h("span", { class: `chip ${toneClass(item.chip.tone)}`, text: str(item.chip.text) }) : null, h("span", { class: "chip", text: GROUPS.find(([g]) => g === item.group)?.[1] })),
     item.detail ? h("p", { class: "detail", text: item.detail }) : null,
     dl,
     h("div", { class: "sheet-verbs item-verbs" }, verbButtons(item, 8)),
     h("div", { class: "sheet-verbs" }, h("button", { type: "button", class: "btn", onclick: () => openItem(item) }, h("span", { text: `Open in ${toolById(item.tool)?.title ?? item.tool}` }), icon("go"))),
-  );
+  ].filter(Boolean));
   if (focusAt >= 0 && !reasonFocused) (body.querySelectorAll("button")[focusAt] ?? $("sheet-close")).focus({ preventScroll: true });
   if (reasonBox?.key === key) placeReason(reasonFocused);
 }
@@ -645,11 +654,11 @@ async function runAction(tool, input, opts) {
   const d = r.data;
   if (d?.needsConfirm) {
     // One confirmation at a time: a second preview never replaces an open one.
-    if (confirmResolve || $("confirm").open) { toast("Finish the open confirmation first.", { tone: "err" }); return { ok: false, busy: true }; }
+    if (confirmResolve || confirmEl.open) { toast("Finish the open confirmation first.", { tone: "err" }); return { ok: false, busy: true }; }
     return confirmFlow(tool, input, d, opts);
   }
   if (d?.ok) {
-    toast(str(d.message) || `${opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo" }) } : {});
+    toast(str(d.message) || `${opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo", mini: opts.mini }) } : {});
     afterAction(tool, opts);
   } else if (r.status !== 401) toast(str(d?.error) || "The action failed.", { tone: "err" });
   return d;
@@ -673,7 +682,7 @@ async function confirmFlow(tool, input, first, opts) {
     if (d?.stale) { current = { ...current, expired: true }; note = "This preview expired or was already used. Refresh it to continue."; continue; }
     closeConfirm();
     if (d?.ok) {
-      toast(str(d.message) || `${current.verb ?? opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo" }) } : {});
+      toast(str(d.message) || `${current.verb ?? opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo", mini: opts.mini }) } : {});
       afterAction(tool, opts);
     } else if (r.status !== 401) toast(str(d?.error) || "The action failed.", { tone: "err" });
     return d;
@@ -686,14 +695,18 @@ function closeConfirm() {
   confirmBusy = false;
   clearInterval(confirmTimer);
   state.confirmOpen = false;
-  const dlg = $("confirm");
+  const dlg = confirmEl;
   if (dlg.open) dlg.close();
 }
 function showConfirm(tool, d, note, opts) {
   confirmBusy = false;
   return new Promise((resolve) => {
     confirmResolve = resolve;
-    const dlg = $("confirm");
+    const dlg = confirmEl;
+    // opts.mini (set by Mini and carried into its Undo) opens the confirmation in Mini's window; otherwise in the console.
+    // Reparent only when the window changes, closing first: moving an open modal drops it from the top layer.
+    const home = pip && opts.mini ? pip.document.body : document.body;
+    if (dlg.parentNode !== home) { if (dlg.open) dlg.close(); home.append(dlg); }
     const verb = str(d.verb) || opts.label || "Confirm";
     const deadline = Date.now() + (d.validMs ?? 60000);
     const OPS = { create: ["Create", "ok"], modify: ["Modify", "accent"], delete: ["Delete", "err"], log: ["Log", ""] };
@@ -745,14 +758,16 @@ function showConfirm(tool, d, note, opts) {
     (expired() ? refresh : cancel).focus();
   });
 }
-$("confirm").addEventListener("cancel", (e) => { e.preventDefault(); if (confirmBusy) return; if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
+confirmEl.addEventListener("cancel", (e) => { e.preventDefault(); if (confirmBusy) return; if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
 
 // ---------- toast ----------
+// A module reference, so toasts follow Mini into a Picture-in-Picture document.
+const toastsEl = $("toasts");
 function toast(text, { undo, tone } = {}) {
   const el = h("div", { class: `toast${tone === "err" ? " err" : ""}`, role: tone === "err" ? "alert" : "status" }, h("span", { text }));
   const remove = () => el.remove();
   if (undo) el.append(h("button", { type: "button", class: "btn", onclick: () => { remove(); undo(); }, text: "Undo" }));
-  $("toasts").append(el);
+  toastsEl.append(el);
   setTimeout(remove, undo ? 10000 : 5000);
 }
 
@@ -876,10 +891,135 @@ function showKeys() {
   dlg.querySelector(".dialog-foot .btn").focus();
 }
 
+// ---------- pet and Mini ----------
+// Codex v2 sheets: 8x11 cells of 192x208; the pose row follows inbox facts only, and idle never animates.
+const PET_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const POSE_TEXT = { waiting: "waiting on your decision", failed: "a tool needs attention", review: "something is ready for review", idle: "all clear" };
+const miniView = $("view-mini");
+let pip = null;
+function petChoice() {
+  const choice = store("acon.pet");
+  return choice === "off" ? null : state.pets.find((p) => p.id === choice) ?? state.pets[0] ?? null;
+}
+function petState() {
+  const items = visibleItems();
+  const has = (g) => items.some((i) => i.group === g);
+  if (has("decision")) return "waiting";
+  if (has("alert") || [...state.inbox.values()].some((e) => e.failed)) return "failed";
+  if (has("review") || has("candidate")) return "review";
+  return "idle";
+}
+// Oldest first across groups: Mini and the pet promise "the oldest items that need you".
+const needsMe = () => sortedItems().filter((i) => NEEDS_ME.has(i.group)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+function petSprite(pet, pose, cls = "") {
+  const el = h("span", { class: `pet-sprite ${cls}`.trim(), "data-pose": pose, "aria-hidden": "true" });
+  // CSSOM, not a style attribute; absolute so the URL also resolves inside a Picture-in-Picture document.
+  el.style.setProperty("--pet-sheet", `url("${location.origin}/pets/${pet.id}/sheet")`);
+  return el;
+}
+function petLabel(pet, pose, count) { return `${pet ? `${pet.name}: ` : ""}${count ? `${count} need you, ` : ""}${POSE_TEXT[pose]}`; }
+let petSig = "";
+function renderPet() {
+  const pet = petChoice(), pose = petState(), count = needsMeCount();
+  const sig = JSON.stringify([pet?.id, pose, count]);
+  if (sig === petSig) return;
+  petSig = sig;
+  const btn = $("pet");
+  btn.hidden = !pet;
+  if (!pet) { btn.replaceChildren(); return; }
+  btn.setAttribute("aria-label", petLabel(pet, pose, count));
+  btn.replaceChildren(...[petSprite(pet, pose), count ? h("span", { class: "badge", "aria-hidden": "true", text: String(count) }) : null].filter(Boolean));
+}
+function openOldestNeed() {
+  const item = needsMe()[0];
+  navigate("inbox");
+  if (item) { selectKey(item.key); openPeek(item.key); }
+}
+// The console window: this tab, or the tab that opened this popup.
+function consoleWindow() {
+  try { if (window.opener && !window.opener.closed && window.opener.location.origin === location.origin) return window.opener; } catch { /* cross-origin opener */ }
+  return null;
+}
+function openInConsole(item) {
+  const other = consoleWindow();
+  if (other) { other.location.hash = hashFor("inbox", undefined, item ? { id: item.key } : undefined); other.focus(); return; }
+  if (item) { navigate("inbox"); selectKey(item.key); openPeek(item.key); } else navigate("inbox");
+  window.focus();
+}
+// One step, no reason, not destructive; everything else opens in the console, where confirm and reason rows live.
+const safeVerb = (item) => item.verbs.find((v) => v.primary && !v.destructive && !v.reason);
+let miniSig = "";
+function renderMini(force = false) {
+  if (miniView.hidden && !pip) return;
+  const pet = petChoice(), pose = petState(), items = needsMe(), shown = items.slice(0, 5);
+  const sig = JSON.stringify([pet?.id, pose, shown, items.length, Boolean(pip)]);
+  if (!force && sig === miniSig) return;
+  miniSig = sig;
+  const fkey = miniView.contains(miniView.ownerDocument.activeElement) ? miniView.ownerDocument.activeElement.dataset.fid : undefined;
+  const lead = items.length ? `${items.length} ${items.length === 1 ? "needs" : "need"} you` : pose === "failed" ? "A tool needs attention" : "Nothing needs you";
+  miniView.replaceChildren(...[
+    h("header", { class: "mini-head" },
+      pet ? petSprite(pet, pose, "large") : null,
+      h("div", {}, h("h1", { class: "lead", id: "mini-lead", text: lead }), h("p", { class: "sub", role: "status", text: petLabel(pet, pose, 0) }))),
+    shown.length ? h("ul", { class: "mini-list" }, shown.map((item) => {
+      const verb = safeVerb(item);
+      return h("li", { class: "mini-item" },
+        h("span", { class: "row-text" }, h("span", { class: "row-title", text: item.title }), h("span", { class: "row-sub", text: [toolById(item.tool)?.title ?? item.tool, ago(item.at)].join(" · ") })),
+        h("span", { class: "mini-verbs" },
+          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, onclick: () => runVerb(item, verb, undefined, { mini: true }), text: verb.label }) : null,
+          h("button", { type: "button", class: "btn", "data-fid": `o:${item.key}`, "aria-label": `Open ${item.title}`, onclick: () => openInConsole(item), text: "Open" })));
+    })) : null,
+    items.length > shown.length ? h("p", { class: "sub", text: `${items.length - shown.length} more in the inbox.` }) : null,
+    h("footer", { class: "mini-foot" },
+      h("button", { type: "button", class: "btn", "data-fid": "console", onclick: () => openInConsole(null), text: "Open console" }),
+      pip || consoleWindow() ? null : h("button", { type: "button", class: "btn", "data-fid": "popout", onclick: popOutMini, text: "Pop out" })),
+  ].filter(Boolean));
+  if (fkey) miniView.querySelector(`[data-fid="${CSS.escape(fkey)}"]`)?.focus({ preventScroll: true });
+}
+function syncPipTheme() {
+  const theme = document.documentElement.dataset.theme;
+  if (theme) pip.document.documentElement.dataset.theme = theme;
+  else delete pip.document.documentElement.dataset.theme;
+}
+// Document Picture-in-Picture keeps Mini above other windows (Chromium); elsewhere a small popup.
+async function popOutMini() {
+  if (pip) { pip.focus(); return; }
+  if ("documentPictureInPicture" in window) {
+    try { pip = await window.documentPictureInPicture.requestWindow({ width: 320, height: 440 }); } catch { pip = null; }
+    if (pip) {
+      const doc = pip.document;
+      doc.title = "acon Mini";
+      doc.head.append(h("meta", { name: "color-scheme", content: "light dark" }), h("link", { rel: "stylesheet", href: `${location.origin}/shell.css` }));
+      doc.body.classList.add("pip");
+      syncPipTheme();
+      doc.body.append(miniView, toastsEl);
+      miniView.hidden = false;
+      renderMini(true);
+      pip.addEventListener("pagehide", () => {
+        // An open confirmation in the closing window is cancelled, never left pending.
+        // Only a dialog that lives in the closing window comes back (cancelled if open); one open in the console stays modal.
+        if (confirmEl.ownerDocument !== document) {
+          if (confirmEl.open) confirmEl.dispatchEvent(new Event("cancel"));
+          // A busy confirmation ignores cancel; close it anyway so a later preview reopens it modally in the console.
+          if (confirmEl.open) confirmEl.close();
+          document.body.append(confirmEl);
+        }
+        pip = null;
+        $("main").append(miniView);
+        document.body.append(toastsEl);
+        miniView.hidden = state.ended || state.route.area !== "mini";
+        if (!state.ended) renderMini(true);
+      }, { once: true });
+      return;
+    }
+  }
+  window.open(`${location.origin}${hashFor("mini")}`, "acon-mini", "popup,width=340,height=480");
+}
+
 // ---------- system ----------
 let systemSig = "";
 function renderSystem(force = false) {
-  const sig = JSON.stringify([state.node, state.tools, state.serverErrors, state.clientErrors, themeChoice(), state.offline]);
+  const sig = JSON.stringify([state.node, state.tools, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off"]);
   if (!force && sig === systemSig && $("view-system").childElementCount) return;
   systemSig = sig;
   // Keep keyboard focus on the same control across re-renders.
@@ -898,6 +1038,10 @@ function renderSystem(force = false) {
       h("section", { class: "card" }, h("h2", { text: "Node" }), dl),
       h("section", { class: "card" }, h("h2", { text: "Appearance" }),
         h("div", { class: "segmented", role: "group", "aria-label": "Theme" }, [["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) => h("button", { type: "button", "data-fid": `theme-${v}`, "aria-pressed": String(choice === v), onclick: () => applyTheme(v), text: l }))),
+        h("h3", { class: "card-sub", id: "pet-choice", text: "Pet" }),
+        state.pets.length
+          ? h("div", { class: "segmented", role: "group", "aria-labelledby": "pet-choice" }, [["off", "Off"], ...state.pets.map((p) => [p.id, p.name])].map(([v, l]) => h("button", { type: "button", "data-fid": `pet-${v}`, "aria-pressed": String((petChoice()?.id ?? "off") === v), onclick: () => { store("acon.pet", v); renderPet(); renderMini(true); renderSystem(); }, text: l })))
+          : h("p", { class: "sub", text: "No pet packages found. Put a Codex v2 pet (pet.json and its sprite sheet) in ~/.agenthub/console/pets/<id>/ or ~/.codex/pets/<id>/." }),
         h("p", { class: "sub" }, h("button", { type: "button", class: "link", "data-fid": "keys", onclick: showKeys, text: "Keyboard shortcuts" }))),
       h("section", { class: "card wide" }, h("h2", { text: `Plugins (${state.tools.length})` }),
         node.pluginsError ? h("p", { class: "notice", role: "alert", text: node.pluginsError }) : null,
@@ -915,6 +1059,7 @@ async function loadTools() {
   if (r.status !== 200) return false;
   state.tools = Array.isArray(r.data.tools) ? r.data.tools : [];
   state.node = r.data.node ?? null;
+  state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
   state.serverErrors = Array.isArray(r.data.errors) ? r.data.errors : [];
   renderRail();
   if (state.route.area === "system") renderSystem();
@@ -925,6 +1070,8 @@ async function loadTools() {
 function endSession(message) {
   if (state.ended) return;
   state.ended = true;
+  // Mini in Picture-in-Picture must not stay apparently actionable: closing it returns Mini to the page, where it is hidden below.
+  if (pip) pip.close();
   closeSheet();
   for (const id of ["confirm", "palette", "keys"]) if ($(id).open) $(id).close();
   for (const v of document.querySelectorAll("main > .view, .panel-mount")) v.hidden = true;
@@ -983,6 +1130,9 @@ $("palette-open").addEventListener("click", openPalette);
 // The skip link moves focus only; "#main" must not reach the router.
 document.querySelector(".skip").addEventListener("click", (e) => { e.preventDefault(); $("main").focus(); });
 $("palette-open").prepend(icon("search"));
+$("mini-open").append(icon("popout"));
+$("mini-open").addEventListener("click", popOutMini);
+$("pet").addEventListener("click", openOldestNeed);
 $("palette-key").textContent = isMac ? "⌘K" : "Ctrl K";
 window.addEventListener("hashchange", route);
 
@@ -990,7 +1140,8 @@ window.addEventListener("hashchange", route);
 function tick() {
   if (state.ended) return;
   const now = Date.now();
-  if (document.visibilityState === "visible") {
+  // A Mini in Picture-in-Picture stays live while this tab is hidden.
+  if (document.visibilityState === "visible" || pip) {
     renderLive();
     if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox().catch((error) => clientError("acon", "inbox", error)); }
     if (now >= state.nextTools) { state.nextTools = now + TOOLS_MS; loadTools(); }

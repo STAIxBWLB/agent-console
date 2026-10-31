@@ -1,14 +1,18 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionResult } from "./contract.ts";
 import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
+import type { PetPackage } from "./pets.ts";
 
 export interface ServerOptions {
   plugins: PluginEntry[];
   version: string;
   pluginsDir: string;
   pluginsError?: string;
+  /** Local pet packages (src/pets.ts); problems are listed in System. */
+  pets?: PetPackage[];
+  petProblems?: string[];
   now?: () => number;
   idleMs?: number;
   /** Limit for one provider call; 30 s by default. */
@@ -58,6 +62,7 @@ export function startServer(options: ServerOptions) {
   const confirms = new Map<string, { expires: number; session: string; tool: string; input: string; fingerprint: string }>();
   const errors: ConsoleError[] = [];
   let lastSeen = now();
+  const pets = options.pets ?? [];
 
   const record = (tool: string, where: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -65,6 +70,7 @@ export function startServer(options: ServerOptions) {
     errors.unshift({ at: new Date(now()).toISOString(), tool, where, message: message.split("\n")[0]!.slice(0, 200) });
     errors.length = Math.min(errors.length, ERRORS);
   };
+  for (const problem of options.petProblems ?? []) record("acon", "pet package skipped", new Error(problem));
   const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { ...HEADERS, "Content-Type": "application/json", ...extra } });
   const reject = (status: number, error: string, extra: Record<string, unknown> = {}) => json({ ok: false, error, ...extra }, status);
@@ -162,6 +168,7 @@ export function startServer(options: ServerOptions) {
       prune(sessions);
       const cookie = cookieOf(req);
       const live = cookie !== undefined && sessions.has(cookie);
+      const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
       const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action)$/.exec(path);
       if (req.method === "GET") {
         const file = files[path];
@@ -172,6 +179,14 @@ export function startServer(options: ServerOptions) {
           if (!entry) return reject(404, "unknown tool");
           const js = plugin[2] === "panel.js";
           return new Response(js ? entry.provider!.assets.js : entry.provider!.assets.css ?? "", { headers: { ...HEADERS, "Content-Type": js ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8" } });
+        }
+        if (pet) {
+          if (!live) return reject(401, "session expired or missing; run acon ui");
+          const entry = pets.find((p) => p.id === pet[1]);
+          // Re-check at serve time: the file may have been swapped for a link or grown since the scan.
+          const stat = entry && lstatSync(entry.file, { throwIfNoEntry: false });
+          if (!entry || !stat?.isFile() || stat.size > 8 * 1024 * 1024) return reject(404, "unknown pet");
+          return new Response(Bun.file(entry.file), { headers: { ...HEADERS, "Content-Type": entry.type } });
         }
         return reject(404, "not found");
       }
@@ -201,7 +216,7 @@ export function startServer(options: ServerOptions) {
       }
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
-        return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), errors });
+        return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), errors });
       }
       const entry = tools.get(plugin![1]!);
       if (!entry) return reject(404, "unknown tool");

@@ -19,6 +19,29 @@ The server listens on 127.0.0.1 only and exits 5 minutes after the last request.
 
 Keys: `Cmd/Ctrl K` palette, `j`/`k` move, `Space` peek, `Enter` open, `1` primary answer, `2` second answer, `h` snooze for an hour, `?` all keys.
 
+### Pet and Mini
+
+The pet is an optional character in the top bar that shows what the inbox needs from you. acon ships no character art. It reads Codex v2 pet packages (`pet.json` plus an 8x11 `spritesheet.webp` or `.png` of 192x208 cells, the format the Codex `hatch-pet` skill makes) from these folders, in this order; the first package with an id wins:
+
+1. `$AGENTHUB_HOME/console/pets/<id>/`
+2. `$CODEX_HOME/pets/<id>/`
+3. `~/.codex/pets/<id>/`
+
+A package is skipped, and listed under System > Errors, when its id is not `[a-z0-9][a-z0-9-]{0,31}`, `spriteVersionNumber` is not 2, the sheet name has a path in it, the sheet is a link, larger than 8 MB or not a WebP or PNG.
+
+The pose follows the inbox only, never a timer:
+
+| Pose (sheet row) | When |
+| --- | --- |
+| waiting (6) | a decision is waiting |
+| failed (5) | an alert is visible, or a tool's inbox could not refresh |
+| review (8) | a review or candidate is waiting |
+| idle (0) | nothing; a still frame |
+
+Clicking the pet opens the oldest item that needs you. System > Appearance picks the pet or turns it off, per browser.
+
+Mini (`#/local/mini`) is the compact view: the pet, the count and the five oldest items that need you. An item's primary answer runs in place when it is one step (not destructive and no reason); anything else uses Open, which shows the item in the console. The pop-out button (top bar, or Pop out in Mini) opens Mini in an always-on-top Picture-in-Picture window in Chromium browsers, and in a small popup window elsewhere. The console keeps polling while the Picture-in-Picture window is open, even when its tab is hidden.
+
 ## Writing a plugin
 
 A tool registers by writing `$AGENTHUB_HOME/console/plugins/<tool>.json` (default home `~/.agenthub`; directory mode 0700):

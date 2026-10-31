@@ -4,6 +4,7 @@
 
 ### Added
 
+- Pet and Mini, moved from agent-hub: Codex v2 pet packages from local folders drawn as CSS sprites whose pose follows the inbox, a compact `#/local/mini` view with one-step answers, and a pop-out through Picture-in-Picture or a popup; `GET /pets/<id>/sheet` behind the session (#12).
 - Repeatable UI checks across phone, tablet and desktop widths, both themes and 200% text; rem type tokens, discoverable scrolling tabs and inline status chips on phones (#7).
 - `host.ui` panel kit with text-only elements, forms, keyboard-navigable rows and a shared detail template; documented public CSS classes and tokens (#5).
 - `acon ui` (H0): loopback console with a one-time link, session cookie, strict CSP and idle exit after 5 minutes.
