@@ -755,11 +755,13 @@ function showConfirm(tool, d, note, opts) {
 $("confirm").addEventListener("cancel", (e) => { e.preventDefault(); if (confirmBusy) return; if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
 
 // ---------- toast ----------
+// A module reference, so toasts follow Mini into a Picture-in-Picture document.
+const toastsEl = $("toasts");
 function toast(text, { undo, tone } = {}) {
   const el = h("div", { class: `toast${tone === "err" ? " err" : ""}`, role: tone === "err" ? "alert" : "status" }, h("span", { text }));
   const remove = () => el.remove();
   if (undo) el.append(h("button", { type: "button", class: "btn", onclick: () => { remove(); undo(); }, text: "Undo" }));
-  $("toasts").append(el);
+  toastsEl.append(el);
   setTimeout(remove, undo ? 10000 : 5000);
 }
 
@@ -901,7 +903,8 @@ function petState() {
   if (has("review") || has("candidate")) return "review";
   return "idle";
 }
-const needsMe = () => sortedItems().filter((i) => NEEDS_ME.has(i.group));
+// Oldest first across groups: Mini and the pet promise "the oldest items that need you".
+const needsMe = () => sortedItems().filter((i) => NEEDS_ME.has(i.group)).sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 function petSprite(pet, pose, cls = "") {
   const el = h("span", { class: `pet-sprite ${cls}`.trim(), "data-pose": pose, "aria-hidden": "true" });
   // CSSOM, not a style attribute; absolute so the URL also resolves inside a Picture-in-Picture document.
@@ -983,12 +986,13 @@ async function popOutMini() {
       doc.head.append(h("meta", { name: "color-scheme", content: "light dark" }), h("link", { rel: "stylesheet", href: `${location.origin}/shell.css` }));
       doc.body.classList.add("pip");
       syncPipTheme();
-      doc.body.append(miniView);
+      doc.body.append(miniView, toastsEl);
       miniView.hidden = false;
       renderMini(true);
       pip.addEventListener("pagehide", () => {
         pip = null;
         $("main").append(miniView);
+        document.body.append(toastsEl);
         miniView.hidden = state.route.area !== "mini";
         renderMini(true);
       }, { once: true });
