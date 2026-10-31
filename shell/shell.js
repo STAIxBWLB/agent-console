@@ -51,6 +51,68 @@ function h(tag, props = {}, ...kids) {
   for (const kid of kids.flat()) if (kid !== undefined && kid !== null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
   return el;
 }
+
+// ---------- public panel kit ----------
+// This surface builds text, never markup. URL attributes and executable elements are not kit inputs.
+const UI_TAGS = new Set("div span p strong em small code pre section article header footer h1 h2 h3 h4 ul ol li dl dt dd button input textarea select option form label fieldset legend details summary time hr br".split(" "));
+const UI_ATTRS = new Set("class text id title role tabindex type name value placeholder required disabled readonly checked multiple autocomplete maxlength min max step for open datetime".split(" "));
+function uiH(tag, props = {}, ...kids) {
+  if (!UI_TAGS.has(tag)) throw new TypeError("Unsupported panel kit tag");
+  for (const [key, value] of Object.entries(props)) {
+    if (key.startsWith("on") && typeof value === "function") continue;
+    if (!UI_ATTRS.has(key) && !/^aria-[a-z-]+$|^data-[a-z0-9-]+$/.test(key)) throw new TypeError("Unsupported panel kit attribute");
+  }
+  return h(tag, props, ...kids);
+}
+const consoleUi = {
+  h: uiH,
+  rows(items, render) {
+    if (!items.length) return null;
+    return h("ul", { class: "rows ui-rows" }, items.map((item) => {
+      const row = render(item);
+      return row.tagName === "LI" ? row : h("li", {}, row);
+    }));
+  },
+  row(o) {
+    const main = h(o.onOpen ? "button" : "div", { class: `row-main${o.onOpen ? " ui-row-open" : ""}`, ...(o.onOpen ? { type: "button", onclick: o.onOpen } : {}) },
+      h("span", { class: "row-text" }, h("span", { class: "row-title", text: o.title }), o.sub ? h("span", { class: "row-sub", text: o.sub }) : null));
+    return h("li", { class: "row" }, main, o.chip ? consoleUi.chip(o.chip.text, o.chip.tone) : null,
+      o.verbs?.length ? h("div", { class: "row-verbs" }, o.verbs) : null);
+  },
+  empty(title, hint) {
+    return h("div", { class: "empty" }, h("strong", { text: title }), hint ? h("span", { text: hint }) : null);
+  },
+  chip(text, tone = "neutral") {
+    return h("span", { class: `chip ${toneClass(tone)}`, text });
+  },
+  notice(text, tone = "neutral") {
+    return h("p", { class: `notice ui-notice ${toneClass(tone)}`, role: "status", text });
+  },
+  form(fields, submit, onSubmit) {
+    const inputs = fields.map((field) => h("input", { type: "text", name: field.name, required: field.required, value: field.value ?? "" }));
+    const form = h("form", { class: "ui-form", onsubmit: (event) => {
+      event.preventDefault();
+      if (!form.reportValidity()) return;
+      onSubmit(Object.fromEntries(fields.map((field, i) => [field.name, inputs[i].value])));
+    } }, fields.map((field, i) => h("label", { class: "ui-field" }, h("span", { text: field.label }), inputs[i])),
+    h("button", { type: "submit", class: `btn${submit.primary ? " primary" : ""}`, text: submit.label }));
+    return form;
+  },
+  detail(o) {
+    return h("article", { class: "ui-detail" },
+      h("header", { class: "ui-detail-head" },
+        h("span", { class: "ui-detail-kind", text: o.kind }),
+        h("h2", { text: o.title }),
+        o.state ? consoleUi.chip(o.state.text, o.state.tone) : null,
+        o.whoseMove ? h("span", { class: "ui-detail-move", text: o.whoseMove === "you" ? "Your move" : "Agent's move" }) : null),
+      o.actions?.length ? h("div", { class: "ui-detail-actions", "aria-label": "Next actions" }, o.actions) : null,
+      o.summary ? h("p", { class: "ui-detail-summary", text: o.summary }) : null,
+      o.provenance?.length ? h("dl", { class: "ui-provenance" }, o.provenance.flatMap((p) => [h("dt", { text: p.label }), h("dd", {}, h("span", { text: p.value }), p.at ? h("time", { datetime: p.at, text: p.at }) : null)])) : null,
+      ...(o.sections ?? []).map((s) => h("details", { class: "ui-detail-section", open: s.open }, h("summary", { text: s.title }), h("div", { class: "ui-detail-body" }, s.body))),
+      o.footer?.length ? h("footer", { class: "ui-detail-footer mono" }, o.footer.map((text) => h("div", { text }))) : null);
+  },
+};
+// ---------- end public panel kit ----------
 function icon(name, cls = "ic") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -492,6 +554,7 @@ function hostFor(tool, p) {
     tool: tool.tool,
     node: NODE,
     mount: p.body,
+    ui: consoleUi,
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),
@@ -857,12 +920,27 @@ function endSession(message) {
 
 // ---------- keyboard ----------
 function typing(el) { return el && (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName)); }
+function panelRowsKey(e) {
+  if (e.key !== "j" && e.key !== "k") return;
+  const p = state.panels.get(state.route.tool);
+  if (!p || (e.target !== $("main") && !p.mount.contains(e.target))) return;
+  const list = e.target.closest?.(".ui-rows") ?? p.mount.querySelector(".ui-rows");
+  if (!list) return;
+  const rows = [...list.querySelectorAll(".ui-row-open")].filter((b) => !b.disabled && b.closest(".ui-rows") === list);
+  if (!rows.length) return;
+  const current = e.target.closest?.(".row")?.querySelector(".ui-row-open");
+  const index = rows.indexOf(current);
+  const next = index < 0 ? (e.key === "j" ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, index + (e.key === "j" ? 1 : -1)));
+  e.preventDefault();
+  rows[next].focus();
+}
 document.addEventListener("keydown", (e) => {
   if (state.ended) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
   if (document.querySelector("dialog[open]") || typing(e.target) || e.altKey || e.metaKey || e.ctrlKey) return;
   if (e.key === "?") { e.preventDefault(); showKeys(); return; }
   if (e.key === "Escape" && !$("sheet").hidden) { e.preventDefault(); closeSheet(); return; }
+  if (state.route.area === "tool") { panelRowsKey(e); return; }
   if (state.route.area !== "inbox") return;
   const inPanelSheet = $("sheet").contains(e.target) && !state.peekKey?.startsWith("item:");
   if (inPanelSheet) return;

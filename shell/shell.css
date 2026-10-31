@@ -1,4 +1,6 @@
-/* acon shell. Panels style themselves only with the --acon-* tokens below (vault-mem#48 Visual system). */
+/* Public tokens: all --acon-* declarations below. Public classes are listed in README's
+   Public styling contract. All other selectors, including shell layout/state classes,
+   are PRIVATE and may change. Panels must not depend on them. */
 :root {
   color-scheme: light;
   --acon-bg: #F5F6F8;
@@ -174,6 +176,36 @@ button.link { padding: 0; border: 0; background: none; text-decoration: underlin
 .row:not(.selected) .btn.primary:not(.danger) { border-color: var(--acon-line-2); background: var(--acon-surface); color: var(--acon-accent-text); }
 .empty { margin-top: var(--acon-space-5); padding: var(--acon-space-5); border: 1px dashed var(--acon-line-2); border-radius: var(--acon-radius-3); color: var(--acon-text-2); }
 .empty strong { display: block; color: var(--acon-text); margin-bottom: var(--acon-space-1); }
+
+/* PUBLIC panel kit detail/form classes; shared public rows/buttons/chips are above. */
+.ui-rows .row-main { min-height: 44px; }
+.ui-rows .row-main:focus-visible { outline-offset: -3px; }
+.ui-rows .row-sub { white-space: normal; }
+.ui-notice { background: var(--acon-surface-2); color: var(--acon-text-2); }
+.ui-notice.ok { background: var(--acon-ok-soft); color: var(--acon-ok); }
+.ui-notice.warn { background: var(--acon-warn-soft); color: var(--acon-warn); }
+.ui-notice.err { background: var(--acon-err-soft); color: var(--acon-err); }
+.ui-form { display: flex; flex-direction: column; align-items: stretch; gap: var(--acon-space-3); }
+.ui-form .btn { align-self: flex-start; min-height: 44px; }
+.ui-field { display: flex; flex-direction: column; gap: var(--acon-space-1); min-width: 0; }
+.ui-field input { width: 100%; min-width: 0; min-height: 44px; padding: 6px 10px; border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); background: var(--acon-bg); }
+.ui-detail { display: flex; flex-direction: column; gap: var(--acon-space-4); min-width: 0; }
+.ui-detail-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--acon-space-2); }
+.ui-detail-head h2 { flex: 1 0 100%; margin: 0; font-size: 22px; font-weight: 650; line-height: 1.3; text-wrap: balance; }
+.ui-detail-kind { color: var(--acon-text-2); font-size: 12px; font-weight: 600; }
+.ui-detail-move { color: var(--acon-text-2); font-size: 13px; }
+.ui-detail-actions { display: flex; flex-wrap: wrap; gap: var(--acon-space-2); }
+.ui-detail-actions .btn { min-height: 44px; white-space: normal; }
+.ui-detail-summary { margin: 0; white-space: pre-wrap; }
+.ui-provenance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 3fr); gap: var(--acon-space-2); margin: 0; padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); font-size: 13px; }
+.ui-provenance dt { color: var(--acon-text-2); }
+.ui-provenance dd { min-width: 0; margin: 0; }
+.ui-provenance time { display: block; color: var(--acon-text-2); font-variant-numeric: tabular-nums; }
+.ui-detail-section { border-top: 1px solid var(--acon-line); }
+.ui-detail-section > summary { display: list-item; min-height: 44px; padding: var(--acon-space-3) 0; cursor: pointer; font-weight: 600; }
+.ui-detail-body { padding-bottom: var(--acon-space-3); white-space: pre-wrap; }
+.ui-detail-footer { padding-top: var(--acon-space-3); border-top: 1px solid var(--acon-line); color: var(--acon-text-2); overflow-wrap: anywhere; }
+/* PRIVATE shell surfaces resume. Public .card remains available to panel authors. */
 
 /* Cards (System) */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: var(--acon-space-4); margin-top: var(--acon-space-5); }

@@ -106,11 +106,28 @@ export interface SearchHit {
   link: { panel: string; params?: Record<string, string> };
 }
 
+/** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
+export interface ConsoleUi {
+  h(tag: string, props?: Record<string, unknown>, ...kids: (Node | string | null | false)[]): HTMLElement;
+  rows<T>(items: T[], render: (item: T) => HTMLElement): HTMLElement | null;
+  row(o: { title: string; sub?: string; onOpen?: () => void; chip?: { text: string; tone?: Tone }; verbs?: HTMLElement[] }): HTMLElement;
+  empty(title: string, hint?: string): HTMLElement;
+  chip(text: string, tone?: Tone): HTMLElement;
+  notice(text: string, tone?: Tone): HTMLElement;
+  form(fields: { name: string; label: string; required?: boolean; value?: string }[], submit: { label: string; primary?: boolean }, onSubmit: (values: Record<string, string>) => void): HTMLFormElement;
+  detail(o: {
+    kind: string; title: string; state?: { text: string; tone?: Tone }; whoseMove?: "you" | "agent";
+    actions?: HTMLElement[]; summary?: string; provenance?: { label: string; value: string; at?: string }[];
+    sections?: { title: string; body: Node | string; open?: boolean }[]; footer?: string[];
+  }): HTMLElement;
+}
+
 /** Browser-side host each panel module receives. Declared for panel authors; the shell implements it. */
 export interface ConsoleHost {
   tool: string;
   node: string;
   mount: HTMLElement;
+  ui: ConsoleUi;
   theme: { mode: "light" | "dark"; tokens: Record<string, string> };
   snapshot(extra?: Record<string, unknown>): Promise<Record<string, unknown>>;
   action(input: { action: string } & Record<string, unknown>): Promise<ActionResult | ({ ok: true } & Record<string, unknown>)>;

@@ -4,6 +4,7 @@
 
 ### Added
 
+- `host.ui` panel kit with text-only elements, forms, keyboard-navigable rows and a shared detail template; documented public CSS classes and tokens (#5).
 - `acon ui` (H0): loopback console with a one-time link, session cookie, strict CSP and idle exit after 5 minutes.
 - Plugin discovery from `$AGENTHUB_HOME/console/plugins/<tool>.json` with module hash and permission checks; `acon plugins` lists the result.
 - Console plugin contract api 1 (`@staix/agent-console/contract`) with inbox, search, structured previews and undo, plus a conformance suite (`@staix/agent-console/conformance`).

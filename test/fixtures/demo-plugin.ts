@@ -1,34 +1,35 @@
 import { createHash } from "node:crypto";
-import type { ActionResult, ConsolePlugin, InboxItem } from "../../src/contract.ts";
+import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem } from "../../src/contract.ts";
 
 /** Test fixture: an in-memory tool with an inbox, search, a reversible verb and a destructive verb. */
 interface Note { id: string; title: string; status: "open" | "accepted" | "rejected"; waited: number }
 
-const PANEL_JS = `
-export default (host) => {
-  const list = document.createElement("ul");
-  list.className = "demo-list";
+// Typed before serialization, so the fixture also checks the public kit contract.
+const demoPanel = (host: ConsoleHost) => {
+  const { ui } = host;
+  const list = ui.h("div", { class: "demo-list" });
   host.mount.append(list);
   let panel = "notes";
   let snaps = 0;
+  let selected: string | undefined;
   host.onSnapshot((snap) => {
     list.dataset.snaps = String(++snaps);
-    list.replaceChildren(...(snap.notes ?? []).map((note) => {
-      const li = document.createElement("li");
-      const title = document.createElement("span");
-      title.textContent = note.title + " (" + note.status + ")";
-      const del = document.createElement("button");
-      del.type = "button";
-      del.className = "btn danger";
-      del.textContent = "Delete...";
-      del.addEventListener("click", () => host.action({ action: "delete", id: note.id }));
-      li.append(title, del);
-      return li;
-    }));
+    const notes = (snap.notes ?? []) as Note[];
+    const note = notes.find((n) => n.id === selected);
+    const remove = (n: Note) => ui.h("button", { type: "button", class: "btn danger", text: "Delete...", onclick: () => host.action({ action: "delete", id: n.id }) });
+    list.replaceChildren(note ? ui.detail({
+      kind: "Note", title: note.title, state: { text: note.status }, whoseMove: "you",
+      actions: [remove(note)], summary: "Review this note before deciding what to do next.",
+      provenance: [{ label: "Source", value: "Demo fixture", at: "2026-10-31T00:00:00Z" }],
+      sections: [{ title: "More context", body: "Fixture detail shown as text." }], footer: [note.id],
+    }) : ui.rows(notes, (n) => ui.row({
+      title: n.title, sub: n.status, chip: { text: n.status },
+      onOpen: () => host.navigate(host.tool, panel, { id: n.id }), verbs: [remove(n)],
+    })) ?? ui.empty("No notes", "All notes have been handled."));
   });
-  return { show(id) { panel = id; list.dataset.panel = panel; }, hide() {}, destroy() { list.remove(); } };
+  return { show(id: string, params?: Record<string, string>) { panel = id; selected = params?.id; list.dataset.panel = panel; }, hide() {}, destroy() { list.remove(); } };
 };
-`;
+const PANEL_JS = `export default ${demoPanel.toString()};`;
 
 export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];
@@ -72,7 +73,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
     },
     async open() {
       return {
-        assets: { js: PANEL_JS, css: ".demo-list { list-style: none; padding: 0; }" },
+        assets: { js: PANEL_JS },
         async snapshot(input) {
           if (input.panel === "inbox") return { items: notes.filter((n) => n.status === "open").map(item) };
           if (input.panel === "search") {
