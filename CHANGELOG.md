@@ -4,6 +4,7 @@
 
 ### Added
 
+- `acon serve` (H1): resident console with `--host`, `--port` and `--origin`, authenticated by Cloudflare Access JWT (RS256 against the team JWKS) or a bearer token file. It refuses a non-loopback bind without auth, binds confirm tokens to the verified identity, answers 204 on `/healthz` and has no idle exit. A Dockerfile runs it as non-root with a `/data` volume and a health check (#20).
 - `acon install <name|https URL|dir>`, `--list` and `--force`: pet and asset packages downloaded separately, verified against the sha256 index at assets.entelecheia.ai (`ACON_ASSETS_INDEX` overrides), https only, streaming size caps, staged and installed with one rename (#17).
 - Optional Space area: public plugin scenes, keyed actors/cards and a text roster, fact-driven motion, separately installed image packs and a CSS fallback; pack/pet image validation is shared and asset reads require a session (#13).
 - Pet and Mini, moved from agent-hub: Codex v2 pet packages from local folders drawn as CSS sprites whose pose follows the inbox, a compact `#/local/mini` view with one-step answers, and a pop-out through Picture-in-Picture or a popup; `GET /pets/<id>/sheet` behind the session (#12).

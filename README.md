@@ -2,7 +2,7 @@
 
 `acon` is a local web console for the agent tool family: agent-hub (agents and tasks), agent-mem (memory) and vault-mem (knowledge vault). Each tool contributes panels as a plugin. The console adds what no single tool has: one inbox of everything waiting for you, a command palette across tools, and one confirm dialog for every destructive action.
 
-Status: H0 (local mode) only. No tool ships its plugin yet; a fixture plugin in `test/fixtures/` shows the contract. Authenticated nodes (H1) and the static multi-node shell (H2) are not implemented.
+Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). No tool ships its plugin yet; a fixture plugin in `test/fixtures/` shows the contract. The static multi-node shell (H2) is not implemented.
 
 ## Use
 
@@ -103,6 +103,47 @@ Rules:
 - Each file has a 30 s timeout and a cap enforced while streaming: manifest 16 KB, pet sheet 8 MB, pack image 4 MB, model 4 MB (glTF binary magic), 32 MB per package.
 - Files are written to a staging folder under `$AGENTHUB_HOME/console/.install/`, checked with the same validation the console runs at start, then moved into place with one rename. A failure leaves nothing behind. An installed id is refused before any download unless `--force` is given, and `--force` replaces the old folder only after the new one is complete.
 - Nothing is executed.
+
+## Run as a server
+
+`acon serve` (H1) is the resident form of the console for a node behind a reverse tunnel or on an internal server. `acon ui` is unchanged.
+
+```sh
+acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.com]... [--json]
+```
+
+- No ticket link, no idle exit and no browser opening. The process stays up until it is stopped. `--port` defaults to `ACON_PORT`, or 8787 when that is unset.
+- `--origin` (repeatable, or comma-separated in `ACON_ORIGINS`) lists the exact browser origins. POST needs one of them as `Origin`. `Host` must be one of their hosts or the bind address, which local health checks use.
+- `GET /healthz` answers 204 with no body and no authentication. Every other route, the shell files included, needs authentication.
+- Authentication is required unless `--host` is a loopback address. Starting on another address without it is refused. There are two modes:
+  - Cloudflare Access: set `ACON_ACCESS_TEAM` (the team domain, `<team>.cloudflareaccess.com`) and `ACON_ACCESS_AUD` (the Access application's AUD tag). Each request's `Cf-Access-Jwt-Assertion` must verify as RS256 against `https://<team>/cdn-cgi/access/certs`. The keys are cached and refetched on an unknown `kid`. The checks are `aud` contains the AUD, `iss` is `https://<team>`, `exp`/`nbf` hold with 60 s skew, and `sub` (or `email`) is present.
+  - Bearer token: set `ACON_TOKEN_FILE` to a file with mode 0600 holding one random token of at least 32 characters, for example from `openssl rand -hex 32`. Requests send `Authorization: Bearer <token>`. The comparison is constant-time. A file readable by group or others is refused.
+- The verified identity (the Access `sub`, or `bearer`) takes the place of the ticket session. Confirm tokens for destructive actions are bound to it, so a preview confirmed by another identity is refused. The page skips the ticket step because `/session` answers `{ok: true, mode: "serve"}`.
+- CSP, headers, plugins, the confirm path and the 32 KB body limit are the same as under `acon ui`.
+
+### Docker
+
+The `Dockerfile` builds a pinned `oven/bun` image that runs `acon serve --host 0.0.0.0` as the non-root `bun` user. `AGENTHUB_HOME=/data` is a volume holding plugins, pets and asset packs, and a `HEALTHCHECK` probes `/healthz`. The image holds no credentials:
+
+```sh
+docker build -t acon .
+docker run -d --name acon -p 127.0.0.1:8787:8787 -v acon-data:/data \
+  -e ACON_ORIGINS=https://console.example.com \
+  -e ACON_ACCESS_TEAM=<team>.cloudflareaccess.com -e ACON_ACCESS_AUD=<aud-tag> acon
+```
+
+For bearer mode, mount the token file read-only instead (for example `-v /path/token:/run/acon-token:ro -e ACON_TOKEN_FILE=/run/acon-token`). The file must be owned by the container user with mode 0600. Install packages into the volume with `docker exec acon bun bin/acon.js install <name>`, then restart the container.
+
+The app files are world-readable whatever the build checkout's umask, so `--user <uid>:<gid>` works too. Use it with a host directory owned by that uid as `/data` (`-v /srv/acon:/data`), and no chown is needed. To change the port, set `ACON_PORT` rather than passing `--port`: serve and the `HEALTHCHECK` both read it.
+
+### Cloudflare Tunnel and Access (outline)
+
+1. Run the container with its port published on loopback only, as above.
+2. Create a Cloudflare Tunnel on the same host whose public hostname points at `http://127.0.0.1:8787`.
+3. Create an Access self-hosted application for that hostname with a policy for the people who may use it. Copy its AUD tag.
+4. Start the container with `ACON_ORIGINS=https://<public hostname>`, `ACON_ACCESS_TEAM=<team>.cloudflareaccess.com` and `ACON_ACCESS_AUD=<aud-tag>`.
+
+Keep the hostname, team and AUD in your deployment's private configuration, not in this repository.
 
 ## Writing a plugin
 

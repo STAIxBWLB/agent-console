@@ -1140,7 +1140,9 @@ function endSession(message) {
   $("tabs").hidden = true;
   const ended = $("view-ended");
   ended.hidden = false;
-  ended.replaceChildren(h("h1", { class: "lead", text: message }), h("p", { class: "sub" }, "Run ", h("code", { text: "acon ui" }), " in a terminal for a new link. Each link works once."));
+  ended.replaceChildren(h("h1", { class: "lead", text: message }), state.serve
+    ? h("p", { class: "sub", text: "Reload the page to sign in again." })
+    : h("p", { class: "sub" }, "Run ", h("code", { text: "acon ui" }), " in a terminal for a new link. Each link works once."));
   document.title = "acon (ended)";
 }
 
@@ -1219,6 +1221,10 @@ async function boot() {
     history.replaceState(null, "", "/#/local/inbox");
     const r = await post("/session", { ticket: m[1] });
     if (r.status !== 200) { endSession("This link was already used or has expired."); return; }
+  } else {
+    // acon serve has no ticket: the verified identity is the session, and /session says so.
+    const r = await post("/session", {});
+    state.serve = r.status === 200 && r.data?.mode === "serve";
   }
   if (!(await loadTools())) { if (!state.ended) endSession("The console could not start."); return; }
   state.nextTools = Date.now() + TOOLS_MS;
