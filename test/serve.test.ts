@@ -128,6 +128,21 @@ describe("Access mode (AC1)", () => {
     expect(await verify(await sign(rotated, "k2", claims({ sub: "user-2" })))).toEqual({ sub: "user-2" });
   });
 
+  test("parallel verifications against a cold cache share the first refresh and all succeed", async () => {
+    const verify = accessVerifier({ team: TEAM, aud: AUD, certsUrl });
+    const jwt = await sign(main, "k1", claims());
+    const results = await Promise.all([verify(jwt), verify(jwt), verify(jwt)]);
+    expect(results).toEqual([{ sub: "user-1" }, { sub: "user-1" }, { sub: "user-1" }]);
+  });
+
+  test("a bracketed IPv6 loopback host starts and serves", async () => {
+    const c = serveConfig({ host: "[::1]", origins: [] }, {});
+    if (typeof c === "string") throw new Error(c);
+    const server = await boot(c);
+    expect(server.origin).toBe(`http://[::1]:${server.port}`);
+    expect((await fetch(`http://[::1]:${server.port}/healthz`)).status).toBe(204);
+  });
+
   test("email is the subject when sub is absent; 60 s skew is allowed", async () => {
     const verify = accessVerifier({ team: `https://${TEAM}/`, aud: AUD, certsUrl });
     expect(await verify(await sign(main, "k1", claims({ sub: undefined, exp: t() - 30 })))).toEqual({ sub: "a@example.com" });

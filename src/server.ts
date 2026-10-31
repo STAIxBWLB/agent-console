@@ -167,7 +167,7 @@ export function startServer(options: ServerOptions) {
   }
 
   const server = Bun.serve({
-    hostname: serve?.hostname ?? "127.0.0.1",
+    hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",
     port: serve?.port ?? 0,
     maxRequestBodySize: 32 * 1024,
     idleTimeout: 60,
@@ -260,7 +260,8 @@ export function startServer(options: ServerOptions) {
     },
   });
   const host = `127.0.0.1:${server.port}`;
-  const origin = serve ? `http://${serve.hostname.includes(":") ? `[${serve.hostname}]` : serve.hostname}:${server.port}` : `http://${host}`;
+  const bare = serve?.hostname.replace(/^\[(.*)\]$/, "$1");
+  const origin = serve ? `http://${bare!.includes(":") ? `[${bare}]` : bare}:${server.port}` : `http://${host}`;
   if (serve) {
     // The bound port is known only now (tests bind port 0): local probes on the bind address are allowed hosts.
     const port = server.port;

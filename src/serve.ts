@@ -75,6 +75,9 @@ export function accessVerifier(o: AccessVerifierOptions): (jwt: string) => Promi
   })();
 
   const keyFor = async (kid: string): Promise<CryptoKey | undefined> => {
+    // A refresh already in flight (cold cache, rotation) is awaited by every caller, so parallel first requests
+    // do not see "unknown key id"; the 30 s throttle only limits starting a new one.
+    if (!keys.has(kid) && inflight) { try { await inflight; } catch { /* fall through to the cache */ } }
     if (!keys.has(kid) && now() - fetchedAt >= REFRESH_MS) {
       try { await refresh(); } catch { /* keep the cached keys; the token fails below */ }
     }
