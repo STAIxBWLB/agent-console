@@ -4,7 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { realpathSync } from "node:fs";
-import { loadPlugins, pluginDir, scanPlugins } from "../src/plugins.ts";
+import { loadPlugins, manifestProblems, pluginDir, scanPlugins } from "../src/plugins.ts";
+import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
 const fixture = join(import.meta.dir, "fixtures", "demo-plugin.ts");
 const sha = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
@@ -188,5 +189,21 @@ describe("plugin discovery", () => {
     writeFileSync(mod, 'import "./.git/helper.ts";\nexport default {};\n');
     const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
     expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("outside the plugin package") }));
+  });
+});
+
+describe("manifest commands", () => {
+  const withCommands = (commands: unknown) => ({ ...createDemoPlugin().manifest, commands });
+  test("the demo commands are valid", () => expect(manifestProblems(createDemoPlugin().manifest)).toEqual([]));
+  test("malformed commands are rejected with a reason", () => {
+    expect(manifestProblems(withCommands({}))).toEqual(["manifest.commands must be an array"]);
+    expect(manifestProblems(withCommands([{ id: "Bad id", title: "x", action: "accept" }]))[0]).toContain("id must match");
+    expect(manifestProblems(withCommands([{ id: "a", action: "accept" }]))).toEqual(["command a needs a title"]);
+    expect(manifestProblems(withCommands([{ id: "a", title: "A", action: "drop_all" }]))).toEqual(["command a: action drop_all is not in capabilities.actions"]);
+    expect(manifestProblems(withCommands([{ id: "a", title: "A", action: "accept" }, { id: "a", title: "B", action: "accept" }]))).toEqual(["command a is duplicated"]);
+    expect(manifestProblems(withCommands([{ id: "a", title: "A", action: "accept", input: [] }]))).toEqual(["command a: input must be an object"]);
+    for (const key of ["action", "confirmed", "fingerprint", "confirmToken"]) {
+      expect(manifestProblems(withCommands([{ id: "a", title: "A", action: "delete", input: { [key]: true } }]))).toEqual(["command a: input may not set action, confirmed, fingerprint or confirmToken"]);
+    }
   });
 });

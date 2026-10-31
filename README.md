@@ -29,7 +29,10 @@ A tool registers by writing `$AGENTHUB_HOME/console/plugins/<tool>.json` (defaul
 
 The module's default export is a `ConsolePlugin` (`@staix/agent-console/contract`): a manifest with panels and capabilities, and `open()` returning a provider with `assets.js` (an ES module), optional `assets.css`, `snapshot()` and `action()`. The console refuses a module whose hash changed until the tool's setup runs again.
 
-- Inbox: declare `capabilities.inbox` and answer `snapshot({panel: "inbox"})` with `{items: InboxItem[]}`. Verbs run through `action({action: verb.id, id})`.
+- Inbox: declare `capabilities.inbox` and answer `snapshot({panel: "inbox"})` with `{items: InboxItem[]}`. Verbs run through `action({action: verb.id, id})`. Keep each item's `at` the same across snapshots: snooze and oldest-first order key on it, and conformance checks it.
+- Reasons: a verb with `reason: "optional"` or `"required"` makes the console ask for a reason inline and send it as `reason` in the action input; a required reason cannot be sent empty.
+- Commands: `manifest.commands` (`{id, title, hint?, action, input?}[]`) appear in the palette under the tool and run `action({...input, action})`, so a destructive command gets the same confirm dialog. `input` may not set `action`, `confirmed`, `fingerprint` or `confirmToken`, and with `capabilities.actions` declared the action must be listed there.
+- Panels: `onSnapshot` fires on each `show()` and then only when the snapshot data changed, so a panel need not diff unchanged polls.
 - Search: declare `capabilities.search` and answer `snapshot({panel: "search", q, limit})` with `{hits, total}`.
 - Destructive actions answer `{ok: false, needsConfirm: true, preview, fingerprint, changes?, warnings?, verb?, confirmText?}`. The console shows its dialog and calls again with `confirmed: true` and the fingerprint; recompute it and refuse on drift.
 - Reversible actions may return `undo: {action, ...}`; the console offers it for 10 seconds.

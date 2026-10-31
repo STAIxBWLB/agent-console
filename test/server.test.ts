@@ -71,7 +71,7 @@ describe("shell and session", () => {
     const { server } = await boot();
     const cookie = await login(server);
     const tools = await (await post(server, "/tools", {}, cookie)).json() as { tools: { tool: string; status: string }[] };
-    expect(tools.tools).toEqual([expect.objectContaining({ tool: "demo", status: "ready" })]);
+    expect(tools.tools).toEqual([expect.objectContaining({ tool: "demo", status: "ready", commands: expect.arrayContaining([expect.objectContaining({ id: "delete-n3", action: "delete" })]) })]);
     const js = await fetch(`${server.origin}/p/demo/panel.js`, { headers: { Cookie: cookie } });
     expect(js.headers.get("content-type")).toContain("javascript");
     expect(await js.text()).toContain("export default");
@@ -108,6 +108,13 @@ describe("actions and confirm tokens", () => {
     const res = await (await post(server, "/p/demo/action", { action: "accept", id: "n1" }, cookie)).json() as { ok: boolean; undo: unknown };
     expect(res.ok).toBe(true);
     expect(res.undo).toEqual({ action: "restore", id: "n1" });
+  });
+
+  test("a verb reason reaches the provider in the action input", async () => {
+    const { server, plugin } = await boot();
+    const cookie = await login(server);
+    expect((await post(server, "/p/demo/action", { action: "reject", id: "n1", reason: "duplicate of n2" }, cookie)).status).toBe(200);
+    expect(plugin.calls[0]).toEqual({ action: "reject", id: "n1", reason: "duplicate of n2" });
   });
 
   test("the page cannot set confirmed, fingerprint or an undeclared action", async () => {

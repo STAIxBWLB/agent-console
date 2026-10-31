@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
-import type { ActionResult } from "./contract.ts";
+import { ACTION_ID, type ActionResult } from "./contract.ts";
 import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 
 export interface ServerOptions {
@@ -27,7 +27,6 @@ const IDLE_MS = 5 * 60_000 - 5_000;
 const CALL_MS = 30_000;
 const LIMIT = 64;
 const ERRORS = 50;
-const ACTION_ID = /^[a-z][a-z0-9_.:-]{0,63}$/;
 const RESERVED = ["confirmed", "fingerprint"];
 const secret = () => randomBytes(32).toString("hex");
 const asset = (name: string) => readFileSync(new URL(`../shell/${name}`, import.meta.url), "utf8");
@@ -75,7 +74,7 @@ export function startServer(options: ServerOptions) {
   const call = <T>(tool: string, where: string, run: () => Promise<T>) => withTimeout(run(), callMs, `${tool} ${where}`);
 
   const toolList = () => options.plugins.map((p) => p.status === "ready" && p.manifest
-    ? { tool: p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, capabilities: p.manifest.capabilities ?? {} }
+    ? { tool: p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, commands: p.manifest.commands ?? [], capabilities: p.manifest.capabilities ?? {} }
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
   async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {

@@ -292,6 +292,7 @@ function renderInbox(force = false) {
   const focusRow = document.activeElement?.closest?.(".row");
   const focusKey = focusRow?.dataset.key;
   const focusIndex = focusRow ? [...focusRow.querySelectorAll("button")].indexOf(document.activeElement) : -1;
+  const reasonFocused = Boolean(reasonBox) && reasonBox.el.contains(document.activeElement);
   if (!items.some((i) => i.key === state.selectedKey)) state.selectedKey = items[0]?.key ?? null;
   const [lead, sub] = leadText(items);
   const sources = readyTools().filter((t) => t.capabilities?.inbox);
@@ -310,8 +311,9 @@ function renderInbox(force = false) {
   }
   view.replaceChildren(...kids);
   // Focus returns to the same control of the same row (title or verb), so background updates never move it.
-  const row = focusKey ? view.querySelector(`.row[data-key="${CSS.escape(focusKey)}"]`) : null;
+  const row = focusKey && !reasonFocused ? view.querySelector(`.row[data-key="${CSS.escape(focusKey)}"]`) : null;
   if (row) (row.querySelectorAll("button")[focusIndex] ?? row.querySelector(".row-main"))?.focus({ preventScroll: true });
+  if (!$("sheet-body").contains(reasonBox?.el)) placeReason(reasonFocused);
 }
 function whose(item) {
   if (item.group === "alert") return h("span", { class: "whose alert", title: "Alert" }, icon("alert"));
@@ -358,11 +360,12 @@ function moveSelection(step) {
   selectKey(next.key);
 }
 const selectedItem = () => sortedItems().find((i) => i.key === state.selectedKey);
-async function runVerb(item, verb) {
+async function runVerb(item, verb, reason) {
+  if ((verb.reason === "required" || verb.reason === "optional") && reason === undefined) { askReason(item, verb); return; }
   const list = sortedItems();
   const i = list.findIndex((x) => x.key === item.key);
   const next = list[i + 1] ?? list[i - 1];
-  const result = await runAction(item.tool, { action: verb.id, id: item.id }, { label: verb.label, inbox: false });
+  const result = await runAction(item.tool, { action: verb.id, id: item.id, ...(reason ? { reason } : {}) }, { label: verb.label, inbox: false });
   if (!result?.ok) return;
   await pollInbox();
   // Triage flow: the next item takes the handled one's place, in the list and in the peek.
@@ -371,6 +374,46 @@ async function runVerb(item, verb) {
     selectKey(next.key);
     if (peeking) openPeek(next.key);
   }
+}
+// ---------- verb reasons ----------
+// One inline reason row at a time, in the peek when it shows the item, else under the row. It survives re-renders.
+let reasonBox = null;
+function askReason(item, verb) {
+  closeReason(false);
+  const required = verb.reason === "required";
+  const input = h("input", { type: "text", maxlength: "500", autocomplete: "off", "aria-label": `Reason to ${verb.label}${required ? " (required)" : " (optional)"}`, placeholder: required ? "Reason (required)" : "Reason (optional)" });
+  const error = h("span", { class: "reason-error", role: "alert" });
+  const send = () => {
+    const text = input.value.trim();
+    if (required && !text) { input.setAttribute("aria-invalid", "true"); error.textContent = "A reason is required."; input.focus(); return; }
+    closeReason(true);
+    runVerb(item, verb, text);
+  };
+  const el = h("div", { class: "reason-row", onkeydown: (e) => {
+    if (e.key === "Enter" && e.target === input) { e.preventDefault(); send(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeReason(true); }
+  } }, input,
+  h("button", { type: "button", class: `btn ${verb.destructive ? "danger" : "primary"}`, onclick: send, text: verb.label }),
+  h("button", { type: "button", class: "btn", onclick: () => closeReason(true), text: "Cancel" }), error);
+  reasonBox = { key: item.key, el, input };
+  placeReason(true);
+}
+function placeReason(focus) {
+  if (!reasonBox) return;
+  const { key, el, input } = reasonBox;
+  const verbs = state.peekKey === `item:${key}` && !$("sheet").hidden ? $("sheet-body").querySelector(".item-verbs") : null;
+  const row = verbs ? null : $("view-inbox").querySelector(`.row[data-key="${CSS.escape(key)}"]`);
+  if (!verbs && !row) { closeReason(false); return; } // the item was handled or withdrawn
+  if (verbs) verbs.after(el); else row.append(el);
+  if (focus) input.focus({ preventScroll: true });
+}
+function closeReason(refocus) {
+  if (!reasonBox) return;
+  const { key, el } = reasonBox;
+  reasonBox = null;
+  const inSheet = $("sheet").contains(el);
+  el.remove();
+  if (refocus) (inSheet ? $("sheet-body").querySelector(".item-verbs .btn") : $("view-inbox").querySelector(`.row[data-key="${CSS.escape(key)}"] .row-main`))?.focus({ preventScroll: true });
 }
 function snooze(item) {
   const sn = snoozes();
@@ -402,6 +445,7 @@ function closeSheet() {
   if ($("sheet").hidden) return;
   $("sheet").hidden = true;
   $("app").classList.remove("peeking");
+  if (reasonBox && $("sheet").contains(reasonBox.el)) closeReason(false);
   $("sheet-body").replaceChildren();
   state.peekKey = null;
   if (sheetReturn?.isConnected) sheetReturn.focus({ preventScroll: true });
@@ -421,6 +465,7 @@ function renderPeek() {
   // Keep keyboard focus on the same control when the data changes under it.
   const old = [...$("sheet-body").querySelectorAll("button")];
   const focusAt = old.indexOf(document.activeElement);
+  const reasonFocused = Boolean(reasonBox) && reasonBox.el.contains(document.activeElement);
   const body = showSheet(item ? item.title : "No longer waiting", state.peekKey, false);
   if (!item) { body.replaceChildren(h("p", { class: "sub", text: "This item was handled or withdrawn." })); return; }
   const dl = h("dl", { class: "kv" });
@@ -431,10 +476,11 @@ function renderPeek() {
     h("div", { class: "sheet-verbs" }, item.chip ? h("span", { class: `chip ${toneClass(item.chip.tone)}`, text: str(item.chip.text) }) : null, h("span", { class: "chip", text: GROUPS.find(([g]) => g === item.group)?.[1] })),
     item.detail ? h("p", { class: "detail", text: item.detail }) : null,
     dl,
-    h("div", { class: "sheet-verbs" }, verbButtons(item, 8)),
+    h("div", { class: "sheet-verbs item-verbs" }, verbButtons(item, 8)),
     h("div", { class: "sheet-verbs" }, h("button", { type: "button", class: "btn", onclick: () => openItem(item) }, h("span", { text: `Open in ${toolById(item.tool)?.title ?? item.tool}` }), icon("go"))),
   );
-  if (focusAt >= 0) (body.querySelectorAll("button")[focusAt] ?? $("sheet-close")).focus({ preventScroll: true });
+  if (focusAt >= 0 && !reasonFocused) (body.querySelectorAll("button")[focusAt] ?? $("sheet-close")).focus({ preventScroll: true });
+  if (reasonBox?.key === key) placeReason(reasonFocused);
 }
 
 // ---------- tool panels ----------
@@ -462,7 +508,7 @@ async function showTool(r) {
   if (!p) {
     const banner = h("p", { class: "notice", role: "status", hidden: true });
     const body = h("div", { class: "panel-body" });
-    p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0 };
+    p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0, lastSig: "" };
     state.panels.set(tool.tool, p);
     $("main").append(p.mount);
     document.head.append(h("link", { rel: "stylesheet", href: `/p/${tool.tool}/panel.css` }));
@@ -480,6 +526,7 @@ async function showTool(r) {
   const view = JSON.stringify([r.panel, r.params]);
   if (p.view !== view) { p.cursor = 0; p.view = view; p.gen += 1; }
   p.panel = r.panel;
+  p.lastSig = "";
   safe(tool.tool, "show", () => p.instance.show?.(r.panel, r.params));
   p.next = 0;
   pollPanel();
@@ -501,6 +548,10 @@ async function pollPanel() {
   if (res.status === 200) {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
+    // Listeners hear only changed data, so an unchanged poll never re-renders the panel (focus and scroll stay).
+    const sig = JSON.stringify(res.data);
+    if (sig === p.lastSig) return;
+    p.lastSig = sig;
     for (const cb of p.snapListeners) safe(r.tool, "onSnapshot", () => cb(res.data));
   } else if (res.status) {
     p.banner.hidden = false;
@@ -669,6 +720,14 @@ function commandOptions(q) {
   }
   return out;
 }
+// Plugin commands run through action(), so a destructive one gets the same confirm dialog as a verb.
+function pluginCommandSections(q) {
+  if (q.needsMe || q.id || (q.node && q.node !== NODE)) return [];
+  return readyTools().filter((t) => !q.tool || q.tool === t.tool).map((t) => [`${t.title} commands`,
+    (Array.isArray(t.commands) ? t.commands : []).filter((c) => c && str(c.id) && str(c.title) && str(c.action) && matches(q, c.title, c.hint, t.title))
+      .map((c) => ({ title: c.title, sub: [t.title, str(c.hint)].filter(Boolean).join(" · "), icon: toolIcon(t),
+        run: () => runAction(t.tool, { ...(c.input && typeof c.input === "object" ? c.input : {}), action: c.action }, { label: c.title }) }))]);
+}
 function inboxOptions(q) {
   if (q.node && q.node !== NODE) return [];
   return sortedItems().filter((i) => (!q.tool || q.tool === i.tool) && (!q.needsMe || NEEDS_ME.has(i.group)) && (!q.id || i.id === q.id) && matches(q, i.title, i.kind, i.project, i.actor))
@@ -676,7 +735,7 @@ function inboxOptions(q) {
 }
 function renderPalette(searchGroups) {
   const q = parseQuery($("palette-input").value);
-  const sections = [["Inbox", inboxOptions(q)], ...searchGroups, ["Commands", commandOptions(q).slice(0, 12)]].filter(([, opts]) => opts.length);
+  const sections = [["Inbox", inboxOptions(q)], ...searchGroups, ...pluginCommandSections(q), ["Commands", commandOptions(q).slice(0, 12)]].filter(([, opts]) => opts.length);
   palOptions = sections.flatMap(([, opts]) => opts);
   palActive = Math.min(palActive, Math.max(0, palOptions.length - 1));
   let n = 0;
@@ -727,7 +786,7 @@ $("palette-input").addEventListener("keydown", (e) => {
 $("palette").addEventListener("click", (e) => { if (e.target === $("palette")) $("palette").close(); });
 
 // ---------- keys dialog ----------
-const KEYS = [["Cmd/Ctrl K", "Search or run a command"], ["j / k", "Next / previous inbox item"], ["Space", "Peek the selected item"], ["Enter", "Open the selected item"], ["1", "Primary answer (allow, accept, approve)"], ["2", "Second answer (deny, reject)"], ["h", "Snooze for 1 hour"], ["Esc", "Close the sheet or dialog"], ["?", "This list"]];
+const KEYS = [["Cmd/Ctrl K", "Search or run a command"], ["j / k", "Next / previous inbox item"], ["Space", "Peek the selected item"], ["Enter", "Open the selected item"], ["1", "Primary answer (allow, accept, approve)"], ["2", "Second answer (deny, reject); asks for a reason when the tool records one"], ["h", "Snooze for 1 hour"], ["Esc", "Close the sheet or dialog"], ["?", "This list"]];
 function showKeys() {
   const dlg = $("keys");
   dlg.replaceChildren(h("div", { class: "dialog-body" }, h("h2", { id: "keys-title", text: "Keyboard shortcuts" }),
