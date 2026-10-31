@@ -21,10 +21,13 @@
       <div class="crumbs" id="crumbs"></div>
       <button type="button" class="search-open" id="palette-open" aria-keyshortcuts="Meta+K Control+K" aria-label="Search or run a command"><span class="search-label" aria-hidden="true">Search or run a command</span><kbd id="palette-key">Ctrl K</kbd></button>
       <span class="live" id="live" role="status" aria-live="off"></span>
+      <button type="button" class="pet" id="pet" hidden></button>
+      <button type="button" class="icon-btn" id="mini-open" aria-label="Pop out Mini" title="Pop out Mini"></button>
     </header>
     <div class="tabs" id="tabs" role="tablist" hidden></div>
     <main id="main" tabindex="-1">
       <section id="view-inbox" class="view" aria-labelledby="inbox-lead" hidden></section>
+      <section id="view-mini" class="view mini" aria-labelledby="mini-lead" hidden></section>
       <section id="view-system" class="view" aria-labelledby="system-title" hidden></section>
       <section id="view-ended" class="view ended" hidden></section>
     </main>
