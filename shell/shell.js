@@ -29,6 +29,8 @@ const TOOL_ICON = { ahub: "agents", amem: "memory", vmem: "vault" };
 const toolIcon = (t) => (t?.icon && ICONS[t.icon] ? t.icon : TOOL_ICON[t?.tool] ?? "box");
 
 const $ = (id) => document.getElementById(id);
+// Module references: these move into a Picture-in-Picture document with Mini, where getElementById cannot find them.
+const confirmEl = $("confirm");
 const state = {
   tools: [], pets: [], node: null, serverErrors: [], clientErrors: [],
   route: { area: "inbox", params: {} },
@@ -652,7 +654,7 @@ async function runAction(tool, input, opts) {
   const d = r.data;
   if (d?.needsConfirm) {
     // One confirmation at a time: a second preview never replaces an open one.
-    if (confirmResolve || $("confirm").open) { toast("Finish the open confirmation first.", { tone: "err" }); return { ok: false, busy: true }; }
+    if (confirmResolve || confirmEl.open) { toast("Finish the open confirmation first.", { tone: "err" }); return { ok: false, busy: true }; }
     return confirmFlow(tool, input, d, opts);
   }
   if (d?.ok) {
@@ -693,14 +695,16 @@ function closeConfirm() {
   confirmBusy = false;
   clearInterval(confirmTimer);
   state.confirmOpen = false;
-  const dlg = $("confirm");
+  const dlg = confirmEl;
   if (dlg.open) dlg.close();
 }
 function showConfirm(tool, d, note, opts) {
   confirmBusy = false;
   return new Promise((resolve) => {
     confirmResolve = resolve;
-    const dlg = $("confirm");
+    const dlg = confirmEl;
+    // A confirmation for an action started in Mini opens in Mini's window; everything else opens in the console.
+    (pip && miniAction ? pip.document.body : document.body).append(dlg);
     const verb = str(d.verb) || opts.label || "Confirm";
     const deadline = Date.now() + (d.validMs ?? 60000);
     const OPS = { create: ["Create", "ok"], modify: ["Modify", "accent"], delete: ["Delete", "err"], log: ["Log", ""] };
@@ -752,7 +756,7 @@ function showConfirm(tool, d, note, opts) {
     (expired() ? refresh : cancel).focus();
   });
 }
-$("confirm").addEventListener("cancel", (e) => { e.preventDefault(); if (confirmBusy) return; if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
+confirmEl.addEventListener("cancel", (e) => { e.preventDefault(); if (confirmBusy) return; if (confirmResolve) { const r = confirmResolve; confirmResolve = null; closeConfirm(); r("cancel"); } else closeConfirm(); });
 
 // ---------- toast ----------
 // A module reference, so toasts follow Mini into a Picture-in-Picture document.
@@ -890,7 +894,7 @@ function showKeys() {
 const PET_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const POSE_TEXT = { waiting: "waiting on your decision", failed: "a tool needs attention", review: "something is ready for review", idle: "all clear" };
 const miniView = $("view-mini");
-let pip = null;
+let pip = null, miniAction = false;
 function petChoice() {
   const choice = store("acon.pet");
   return choice === "off" ? null : state.pets.find((p) => p.id === choice) ?? state.pets[0] ?? null;
@@ -960,7 +964,7 @@ function renderMini(force = false) {
       return h("li", { class: "mini-item" },
         h("span", { class: "row-text" }, h("span", { class: "row-title", text: item.title }), h("span", { class: "row-sub", text: [toolById(item.tool)?.title ?? item.tool, ago(item.at)].join(" · ") })),
         h("span", { class: "mini-verbs" },
-          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, onclick: () => runVerb(item, verb), text: verb.label }) : null,
+          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, onclick: () => { miniAction = true; runVerb(item, verb).finally(() => { miniAction = false; }); }, text: verb.label }) : null,
           h("button", { type: "button", class: "btn", "data-fid": `o:${item.key}`, "aria-label": `Open ${item.title}`, onclick: () => openInConsole(item), text: "Open" })));
     })) : null,
     items.length > shown.length ? h("p", { class: "sub", text: `${items.length - shown.length} more in the inbox.` }) : null,
@@ -990,6 +994,9 @@ async function popOutMini() {
       miniView.hidden = false;
       renderMini(true);
       pip.addEventListener("pagehide", () => {
+        // An open confirmation in the closing window is cancelled, never left pending.
+        if (confirmEl.open && confirmEl.ownerDocument !== document) confirmEl.dispatchEvent(new Event("cancel"));
+        document.body.append(confirmEl);
         pip = null;
         $("main").append(miniView);
         document.body.append(toastsEl);
