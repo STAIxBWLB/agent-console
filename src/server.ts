@@ -6,6 +6,7 @@ import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import type { PetPackage } from "./pets.ts";
 import { readValidatedImage, type AssetPack } from "./assets.ts";
 import { sanitizeSpaceScene } from "./space.ts";
+import type { ServeOptions } from "./serve.ts";
 
 export interface ServerOptions {
   plugins: PluginEntry[];
@@ -23,6 +24,8 @@ export interface ServerOptions {
   callMs?: number;
   onIdle?: () => void;
   log?: (line: string) => void;
+  /** H1 (`acon serve`): fixed bind, allowed hosts and origins, per-request authentication, no ticket and no idle exit. */
+  serve?: ServeOptions;
 }
 
 export interface ConsoleError { at: string; tool: string; where: string; message: string }
@@ -58,6 +61,7 @@ export function startServer(options: ServerOptions) {
   const callMs = options.callMs ?? CALL_MS;
   const log = options.log ?? ((line: string) => console.error(`acon: ${line}`));
   const startedAt = new Date(now()).toISOString();
+  const serve = options.serve;
   const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
   const files = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
   const tools = new Map(options.plugins.filter((p) => p.status === "ready").map((p) => [p.tool, p]));
@@ -163,21 +167,27 @@ export function startServer(options: ServerOptions) {
   }
 
   const server = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
+    hostname: serve?.hostname ?? "127.0.0.1",
+    port: serve?.port ?? 0,
     maxRequestBodySize: 32 * 1024,
     idleTimeout: 60,
     async fetch(req): Promise<Response> {
-      lastSeen = now();
-      armIdle();
-      if (req.headers.get("host") !== host) return reject(403, "forbidden host");
-      const requestOrigin = req.headers.get("origin");
-      if (requestOrigin !== null && requestOrigin !== origin) return reject(403, "forbidden origin");
       const path = new URL(req.url).pathname;
+      // H1 health probe: no auth, no body, before every other check so container and tunnel probes work.
+      if (serve && path === "/healthz" && (req.method === "GET" || req.method === "HEAD")) return new Response(null, { status: 204, headers: HEADERS });
+      lastSeen = now();
+      if (!serve) armIdle();
+      if (serve ? !serve.hosts.includes(req.headers.get("host") ?? "") : req.headers.get("host") !== host) return reject(403, "forbidden host");
+      const requestOrigin = req.headers.get("origin");
+      const originOk = requestOrigin !== null && (serve ? serve.origins.includes(requestOrigin) : requestOrigin === origin);
+      if (requestOrigin !== null && !originOk) return reject(403, "forbidden origin");
+      // Under serve the verified identity is the session: every route needs it, the shell files too.
+      const principal = serve ? await serve.authenticate(req) : null;
+      if (serve && principal === null) return reject(401, "authentication required");
       prune(tickets);
       prune(sessions);
-      const cookie = cookieOf(req);
-      const live = cookie !== undefined && sessions.has(cookie);
+      const cookie = serve ? principal! : cookieOf(req);
+      const live = serve ? true : cookie !== undefined && sessions.has(cookie);
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
       const packedImage = /^\/assets\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
       const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action)$/.exec(path);
@@ -212,7 +222,7 @@ export function startServer(options: ServerOptions) {
         return reject(404, "not found");
       }
       if (req.method !== "POST") return reject(405, "POST required");
-      if (requestOrigin !== origin) return reject(403, "origin required");
+      if (!originOk) return reject(403, "origin required");
       if (req.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return reject(415, "JSON required");
       const known = path === "/session" || path === "/tools" || path === "/ping" || (plugin && (plugin[2] === "snapshot" || plugin[2] === "action"));
       if (!known) return reject(404, "not found");
@@ -228,6 +238,7 @@ export function startServer(options: ServerOptions) {
       // Every accepted body has a canonical form; this refuses numbers like 1e400 that would collide with null.
       try { canonical(input); } catch { return reject(400, "numbers must be finite"); }
       if (path === "/session") {
+        if (serve) return json({ ok: true, mode: "serve" });
         const ticket = typeof input.ticket === "string" ? input.ticket : "";
         if (!tickets.delete(ticket)) return reject(401, "this link was already used or has expired; run acon ui");
         cap(sessions);
@@ -249,7 +260,13 @@ export function startServer(options: ServerOptions) {
     },
   });
   const host = `127.0.0.1:${server.port}`;
-  const origin = `http://${host}`;
+  const origin = serve ? `http://${serve.hostname.includes(":") ? `[${serve.hostname}]` : serve.hostname}:${server.port}` : `http://${host}`;
+  if (serve) {
+    // The bound port is known only now (tests bind port 0): local probes on the bind address are allowed hosts.
+    const port = server.port;
+    serve.hosts = [...new Set([...serve.hosts, `127.0.0.1:${port}`, `localhost:${port}`, new URL(origin).host])];
+    if (serve.mode === "loopback") serve.origins = [...new Set([...serve.origins, `http://127.0.0.1:${port}`, `http://localhost:${port}`])];
+  }
   const cookieName = `acon_ui_${server.port}`;
 
   let stopped = false;
@@ -267,7 +284,7 @@ export function startServer(options: ServerOptions) {
   };
   /** True when no request arrived for idleMs; then the server stops and onIdle runs. */
   const checkIdle = () => {
-    if (stopped || now() - lastSeen < idleMs) return false;
+    if (serve || stopped || now() - lastSeen < idleMs) return false;
     void stop().finally(() => options.onIdle?.());
     return true;
   };
@@ -277,7 +294,7 @@ export function startServer(options: ServerOptions) {
     clearTimeout(timer);
     timer = setTimeout(() => { if (!checkIdle()) armIdle(); }, Math.max(0, idleMs - (now() - lastSeen)));
   }
-  armIdle();
+  if (!serve) armIdle();
 
   return {
     origin,

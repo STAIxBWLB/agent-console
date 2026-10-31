@@ -1,0 +1,12 @@
+.git
+.worktrees
+.agenthub
+node_modules
+test
+scripts
+ui-check
+*.tgz
+.env
+.env.*
+*.pem
+*.key
