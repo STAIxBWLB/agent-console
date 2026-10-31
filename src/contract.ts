@@ -7,6 +7,7 @@
 export const CONSOLE_API = 1 as const;
 export const TOOL_ID = /^[a-z][a-z0-9-]{1,15}$/;
 export const PANEL_ID = /^[a-z][a-z0-9-]{0,31}$/;
+export const ACTION_ID = /^[a-z][a-z0-9_.:-]{0,63}$/;
 
 export interface ConsolePanelManifest {
   api: 1;
@@ -16,6 +17,8 @@ export interface ConsolePanelManifest {
   /** Area icon name the shell knows (agents, memory, vault, ...); unknown names fall back to a generic glyph. */
   icon?: string;
   panels: { id: string; title: string; icon?: string; order?: number }[];
+  /** Palette entries; each runs action({...input, action}) through the same confirm path as a verb. */
+  commands?: ConsoleCommand[];
   /** Poll interval for the visible panel; the shell clamps it to 2-60 s. */
   pollMs?: number;
   capabilities?: {
@@ -27,6 +30,15 @@ export interface ConsolePanelManifest {
     /** snapshot({panel: "search", q, limit}) returns {hits: SearchHit[], total}. */
     search?: boolean;
   };
+}
+
+export interface ConsoleCommand {
+  id: string;
+  title: string;
+  hint?: string;
+  action: string;
+  /** Fixed action input; it may not set action, confirmed, fingerprint or confirmToken. */
+  input?: Record<string, unknown>;
 }
 
 export interface ConsoleContext {
@@ -77,10 +89,11 @@ export interface InboxItem {
   detail?: string;
   actor?: string;
   project?: string;
-  /** ISO time the item started waiting. */
+  /** ISO time the item started waiting. Keep it stable across snapshots: snooze and oldest-first order key on it. */
   at: string;
   chip?: { text: string; tone: Tone };
-  verbs: { id: string; label: string; primary?: boolean; destructive?: boolean }[];
+  /** With `reason`, the shell asks for a reason and sends it as `reason` in the action input; "required" refuses an empty one. */
+  verbs: { id: string; label: string; primary?: boolean; destructive?: boolean; reason?: "optional" | "required" }[];
   link: { panel: string; params?: Record<string, string> };
 }
 

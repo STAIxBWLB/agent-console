@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { CONSOLE_API, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
+import { ACTION_ID, CONSOLE_API, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
 export const pluginDir = (home: string): string => join(home, "console", "plugins");
@@ -183,7 +183,26 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
     }
   }
   if (m.pollMs !== undefined && (typeof m.pollMs !== "number" || !Number.isFinite(m.pollMs) || m.pollMs <= 0)) out.push("manifest.pollMs must be a positive number");
-  if (m.capabilities?.actions !== undefined && (!Array.isArray(m.capabilities.actions) || m.capabilities.actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
+  const actions = m.capabilities?.actions;
+  if (actions !== undefined && (!Array.isArray(actions) || actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
+  if (m.commands !== undefined) {
+    if (!Array.isArray(m.commands)) out.push("manifest.commands must be an array");
+    else {
+      const ids = new Set<string>();
+      for (const c of m.commands) {
+        const label = `command ${String(c?.id)}`;
+        if (!c || typeof c.id !== "string" || !ACTION_ID.test(c.id)) { out.push(`${label}: id must match ${ACTION_ID.source}`); continue; }
+        if (ids.has(c.id)) out.push(`${label} is duplicated`);
+        ids.add(c.id);
+        if (typeof c.title !== "string" || !c.title) out.push(`${label} needs a title`);
+        if (c.hint !== undefined && typeof c.hint !== "string") out.push(`${label}: hint must be a string`);
+        if (typeof c.action !== "string" || !ACTION_ID.test(c.action)) out.push(`${label}: action must match ${ACTION_ID.source}`);
+        else if (Array.isArray(actions) && !actions.includes(c.action)) out.push(`${label}: action ${c.action} is not in capabilities.actions`);
+        if (c.input !== undefined && (!c.input || typeof c.input !== "object" || Array.isArray(c.input))) out.push(`${label}: input must be an object`);
+        else if (c.input && ["action", "confirmed", "fingerprint", "confirmToken"].some((k) => k in c.input!)) out.push(`${label}: input may not set action, confirmed, fingerprint or confirmToken`);
+      }
+    }
+  }
   return out;
 }
 

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { ActionResult, ConsolePlugin, InboxItem } from "../../src/contract.ts";
 
 /** Test fixture: an in-memory tool with an inbox, search, a reversible verb and a destructive verb. */
-interface Note { id: string; title: string; status: "open" | "accepted" | "rejected" }
+interface Note { id: string; title: string; status: "open" | "accepted" | "rejected"; waited: number }
 
 const PANEL_JS = `
 export default (host) => {
@@ -10,7 +10,9 @@ export default (host) => {
   list.className = "demo-list";
   host.mount.append(list);
   let panel = "notes";
+  let snaps = 0;
   host.onSnapshot((snap) => {
+    list.dataset.snaps = String(++snaps);
     list.replaceChildren(...(snap.notes ?? []).map((note) => {
       const li = document.createElement("li");
       const title = document.createElement("span");
@@ -31,15 +33,15 @@ export default (host) => {
 export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];
   const notes: Note[] = [
-    { id: "n1", title: "Unknown keys warn on edits", status: "open" },
-    { id: "n2", title: "Replace an outdated contract memory", status: "open" },
-    { id: "n3", title: "Lint is stale for 9 days", status: "open" },
+    { id: "n1", title: "Unknown keys warn on edits", status: "open", waited: 120 },
+    { id: "n2", title: "Replace an outdated contract memory", status: "open", waited: 90 },
+    { id: "n3", title: "Lint is stale for 9 days", status: "open", waited: 60 },
   ];
   const fp = (id: string) => createHash("sha256").update(JSON.stringify(notes.find((n) => n.id === id) ?? null)).digest("hex");
   const opened = Date.now();
   const at = (minutes: number) => new Date(opened - minutes * 60_000).toISOString();
   const groups: Record<string, InboxItem["group"]> = { n1: "decision", n2: "candidate", n3: "alert" };
-  const item = (n: Note, i: number): InboxItem => ({
+  const item = (n: Note): InboxItem => ({
     id: n.id,
     group: groups[n.id] ?? "decision",
     kind: n.id === "n3" ? "lint" : n.id === "n2" ? "memory" : "permission",
@@ -47,9 +49,9 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
     detail: `Fixture item ${n.id}.`,
     actor: "codex",
     project: "fixture",
-    at: at(120 - i * 30),
+    at: at(n.waited),
     chip: n.id === "n1" ? { text: "your move", tone: "warn" } : n.id === "n3" ? { text: "9 days", tone: "err" } : { text: "82% overlap", tone: "neutral" },
-    verbs: [{ id: "accept", label: "Accept", primary: true }, { id: "reject", label: "Reject", destructive: false }],
+    verbs: [{ id: "accept", label: "Accept", primary: true }, { id: "reject", label: "Reject", destructive: false, reason: "required" }],
     link: { panel: "notes", params: { id: n.id } },
   });
   return {
@@ -62,6 +64,10 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
       icon: "vault",
       panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }],
       pollMs: 5000,
+      commands: [
+        { id: "reopen-n1", title: "Reopen the first note", hint: "restore n1", action: "restore", input: { id: "n1" } },
+        { id: "delete-n3", title: "Delete the stale lint note", action: "delete", input: { id: "n3" } },
+      ],
       capabilities: { actions: ["accept", "reject", "restore", "delete"], confirm: true, inbox: true, search: true },
     },
     async open() {
