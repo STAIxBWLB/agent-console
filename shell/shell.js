@@ -32,7 +32,7 @@ const $ = (id) => document.getElementById(id);
 // Module references: these move into a Picture-in-Picture document with Mini, where getElementById cannot find them.
 const confirmEl = $("confirm");
 const state = {
-  tools: [], pets: [], node: null, serverErrors: [], clientErrors: [],
+  tools: [], pets: [], assetPacks: [], space: new Map(), node: null, serverErrors: [], clientErrors: [],
   route: { area: "inbox", params: {} },
   inbox: new Map(), inboxSig: "", selectedKey: null, peekKey: null,
   panels: new Map(),
@@ -194,6 +194,8 @@ darkQuery.addEventListener("change", () => { if (themeChoice() === "system") app
 
 // ---------- tools and routes ----------
 const readyTools = () => state.tools.filter((t) => t.status === "ready").sort((a, b) => rank(a.tool) - rank(b.tool) || a.tool.localeCompare(b.tool));
+const spaceTools = () => readyTools().filter((t) => t.capabilities?.space === true);
+const spaceHash = () => hashFor(toolById("space") ? "~space" : "space");
 const rank = (tool) => (TOOL_ORDER.includes(tool) ? TOOL_ORDER.indexOf(tool) : TOOL_ORDER.length);
 const toolById = (id) => readyTools().find((t) => t.tool === id);
 const panelsOf = (tool) => [...tool.panels].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -211,6 +213,7 @@ function parseRoute() {
   if (!m) return { area: "inbox", params: {} };
   const params = Object.fromEntries(new URLSearchParams(m[4] ?? ""));
   if (m[1] !== NODE) return { area: "inbox", params: {} };
+  if ((m[2] === "~space" || (m[2] === "space" && !toolById("space"))) && spaceTools().length) return { area: "space", params };
   if (m[2] === "inbox" || m[2] === "system" || m[2] === "mini") return { area: m[2], params };
   const tool = toolById(m[2]);
   if (!tool) return { area: "inbox", params: {} };
@@ -225,6 +228,7 @@ function route() {
   if (prev.tool && prev.tool !== r.tool) { const p = state.panels.get(prev.tool); if (p?.instance) safe(prev.tool, "hide", () => p.instance.hide?.()); }
   $("view-inbox").hidden = r.area !== "inbox";
   $("view-system").hidden = r.area !== "system";
+  $("view-space").hidden = r.area !== "space";
   if (!pip) miniView.hidden = r.area !== "mini";
   $("app").classList.toggle("mini-mode", r.area === "mini");
   for (const [id, p] of state.panels) p.mount.hidden = r.area !== "tool" || r.tool !== id;
@@ -234,6 +238,7 @@ function route() {
   if (r.area === "inbox") { renderInbox(true); if (r.params.id) selectKey(r.params.id, true); }
   if (r.area === "system") renderSystem();
   if (r.area === "mini") renderMini(true);
+  if (r.area === "space") showSpace();
   if (r.area === "tool") showTool(r);
   if (prev.area !== r.area || prev.tool !== r.tool) $("main").focus({ preventScroll: true });
 }
@@ -247,7 +252,7 @@ function renderRail() {
   document.title = count ? `acon (${count})` : "acon";
   renderPet();
   const issues = state.serverErrors.length + state.clientErrors.length + state.tools.filter((t) => t.status !== "ready").length + (state.node?.pluginsError ? 1 : 0);
-  const sig = JSON.stringify([r.area, r.tool, count, issues, readyTools().map((t) => [t.tool, t.title, t.icon])]);
+  const sig = JSON.stringify([r.area, r.tool, count, issues, spaceTools().length > 0, readyTools().map((t) => [t.tool, t.title, t.icon])]);
   if (sig === railSig) return;
   railSig = sig;
   const focused = $("areas").contains(document.activeElement) ? document.activeElement.getAttribute("href") : null;
@@ -255,13 +260,15 @@ function renderRail() {
   $("areas").replaceChildren(
     item(hashFor("inbox"), "inbox", "Inbox", r.area === "inbox", count ? h("span", { class: "badge", "aria-label": `${count} waiting`, text: String(count) }) : null),
     ...readyTools().map((t) => item(hashFor(t.tool), toolIcon(t), t.title, r.area === "tool" && r.tool === t.tool)),
+    spaceTools().length ? item(spaceHash(), "agents", "Space", r.area === "space") : null,
     item(hashFor("system"), "system", "System", r.area === "system", issues ? h("span", { class: "badge warn", "aria-label": `${issues} issues`, text: "!" }) : null),
   );
   if (focused) $("areas").querySelector(`a[href="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
 }
 function renderCrumbs() {
   const r = state.route;
-  const parts = r.area === "tool" ? [toolById(r.tool)?.title ?? r.tool, panelsOf(toolById(r.tool)).find((p) => p.id === r.panel)?.title] : [r.area === "system" ? "System" : r.area === "mini" ? "Mini" : "Inbox"];
+  const names = { system: "System", mini: "Mini", space: "Space" };
+  const parts = r.area === "tool" ? [toolById(r.tool)?.title ?? r.tool, panelsOf(toolById(r.tool)).find((p) => p.id === r.panel)?.title] : [names[r.area] ?? "Inbox"];
   $("crumbs").replaceChildren(...parts.flatMap((p, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true", text: "/" }), h("span", { class: "sub", text: p })] : [h("span", { text: p })])));
 }
 function renderTabs() {
@@ -891,6 +898,55 @@ function showKeys() {
   dlg.querySelector(".dialog-foot .btn").focus();
 }
 
+// ---------- Space snapshots (rendering is a private, lazy-loaded DOM module) ----------
+let spaceModule = null, spaceRenderer = null, spaceLoading = null;
+async function showSpace() {
+  if (!spaceLoading) spaceLoading = import("/space.js").then((mod) => {
+    spaceModule = mod;
+    spaceRenderer = mod.createSpaceRenderer($("view-space"), { h, navigate, petSprite, pets: () => state.pets, packs: () => state.assetPacks });
+  }).catch((error) => {
+    clientError("acon", "space load", error);
+    $("view-space").replaceChildren(h("h1", { class: "lead", id: "space-lead", text: "Space" }), h("p", { class: "notice", text: "The space could not load. Details are in System." }));
+  });
+  await spaceLoading;
+  if (!spaceRenderer || state.route.area !== "space") return;
+  for (const tool of spaceTools()) {
+    if (!state.space.has(tool.tool)) state.space.set(tool.tool, { scene: null, cursor: 0, next: 0, busy: false, failed: false });
+    else state.space.get(tool.tool).next = 0;
+  }
+  renderSpace(true);
+  pollSpace();
+}
+function renderSpace(force = false) {
+  if (!spaceRenderer || state.route.area !== "space") return;
+  const allowed = new Set(spaceTools().map((t) => t.tool));
+  for (const key of state.space.keys()) if (!allowed.has(key)) state.space.delete(key);
+  spaceRenderer.update(spaceModule.mergeSpaceScenes(state.space), force);
+}
+async function pollSpace() {
+  if (state.route.area !== "space" || !spaceRenderer || state.ended) return;
+  await Promise.all(spaceTools().map(async (tool) => {
+    let entry = state.space.get(tool.tool);
+    if (!entry) { entry = { scene: null, cursor: 0, next: 0, busy: false, failed: false }; state.space.set(tool.tool, entry); }
+    if (entry.busy || Date.now() < entry.next) return;
+    const startedAt = Date.now();
+    const interval = Math.min(60000, Math.max(2000, tool.pollMs ?? 5000));
+    const due = entry.next || startedAt;
+    entry.next = due + (Math.floor((startedAt - due) / interval) + 1) * interval;
+    entry.busy = true;
+    const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor });
+    entry.busy = false;
+    if (res.status === 200 && res.data.scene) {
+      entry.sampledAt = Date.now();
+      entry.scene = res.data.scene;
+      entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 };
+      if (Number.isSafeInteger(res.data.cursor)) entry.cursor = res.data.cursor;
+      entry.failed = false;
+    } else entry.failed = true;
+  }));
+  renderSpace();
+}
+
 // ---------- pet and Mini ----------
 // Codex v2 sheets: 8x11 cells of 192x208; the pose row follows inbox facts only, and idle never animates.
 const PET_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -1060,9 +1116,14 @@ async function loadTools() {
   state.tools = Array.isArray(r.data.tools) ? r.data.tools : [];
   state.node = r.data.node ?? null;
   state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
+  state.assetPacks = Array.isArray(r.data.assetPacks) ? r.data.assetPacks.filter((p) => p && PET_ID.test(str(p.id)) && Array.isArray(p.images) && p.images.every((id) => PET_ID.test(str(id))) && Array.isArray(p.tile) && p.tile.length === 2 && p.tile.every((n) => Number.isSafeInteger(n) && n > 0)) : [];
   state.serverErrors = Array.isArray(r.data.errors) ? r.data.errors : [];
   renderRail();
   if (state.route.area === "system") renderSystem();
+  if (state.route.area === "space") {
+    if (spaceTools().length) renderSpace();
+    else navigate("inbox");
+  }
   return true;
 }
 
@@ -1146,6 +1207,7 @@ function tick() {
     if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox().catch((error) => clientError("acon", "inbox", error)); }
     if (now >= state.nextTools) { state.nextTools = now + TOOLS_MS; loadTools(); }
     pollPanel();
+    pollSpace();
   } else if (now - state.lastRequest >= PING_MS) post("/ping");
 }
 

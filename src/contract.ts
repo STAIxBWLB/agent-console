@@ -29,6 +29,8 @@ export interface ConsolePanelManifest {
     inbox?: boolean;
     /** snapshot({panel: "search", q, limit}) returns {hits: SearchHit[], total}. */
     search?: boolean;
+    /** snapshot({panel: "space", after}) returns {scene: SpaceScene}, public fields only. */
+    space?: boolean;
   };
 }
 
@@ -104,6 +106,22 @@ export interface SearchHit {
   detail?: string;
   at?: string;
   link: { panel: string; params?: Record<string, string> };
+}
+
+/** Public collaboration facts, never message bodies, task details, paths or symbols. */
+export interface SpaceScene {
+  actors: {
+    id: string; name: string; state: "idle" | "working" | "waiting" | "blocked" | "away";
+    pet?: string; card?: string;
+    marks?: { kind: "approval" | "inbox" | "paused" | "mode"; text: string }[];
+    link: { panel: string; params?: Record<string, string> };
+  }[];
+  zones: { id: string; title: string; kind?: "queue" | "work" | "review" | "done"; count: number }[];
+  cards: {
+    id: string; title: string; zone: string; owner?: string; tone?: Tone;
+    link: { panel: string; params?: Record<string, string> };
+  }[];
+  links?: { kind: "message" | "overlap" | "conflict" | "cohort"; from: string; to: string; label?: string; at?: string }[];
 }
 
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */

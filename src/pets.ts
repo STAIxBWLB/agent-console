@@ -1,6 +1,7 @@
-import { closeSync, lstatSync, openSync, readdirSync, readFileSync, readSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { validateImage } from "./assets.ts";
 
 /** A Codex v2 pet package (pet.json + an 8x11 sprite sheet of 192x208 cells), read from a local directory. */
 export interface PetPackage { id: string; name: string; description?: string; file: string; type: "image/webp" | "image/png" }
@@ -13,16 +14,6 @@ const SHEET_MAX = 8 * 1024 * 1024;
 /** Console pets first, then Codex's ($CODEX_HOME, then ~/.codex, since account switchers move CODEX_HOME); the first id wins. */
 export const petDirs = (home: string, env: Record<string, string | undefined> = process.env, user = homedir()): string[] =>
   [...new Set([join(home, "console", "pets"), ...(env.CODEX_HOME ? [join(env.CODEX_HOME, "pets")] : []), join(user, ".codex", "pets")])];
-
-function magic(file: string): "image/webp" | "image/png" | undefined {
-  const fd = openSync(file, "r");
-  try {
-    const head = Buffer.alloc(12);
-    readSync(fd, head, 0, 12, 0);
-    if (head.toString("latin1", 0, 4) === "RIFF" && head.toString("latin1", 8, 12) === "WEBP") return "image/webp";
-    if (head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  } finally { closeSync(fd); }
-}
 
 function readPackage(dir: string): PetPackage | string {
   const manifest = join(dir, "pet.json");
@@ -41,12 +32,9 @@ function readPackage(dir: string): PetPackage | string {
   if (row.spriteVersionNumber !== 2) return "spriteVersionNumber must be 2";
   if (typeof row.spritesheetPath !== "string" || !SHEET.test(row.spritesheetPath)) return "spritesheetPath must be a .webp or .png file name in the package";
   const file = join(dir, row.spritesheetPath);
-  const sheet = lstatSync(file, { throwIfNoEntry: false });
-  if (!sheet?.isFile()) return "the sprite sheet is missing or not a regular file";
-  if (sheet.size > SHEET_MAX) return "the sprite sheet is larger than 8 MB";
-  const type = magic(file);
-  if (!type) return "the sprite sheet is not a WebP or PNG image";
-  return { id: row.id, name: row.displayName.trim(), ...(row.description ? { description: row.description } : {}), file, type };
+  const image = validateImage(file, SHEET_MAX, "the sprite sheet");
+  if (typeof image === "string") return image;
+  return { id: row.id, name: row.displayName.trim(), ...(row.description ? { description: row.description } : {}), ...image };
 }
 
 /** Scans once; a missing directory is not a problem, an invalid package is skipped and named. */

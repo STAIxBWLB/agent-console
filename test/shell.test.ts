@@ -27,6 +27,19 @@ describe("shell files fit the CSP", () => {
     expect(calls).toBeGreaterThan(10);
     expect(leaks).toEqual([]);
   });
+  test("the Space area preserves an existing plugin's space route", () => {
+    const js = shell("shell.js");
+    const parser = js.slice(js.indexOf("function parseRoute()"), js.indexOf("function route()"));
+    const tool = { tool: "space", panels: [{ id: "notes", title: "Notes" }] };
+    const parse = (hash: string, present: boolean) => runInNewContext(`${parser}\nparseRoute()`, {
+      NODE: "local", location: { hash }, URLSearchParams,
+      spaceTools: () => [{}], toolById: (id: string) => present && id === "space" ? tool : undefined,
+      panelsOf: () => tool.panels,
+    }) as { area: string; tool?: string; panel?: string; params: Record<string, string> };
+    expect(parse("#/local/space", false).area).toBe("space");
+    expect(parse("#/local/space", true)).toEqual({ area: "tool", tool: "space", panel: "notes", params: {} });
+    expect(parse("#/local/~space", true).area).toBe("space");
+  });
   test("the type scale uses documented rem tokens and detail actions have a group role", () => {
     const css = shell("shell.css");
     expect(css).not.toMatch(/font-size:\s*\d+(?:\.\d+)?px/);
