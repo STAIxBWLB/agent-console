@@ -993,8 +993,8 @@ async function popOutMini() {
         pip = null;
         $("main").append(miniView);
         document.body.append(toastsEl);
-        miniView.hidden = state.route.area !== "mini";
-        renderMini(true);
+        miniView.hidden = state.ended || state.route.area !== "mini";
+        if (!state.ended) renderMini(true);
       }, { once: true });
       return;
     }
@@ -1056,6 +1056,8 @@ async function loadTools() {
 function endSession(message) {
   if (state.ended) return;
   state.ended = true;
+  // Mini in Picture-in-Picture must not stay apparently actionable: closing it returns Mini to the page, where it is hidden below.
+  if (pip) pip.close();
   closeSheet();
   for (const id of ["confirm", "palette", "keys"]) if ($(id).open) $(id).close();
   for (const v of document.querySelectorAll("main > .view, .panel-mount")) v.hidden = true;
