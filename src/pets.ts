@@ -58,8 +58,14 @@ export function loadPets(dirs: string[]): { pets: PetPackage[]; problems: string
     try { names = readdirSync(dir).sort(); } catch { continue; }
     for (const name of names) {
       const path = join(dir, name);
-      if (!lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) continue;
-      const result = readPackage(path);
+      // One unreadable package (permissions, a vanished file) is skipped and named; it never stops the console.
+      let result: PetPackage | string;
+      try {
+        if (!lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) continue;
+        result = readPackage(path);
+      } catch (error) {
+        result = `could not be read (${(error as NodeJS.ErrnoException).code ?? "error"})`;
+      }
       if (typeof result === "string") problems.push(`${path}: ${result}`);
       else if (!pets.some((p) => p.id === result.id)) pets.push(result);
     }

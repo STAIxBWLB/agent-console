@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadPets, petDirs } from "../src/pets.ts";
@@ -53,6 +53,18 @@ describe("loadPets", () => {
     expect(why("magic")).toContain("not a WebP or PNG");
     expect(why("link")).toContain("not a regular file");
     expect(why("huge")).toContain("larger than 8 MB");
+  });
+
+  test("an unreadable sheet skips that package and keeps the others", () => {
+    const dir = root();
+    pkg(dir, "locked", good("locked"));
+    pkg(dir, "open", good("open"));
+    chmodSync(join(dir, "locked", "spritesheet.webp"), 0o000);
+    try {
+      const { pets, problems } = loadPets([dir]);
+      expect(pets.map((p) => p.id)).toEqual(["open"]);
+      expect(problems).toEqual([`${join(dir, "locked")}: could not be read (EACCES)`]);
+    } finally { chmodSync(join(dir, "locked", "spritesheet.webp"), 0o600); }
   });
 
   test("looks in the console home, then CODEX_HOME, then ~/.codex", () => {
