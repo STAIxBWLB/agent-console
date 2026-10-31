@@ -20,7 +20,8 @@ export interface ConsoleError { at: string; tool: string; where: string; message
 const TICKET_MS = 60_000;
 const SESSION_MS = 60 * 60_000;
 const CONFIRM_MS = 60_000;
-const IDLE_MS = 5 * 60_000;
+// The process exits within 5 minutes of the last request: 4 min 55 s idle plus at most 5 s of provider close().
+const IDLE_MS = 5 * 60_000 - 5_000;
 const CALL_MS = 30_000;
 const LIMIT = 64;
 const ERRORS = 50;
@@ -142,6 +143,7 @@ export function startServer(options: ServerOptions) {
     idleTimeout: 60,
     async fetch(req): Promise<Response> {
       lastSeen = now();
+      armIdle();
       if (req.headers.get("host") !== host) return reject(403, "forbidden host");
       const requestOrigin = req.headers.get("origin");
       if (requestOrigin !== null && requestOrigin !== origin) return reject(403, "forbidden origin");
@@ -208,7 +210,7 @@ export function startServer(options: ServerOptions) {
   const stop = async () => {
     if (stopped) return;
     stopped = true;
-    clearInterval(timer);
+    clearTimeout(timer);
     tickets.clear();
     sessions.clear();
     confirms.clear();
@@ -223,7 +225,13 @@ export function startServer(options: ServerOptions) {
     void stop().finally(() => options.onIdle?.());
     return true;
   };
-  const timer = setInterval(checkIdle, Math.min(30_000, Math.max(1_000, idleMs / 4)));
+  // One timer, re-armed on every request, fires exactly idleMs after the last one.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  function armIdle() {
+    clearTimeout(timer);
+    timer = setTimeout(() => { if (!checkIdle()) armIdle(); }, Math.max(0, idleMs - (now() - lastSeen)));
+  }
+  armIdle();
 
   return {
     origin,

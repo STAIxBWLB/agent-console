@@ -805,6 +805,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); moveSelection(1); }
   else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); moveSelection(-1); }
   else if (!item) return;
+  else if (e.key === " " && $("sheet").contains(e.target)) return; // Space presses the focused sheet button
   else if (e.key === " ") { e.preventDefault(); if (state.peekKey === `item:${item.key}`) closeSheet(); else openPeek(item.key); }
   else if (e.key === "Enter" && e.target.classList?.contains("row-main")) { e.preventDefault(); openItem(item); }
   else if (e.key === "1" || e.key === "2") {

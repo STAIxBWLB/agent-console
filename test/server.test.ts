@@ -176,6 +176,13 @@ describe("actions and confirm tokens", () => {
 });
 
 describe("idle exit", () => {
+  test("the real timer stops the server once the idle time has passed", async () => {
+    let idled = false;
+    await boot({ idleMs: 150, onIdle: () => { idled = true; } });
+    await Bun.sleep(400);
+    expect(idled).toBe(true);
+  });
+
   test("a close() that throws at once still stops and runs onIdle", async () => {
     let t = Date.now();
     let idled = false;
