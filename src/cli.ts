@@ -4,7 +4,7 @@ import { startServer } from "./server.ts";
 import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { join } from "node:path";
-import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError } from "./install.ts";
+import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
 
 const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem and vault-mem
 
@@ -52,8 +52,8 @@ async function install(home: string, source: string | undefined, flags: Set<stri
       const { packages } = await fetchIndex(index);
       if (flags.has("--json")) console.log(JSON.stringify({ index, packages }));
       else {
-        console.log(`Packages in ${index}:`);
-        for (const p of packages) console.log(`${p.kind.padEnd(5)} ${p.id.padEnd(16)} ${`${Math.ceil(p.size / 1024)} KB`.padStart(8)}  ${p.name}${p.description ? `: ${p.description}` : ""}`);
+        console.log(`Packages in ${printable(index, 500)}:`);
+        for (const p of packages) console.log(`${p.kind.padEnd(5)} ${p.id.padEnd(16)} ${`${Math.ceil(p.size / 1024)} KB`.padStart(8)}  ${printable(p.name, 64)}${p.description ? `: ${printable(p.description)}` : ""}`);
         console.log("Install one with acon install <id>.");
       }
       return 0;
@@ -67,7 +67,7 @@ async function install(home: string, source: string | undefined, flags: Set<stri
     }
     return 0;
   } catch (error) {
-    console.error(`acon: ${error instanceof InstallError ? error.message : `install failed (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})`}`);
+    console.error(`acon: ${error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`}`);
     return 1;
   }
 }

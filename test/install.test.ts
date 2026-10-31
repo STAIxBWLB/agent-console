@@ -24,10 +24,11 @@ const reset = () => {
     "/console/packs/office/desk.glb": glb,
   };
 };
+let listDescription = "Fixture pet";
 const index = () => JSON.stringify({
   version: 1,
   packages: [
-    { kind: "pet", id: "gyul", name: "Gyul", description: "Fixture pet", manifest: "../pets/gyul/pet.json", size: sheet.length + petJson.length, files: { "pet.json": sha(petJson), "spritesheet.png": sha(sheet) } },
+    { kind: "pet", id: "gyul", name: "Gyul", description: listDescription, manifest: "../pets/gyul/pet.json", size: sheet.length + petJson.length, files: { "pet.json": sha(petJson), "spritesheet.png": sha(sheet) } },
     { kind: "pack", id: "office", name: "Office", manifest: "packs/office/pack.json", size: 1, files: { "pack.json": sha(packJson), "floor.png": sha(floor), "desk.glb": sha(glb) } },
   ],
 });
@@ -92,6 +93,28 @@ describe("install by name (AC1)", () => {
 
   test("an unknown name points at --list", async () => {
     await expect(installPackage("nope", opts(home()))).rejects.toThrow("acon install --list");
+  });
+
+  test("a bare name goes to the index even when a same-named directory is in the cwd", async () => {
+    const h = home(); const cwd = home();
+    const decoy = join(cwd, "gyul");
+    mkdirSync(decoy); writeFileSync(join(decoy, "pet.json"), petJson); writeFileSync(join(decoy, "spritesheet.png"), pngImage(6, 6));
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", "gyul"], { cwd, env: { ...process.env, AGENTHUB_HOME: h, ACON_ASSETS_INDEX: `${base}/console/index.json` }, stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(await proc.exited).toBe(0);
+    expect(out).toContain("every file matched its sha256");
+    expect(readFileSync(join(h, "console", "pets", "gyul", "spritesheet.png")).equals(sheet)).toBe(true);
+  });
+
+  test("--list strips control characters from index strings", async () => {
+    listDescription = "evil\u001b[2J\u001b]0;title\u0007\u009b done";
+    try {
+      const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", "--list"], { env: { ...process.env, AGENTHUB_HOME: home(), ACON_ASSETS_INDEX: `${base}/console/index.json` }, stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      expect(await proc.exited).toBe(0);
+      expect(out).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+      expect(out).toContain("evil[2J]0;title done");
+    } finally { listDescription = "Fixture pet"; }
   });
 
   test("acon install --list prints the index", async () => {

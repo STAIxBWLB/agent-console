@@ -77,7 +77,7 @@ acon ships no art. Pets and office packs are installed separately:
 acon install --list                 # what the index offers
 acon install gyul                   # a package from the index; every file's sha256 is checked
 acon install https://host/x/pet.json  # any https host (pet.json or pack.json); not hash-verified
-acon install ./my-pet               # a local folder with a pet.json or pack.json; not hash-verified
+acon install ./my-pet               # a local folder (written as a path; a bare name always means the index) with a pet.json or pack.json; not hash-verified
 acon install gyul --force           # replace an installed package with the same id
 ```
 
