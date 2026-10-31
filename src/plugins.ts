@@ -198,9 +198,11 @@ export function providerProblems(provider: unknown): string[] {
   return out;
 }
 
+export class TimeoutError extends Error {}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000} s`)), ms); })])
+  return Promise.race([promise, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new TimeoutError(`${what} timed out after ${ms / 1000} s`)), ms); })])
     .finally(() => clearTimeout(timer));
 }
 

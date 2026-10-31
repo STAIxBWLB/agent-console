@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
 import type { ActionResult } from "./contract.ts";
-import { withTimeout, type PluginEntry } from "./plugins.ts";
+import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 
 export interface ServerOptions {
   plugins: PluginEntry[];
@@ -11,6 +11,8 @@ export interface ServerOptions {
   pluginsError?: string;
   now?: () => number;
   idleMs?: number;
+  /** Limit for one provider call; 30 s by default. */
+  callMs?: number;
   onIdle?: () => void;
   log?: (line: string) => void;
 }
@@ -46,6 +48,7 @@ const HEADERS = {
 export function startServer(options: ServerOptions) {
   const now = options.now ?? Date.now;
   const idleMs = options.idleMs ?? IDLE_MS;
+  const callMs = options.callMs ?? CALL_MS;
   const log = options.log ?? ((line: string) => console.error(`acon: ${line}`));
   const startedAt = new Date(now()).toISOString();
   const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
@@ -69,7 +72,7 @@ export function startServer(options: ServerOptions) {
   const prune = (map: Map<string, { expires: number }>) => { for (const [key, entry] of map) if (entry.expires <= now()) map.delete(key); };
   const cap = (map: Map<string, unknown>) => { if (map.size >= LIMIT) map.delete(map.keys().next().value!); };
   const cookieOf = (req: Request) => req.headers.get("cookie")?.split(";").map((v) => v.trim()).find((v) => v.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
-  const call = <T>(tool: string, where: string, run: () => Promise<T>) => withTimeout(run(), CALL_MS, `${tool} ${where}`);
+  const call = <T>(tool: string, where: string, run: () => Promise<T>) => withTimeout(run(), callMs, `${tool} ${where}`);
 
   const toolList = () => options.plugins.map((p) => p.status === "ready" && p.manifest
     ? { tool: p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, capabilities: p.manifest.capabilities ?? {} }
@@ -115,10 +118,18 @@ export function startServer(options: ServerOptions) {
       request = { ...rest, confirmed: true, fingerprint: bound.fingerprint };
     }
     let result: ActionResult;
+    const running = Promise.resolve().then(() => entry.provider!.action(request as { action: string }));
     try {
-      result = await call(entry.tool, "action", () => entry.provider!.action(request as { action: string }));
+      result = await withTimeout(running, callMs, `${entry.tool} action`);
       if (!result || typeof result !== "object" || typeof (result as { ok?: unknown }).ok !== "boolean") throw new Error("action must return {ok: boolean}");
     } catch (error) {
+      if (error instanceof TimeoutError) {
+        // The provider may still finish: say the outcome is unknown, and log it in System when it settles.
+        record(entry.tool, `action ${name}`, new Error(`still running after ${callMs / 1000} s; outcome unknown`));
+        running.then((late) => record(entry.tool, `action ${name}`, new Error(`finished after the timeout: ${late && typeof late === "object" && "ok" in late && late.ok ? "ok" : "not ok"}`)),
+          (late) => record(entry.tool, `action ${name}`, late));
+        return reject(504, `${entry.tool} is still working on ${name}; check System for the outcome before you retry`, { indeterminate: true });
+      }
       record(entry.tool, `action ${name}`, error);
       return reject(502, `${entry.tool} could not run ${name}; details are in System`);
     }

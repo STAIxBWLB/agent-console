@@ -175,6 +175,23 @@ describe("actions and confirm tokens", () => {
   });
 });
 
+describe("slow actions", () => {
+  test("an action past the time limit is reported as still running, and its outcome lands in System", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    provider.action = () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 300));
+    const server = startServer({ plugins: [{ tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider }], version: "t", pluginsDir: "/tmp", log: () => {}, callMs: 100 });
+    running.push(server);
+    const cookie = await login(server);
+    const res = await post(server, "/p/demo/action", { action: "accept", id: "n1" }, cookie);
+    expect(res.status).toBe(504);
+    expect(await res.json()).toEqual(expect.objectContaining({ indeterminate: true }));
+    await Bun.sleep(350);
+    const tools = await (await post(server, "/tools", {}, cookie)).json() as { errors: { message: string }[] };
+    expect(tools.errors[0]?.message).toBe("finished after the timeout: ok");
+  });
+});
+
 describe("idle exit", () => {
   test("the real timer stops the server once the idle time has passed", async () => {
     let idled = false;

@@ -738,7 +738,13 @@ function showKeys() {
 }
 
 // ---------- system ----------
-function renderSystem() {
+let systemSig = "";
+function renderSystem(force = false) {
+  const sig = JSON.stringify([state.node, state.tools, state.serverErrors, state.clientErrors, themeChoice(), state.offline]);
+  if (!force && sig === systemSig && $("view-system").childElementCount) return;
+  systemSig = sig;
+  // Keep keyboard focus on the same control across re-renders.
+  const fid = $("view-system").contains(document.activeElement) ? document.activeElement.dataset.fid : undefined;
   const node = state.node ?? {};
   const errors = [...state.serverErrors.map((e) => ({ ...e, where: e.where })), ...state.clientErrors.map((e) => ({ ...e, where: `${e.where} (browser)` }))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const choice = themeChoice();
@@ -752,8 +758,8 @@ function renderSystem() {
     h("div", { class: "cards" },
       h("section", { class: "card" }, h("h2", { text: "Node" }), dl),
       h("section", { class: "card" }, h("h2", { text: "Appearance" }),
-        h("div", { class: "segmented", role: "group", "aria-label": "Theme" }, [["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) => h("button", { type: "button", "aria-pressed": String(choice === v), onclick: () => applyTheme(v), text: l }))),
-        h("p", { class: "sub" }, h("button", { type: "button", class: "link", onclick: showKeys, text: "Keyboard shortcuts" }))),
+        h("div", { class: "segmented", role: "group", "aria-label": "Theme" }, [["system", "System"], ["light", "Light"], ["dark", "Dark"]].map(([v, l]) => h("button", { type: "button", "data-fid": `theme-${v}`, "aria-pressed": String(choice === v), onclick: () => applyTheme(v), text: l }))),
+        h("p", { class: "sub" }, h("button", { type: "button", class: "link", "data-fid": "keys", onclick: showKeys, text: "Keyboard shortcuts" }))),
       h("section", { class: "card wide" }, h("h2", { text: `Plugins (${state.tools.length})` }),
         node.pluginsError ? h("p", { class: "notice", role: "alert", text: node.pluginsError }) : null,
         state.tools.length ? h("ul", { class: "list" }, state.tools.map((t) => h("li", {}, h("strong", { text: t.title ?? t.tool }), h("span", { class: "meta mono", text: t.tool }), statusChip(t.status),
@@ -762,7 +768,9 @@ function renderSystem() {
       h("section", { class: "card wide" }, h("h2", { text: `Errors (${errors.length})` }),
         errors.length ? h("ul", { class: "list" }, errors.map((e) => h("li", {}, h("span", { class: "meta mono", text: new Date(e.at).toLocaleTimeString() }), h("strong", { text: e.tool }), h("span", { class: "meta", text: e.where }), h("span", { text: e.message }))))
           : h("p", { class: "sub", text: "No errors since the console started." }))));
+  if (fid) $("view-system").querySelector(`[data-fid="${fid}"]`)?.focus({ preventScroll: true });
 }
+
 async function loadTools() {
   const r = await post("/tools");
   if (r.status !== 200) return false;
