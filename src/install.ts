@@ -105,7 +105,7 @@ export async function fetchIndex(url: string, timeoutMs?: number): Promise<Asset
   return parseIndex(await fetchCapped(url, LIMITS.index, "index", timeoutMs));
 }
 
-interface Planned { name: string; max: number; label: string; model?: boolean }
+interface Planned { name: string; max: number; label: string }
 
 /** Reads the manifest just enough to list the files it references; full validation runs on the staged folder. */
 function plan(kind: PackageKind, bytes: Buffer): { id: string; files: Planned[] } {
@@ -116,10 +116,10 @@ function plan(kind: PackageKind, bytes: Buffer): { id: string; files: Planned[] 
   if (!row || typeof row !== "object" || Array.isArray(row)) return fail(`${name} must be an object`);
   if (typeof row.id !== "string" || !ID.test(row.id)) return fail(`${name}: id must match [a-z0-9][a-z0-9-]{0,31}`);
   const files: Planned[] = [];
-  const add = (file: unknown, max: number, label: string, model = false) => {
+  const add = (file: unknown, max: number, label: string) => {
     if (typeof file !== "string" || !FILE.test(file) || file === "." || file === "..") return fail(`${label}: file name ${JSON.stringify(file)} must be a plain name in the package`);
     if (file === name) return fail(`${label}: may not reuse ${name}`);
-    if (!files.some((f) => f.name === file)) files.push({ name: file, max, label, ...(model ? { model } : {}) });
+    if (!files.some((f) => f.name === file)) files.push({ name: file, max, label });
   };
   if (kind === "pet") add(row.spritesheetPath, LIMITS.sheet, "the sprite sheet");
   else {
@@ -129,7 +129,7 @@ function plan(kind: PackageKind, bytes: Buffer): { id: string; files: Planned[] 
       if (!map || typeof map !== "object" || Array.isArray(map)) return fail(`pack.json: ${field} must be an object`);
       for (const [logical, file] of Object.entries(map)) {
         if (field === "models" && (typeof file !== "string" || !file.endsWith(".glb"))) return fail(`model ${logical}: file must be a .glb name`);
-        add(file, field === "images" ? LIMITS.image : LIMITS.model, `${field === "images" ? "image" : "model"} ${logical}`, field === "models");
+        add(file, field === "images" ? LIMITS.image : LIMITS.model, `${field === "images" ? "image" : "model"} ${logical}`);
       }
     }
   }
@@ -145,14 +145,10 @@ function writePrivate(file: string, bytes: Uint8Array): void {
   try { let at = 0; while (at < bytes.byteLength) at += writeSync(fd, bytes, at); } finally { closeSync(fd); }
 }
 
-/** Runs the same validation the console runs at start, plus GLB magic for models. */
-function validateStaged(kind: PackageKind, dir: string, files: Planned[]): string | undefined {
+/** Runs the same validation the console runs at start; validateAssetPack also checks every model as a self-contained GLB 2. */
+function validateStaged(kind: PackageKind, dir: string): string | undefined {
   const result = kind === "pet" ? validatePetPackage(dir) : validateAssetPack(dir);
   if (typeof result === "string") return result;
-  for (const f of files.filter((p) => p.model)) {
-    const head = readFileSync(join(dir, f.name)).subarray(0, 4).toString("latin1");
-    if (head !== "glTF") return `${f.label} is not a binary glTF (GLB) file`;
-  }
 }
 
 function kindOfManifest(name: string): PackageKind {
@@ -231,7 +227,7 @@ export async function installPackage(source: string, o: InstallOptions): Promise
       if (total > LIMITS.package) fail(`package ${id} is larger than ${LIMITS.package} bytes`);
       writePrivate(join(stage, f.name), bytes);
     }
-    const problem = validateStaged(src.kind, stage, files);
+    const problem = validateStaged(src.kind, stage);
     if (problem) fail(`${src.kind} ${id}: ${problem}`);
     const target = join(root, id);
     if (exists(target)) {
