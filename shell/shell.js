@@ -997,8 +997,11 @@ async function popOutMini() {
       renderMini(true);
       pip.addEventListener("pagehide", () => {
         // An open confirmation in the closing window is cancelled, never left pending.
-        if (confirmEl.open && confirmEl.ownerDocument !== document) confirmEl.dispatchEvent(new Event("cancel"));
-        document.body.append(confirmEl);
+        // Only a dialog that lives in the closing window comes back (cancelled if open); one open in the console stays modal.
+        if (confirmEl.ownerDocument !== document) {
+          if (confirmEl.open) confirmEl.dispatchEvent(new Event("cancel"));
+          document.body.append(confirmEl);
+        }
         pip = null;
         $("main").append(miniView);
         document.body.append(toastsEl);
