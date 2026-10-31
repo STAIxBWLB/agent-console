@@ -106,8 +106,8 @@ kbd, code, .mono { font-family: var(--acon-font-mono); font-size: var(--acon-tex
 kbd { padding: 0 5px; border: 1px solid var(--acon-line-2); border-radius: 4px; background: var(--acon-surface); color: var(--acon-text-2); }
 :focus-visible { outline: 3px solid var(--acon-focus); outline-offset: 2px; }
 [hidden] { display: none !important; }
-.skip { position: absolute; left: 8px; top: -48px; padding: 8px 12px; background: var(--acon-surface); border-radius: var(--acon-radius-2); z-index: 10; }
-.skip:focus { top: 8px; }
+.skip { position: absolute; left: 8px; top: 8px; transform: translateY(calc(-100% - 16px)); padding: 8px 12px; background: var(--acon-surface); border-radius: var(--acon-radius-2); z-index: 10; }
+.skip:focus { transform: none; }
 .ic { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Layout */
@@ -129,7 +129,7 @@ kbd { padding: 0 5px; border: 1px solid var(--acon-line-2); border-radius: 4px; 
 .crumbs .sep { color: var(--acon-text-2); font-weight: 400; }
 .crumbs .sub { color: var(--acon-text-2); font-weight: 400; }
 .search-open { display: flex; align-items: center; gap: var(--acon-space-2); flex: 0 1 360px; min-width: 0; margin-left: auto; min-height: 34px; padding: 0 10px; border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); background: var(--acon-bg); color: var(--acon-text-2); cursor: pointer; text-align: left; }
-.search-open .search-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.search-open .search-label { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .live { display: flex; align-items: center; gap: 6px; color: var(--acon-text-2); font-size: var(--acon-text-sm); white-space: nowrap; }
 .live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acon-ok); }
 .live.stale .dot { background: var(--acon-warn); border-radius: 2px; }

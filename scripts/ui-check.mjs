@@ -153,6 +153,27 @@ async function settle(page) {
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
 }
 
+async function checkSkipKeyboard(page) {
+  await page.locator("#main").focus();
+  let reached = false;
+  for (let i = 0; i < 12; i += 1) {
+    await page.keyboard.press("Shift+Tab");
+    reached = await page.locator(".skip").evaluate((el) => document.activeElement === el);
+    if (reached) break;
+  }
+  const visible = reached && await page.locator(".skip").evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    return box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth;
+  });
+  const findings = visible ? [] : [{ kind: "skip-link-focus", detail: "Keyboard traversal did not reveal a fully visible skip link" }];
+  if (reached) {
+    await page.keyboard.press("Enter");
+    if (!(await page.locator("#main").evaluate((el) => document.activeElement === el))) findings.push({ kind: "skip-link-target", detail: "Activating the skip link did not focus main" });
+  }
+  await page.locator("#main").focus();
+  return findings;
+}
+
 // Runs in the browser. Layout checks use actual rendered boxes; intentional tab scrolling is exempt.
 function measurePage() {
   const findings = [];
@@ -164,10 +185,18 @@ function measurePage() {
   };
   const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : el.className ? `.${String(el.className).trim().replace(/\s+/g, ".")}` : ""}`;
   if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) findings.push({ kind: "horizontal-scroll", detail: `Document width ${document.documentElement.scrollWidth} exceeds viewport ${document.documentElement.clientWidth}` });
+  // Hidden-until-focused controls must be completely offscreen, even by a fraction of a pixel.
+  // Pairwise overlap tolerance cannot establish this accessibility invariant.
+  const skip = document.querySelector(".skip");
+  if (!skip) findings.push({ kind: "skip-link-missing", detail: "No skip-to-content link" });
+  else if (document.activeElement !== skip) {
+    const box = skip.getBoundingClientRect();
+    if (box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth) findings.push({ kind: "skip-link-visible", detail: `Unfocused skip link intersects viewport: top ${box.top}, bottom ${box.bottom}` });
+  }
   const dialog = document.querySelector("dialog[open]");
   const sheet = document.querySelector("#sheet:not([hidden])");
   const surface = dialog ?? sheet ?? document.querySelector("#app");
-  const textSelectors = [".row-title", ".row-sub", ".tab[aria-selected='true']", ".opt-title", ".opt-sub", ".sheet-head h2", ".ui-detail-head h2"];
+  const textSelectors = [".search-label", ".row-title", ".row-sub", ".tab[aria-selected='true']", ".opt-title", ".opt-sub", ".sheet-head h2", ".ui-detail-head h2"];
   for (const selector of textSelectors) {
     for (const el of surface.querySelectorAll(selector)) {
       if (!shown(el)) continue;
@@ -276,7 +305,7 @@ async function runScenario(ticket, scenario) {
       document.documentElement.style.fontSize = `${textPercent}%`;
       if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
     }, { ...scenario, force: options.forceOverflow });
-    await capture(page, scenario, "inbox");
+    await capture(page, scenario, "inbox", await checkSkipKeyboard(page));
     await page.locator("#view-inbox .row-main").first().focus();
     await page.keyboard.press("Space");
     await page.locator("#sheet:not([hidden])").waitFor();
