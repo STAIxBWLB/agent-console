@@ -54,8 +54,10 @@ export function createSpaceViewController(host) {
   };
   plane.addEventListener("focusin", describe); plane.addEventListener("pointerover", describe);
   plane.addEventListener("focusout", clearDescription); plane.addEventListener("pointerout", clearDescription);
+  let lastProjection = null;
   const project = (projection) => {
     if (view !== "3d" || !state) return;
+    lastProjection = projection;
     for (const kind of ["actors", "cards"]) for (const point of projection[kind]) {
       const item = state[kind].find((row) => row.id === point.id);
       if (!item) continue;
@@ -116,6 +118,9 @@ export function createSpaceViewController(host) {
       if (!cameraTouched) camera = { ...camera, yaw: width < height ? 90 : 45 };
       const input = { ...state, width, height, theme: getComputedStyle(root).color };
       webgl.update(input); webgl.setCamera(camera);
+      // A forced refresh with unchanged facts resets the buttons to flat coordinates, but the renderer then draws
+      // nothing new, so put them back on the last projection now; a fresh draw will overwrite it if one follows.
+      if (lastProjection) project(lastProjection);
       const current = webgl, turn = generation;
       const ready = current.ready;
       if (ready !== lastReady) { lastReady = ready; delete mount.dataset.ready; }
@@ -128,7 +133,7 @@ export function createSpaceViewController(host) {
     try { localStorage.setItem(STORAGE_KEY, view); } catch { /* Optional persistence. */ }
     if (next === "3d" && !available) message = "3D is unavailable. Room view is active.";
     fallback.hidden = !message; fallback.textContent = message;
-    if (view !== "3d") { webgl?.destroy(); webgl = null; lastReady = null; mount.replaceChildren(); delete mount.dataset.ready; }
+    if (view !== "3d") { webgl?.destroy(); webgl = null; lastReady = null; lastProjection = null; mount.replaceChildren(); delete mount.dataset.ready; }
     plane.style.removeProperty("width"); plane.style.removeProperty("min-width");
     if (state) plane.style.height = `${state.layout.height}px`;
     apply();

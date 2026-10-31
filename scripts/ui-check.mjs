@@ -828,6 +828,11 @@ async function runSpaceViews(ticket) {
       evidence.initial3d = await geometry();
       await page.locator(".space-camera button").filter({ hasText: "Rotate left" }).click(); await settle(page);
       evidence.rotated3d = await geometry();
+      // Navigating to Space while on Space (navigate() on the same hash calls route()) forces a refresh with unchanged
+      // facts; the overlay must stay projected. A link to the same hash fires no hashchange, so dispatch the route.
+      await page.evaluate(() => window.dispatchEvent(new HashChangeEvent("hashchange"))); await settle(page);
+      evidence.renavigated3d = await geometry();
+      if (evidence.renavigated3d.errors.some((error) => !Number.isFinite(error) || error > 8)) findings.push({ kind: "space-overlay-renavigate", detail: JSON.stringify(evidence.renavigated3d.errors) });
       // Read the current drawing buffer in the same frame as a camera invalidation.
       // This catches an opaque backdrop accidentally painting over every pet sprite.
       evidence.spritePixels = await page.evaluate(() => {
