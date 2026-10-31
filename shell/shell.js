@@ -1098,6 +1098,7 @@ function renderSystem(force = false) {
         state.pets.length
           ? h("div", { class: "segmented", role: "group", "aria-labelledby": "pet-choice" }, [["off", "Off"], ...state.pets.map((p) => [p.id, p.name])].map(([v, l]) => h("button", { type: "button", "data-fid": `pet-${v}`, "aria-pressed": String((petChoice()?.id ?? "off") === v), onclick: () => { store("acon.pet", v); renderPet(); renderMini(true); renderSystem(); }, text: l })))
           : h("p", { class: "sub", text: "No pet packages found. Put a Codex v2 pet (pet.json and its sprite sheet) in ~/.agenthub/console/pets/<id>/ or ~/.codex/pets/<id>/." }),
+        h("p", { class: "sub" }, h("span", { text: "Get more with " }), h("code", { text: "acon install --list" }), h("span", { text: ", then run acon ui again." })),
         h("p", { class: "sub" }, h("button", { type: "button", class: "link", "data-fid": "keys", onclick: showKeys, text: "Keyboard shortcuts" }))),
       h("section", { class: "card wide" }, h("h2", { text: `Plugins (${state.tools.length})` }),
         node.pluginsError ? h("p", { class: "notice", role: "alert", text: node.pluginsError }) : null,

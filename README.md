@@ -69,6 +69,41 @@ Pack ids and logical image names match `[a-z0-9][a-z0-9-]{0,31}`. Each image is 
 
 Motion follows reported facts: working actors use pet row 7, waiting row 6, blocked row 5; idle and away stay still. Card moves transition for at most 0.8 s and new message links fade over 10 s. The first snapshot, a gap over 3 s or more than six changed records settles without transition or replay. Unchanged snapshots write nothing to the scene DOM. Reduced motion removes animation, and stale tool data is labelled and drawn still. There is no scene frame loop. Providers must supply public titles and identifiers; Space never reads message bodies or invents task attribution.
 
+### Install packages
+
+acon ships no art. Pets and office packs are installed separately:
+
+```sh
+acon install --list                 # what the index offers
+acon install gyul                   # a package from the index; every file's sha256 is checked
+acon install https://host/x/pet.json  # any https host (pet.json or pack.json); not hash-verified
+acon install ./my-pet               # a local folder (written as a path; a bare name always means the index) with a pet.json or pack.json; not hash-verified
+acon install gyul --force           # replace an installed package with the same id
+```
+
+Pets go to `$AGENTHUB_HOME/console/pets/<id>/` and packs to `$AGENTHUB_HOME/console/assets/<id>/` (folders 0700, files 0600). To remove a package, delete its folder. The console scans these folders at start, so run `acon ui` again to see a new package.
+
+The index is `https://assets.entelecheia.ai/console/index.json`; `ACON_ASSETS_INDEX` overrides it. Its form:
+
+```json
+{ "version": 1,
+  "packages": [
+    { "kind": "pet", "id": "gyul", "name": "Gyul", "description": "...", "manifest": "../pets/gyul/pet.json",
+      "size": 210494, "files": { "pet.json": "<sha256>", "spritesheet.webp": "<sha256>" } },
+    { "kind": "pack", "id": "office", "name": "Office", "manifest": "packs/office/pack.json",
+      "size": 3967552, "files": { "pack.json": "<sha256>", "floor.webp": "<sha256>", "desk.glb": "<sha256>" } }
+  ] }
+```
+
+`manifest` resolves against the index URL and every file is a plain name in the manifest's folder. A pack may list `models` (logical name to `.glb` file) next to `images`.
+
+Rules:
+
+- Only `https:`; `http:` only on loopback hosts. Redirects are followed only to `https:`.
+- Each file has a 30 s timeout and a cap enforced while streaming: manifest 16 KB, pet sheet 8 MB, pack image 4 MB, model 4 MB (glTF binary magic), 32 MB per package.
+- Files are written to a staging folder under `$AGENTHUB_HOME/console/.install/`, checked with the same validation the console runs at start, then moved into place with one rename. A failure leaves nothing behind. An installed id is refused before any download unless `--force` is given, and `--force` replaces the old folder only after the new one is complete.
+- Nothing is executed.
+
 ## Writing a plugin
 
 A tool registers by writing `$AGENTHUB_HOME/console/plugins/<tool>.json` (default home `~/.agenthub`; directory mode 0700):

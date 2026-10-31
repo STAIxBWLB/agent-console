@@ -15,7 +15,8 @@ const SHEET_MAX = 8 * 1024 * 1024;
 export const petDirs = (home: string, env: Record<string, string | undefined> = process.env, user = homedir()): string[] =>
   [...new Set([join(home, "console", "pets"), ...(env.CODEX_HOME ? [join(env.CODEX_HOME, "pets")] : []), join(user, ".codex", "pets")])];
 
-function readPackage(dir: string): PetPackage | string {
+/** Validates one pet package directory; shared with the installer. */
+export function validatePetPackage(dir: string): PetPackage | string {
   const manifest = join(dir, "pet.json");
   const stat = lstatSync(manifest, { throwIfNoEntry: false });
   if (!stat?.isFile()) return "pet.json is missing or not a regular file";
@@ -50,7 +51,7 @@ export function loadPets(dirs: string[]): { pets: PetPackage[]; problems: string
       let result: PetPackage | string;
       try {
         if (!lstatSync(path, { throwIfNoEntry: false })?.isDirectory()) continue;
-        result = readPackage(path);
+        result = validatePetPackage(path);
       } catch (error) {
         result = `could not be read (${(error as NodeJS.ErrnoException).code ?? "error"})`;
       }

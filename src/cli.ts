@@ -4,27 +4,37 @@ import { startServer } from "./server.ts";
 import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { join } from "node:path";
+import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
 
 const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem and vault-mem
 
 Usage:
   acon ui [--no-open] [--json]   serve the console on 127.0.0.1 and print a one-time link
   acon plugins [--json]          list registered plugins and verify their module hashes
+  acon install <name|https URL|dir> [--force]
+                                 install a pet or asset package
+  acon install --list [--json]   list the packages in the index
   acon --version | help
 
 Plugins register a manifest under $AGENTHUB_HOME/console/plugins (default ~/.agenthub).
+Packages install to $AGENTHUB_HOME/console/pets/<id> or console/assets/<id>; ACON_ASSETS_INDEX overrides the index URL.
 The ui server exits 5 minutes after the last request.`;
 
-const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"] };
+const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], install: ["--list", "--force", "--json"] };
 
-function parse(argv: string[]): { command: string; flags: Set<string> } | string {
+function parse(argv: string[]): { command: string; flags: Set<string>; args: string[] } | string {
   const [command = "help", ...rest] = argv;
-  if (["help", "--help", "-h", "--version", "-v", "version"].includes(command)) return { command, flags: new Set() };
+  if (["help", "--help", "-h", "--version", "-v", "version"].includes(command)) return { command, flags: new Set(), args: [] };
   const allowed = COMMANDS[command];
   if (!allowed) return `unknown command: ${command}`;
-  const unknown = rest.find((arg) => !allowed.includes(arg));
+  const args = command === "install" ? rest.filter((arg) => !arg.startsWith("--")) : [];
+  const unknown = rest.find((arg) => !args.includes(arg) && !allowed.includes(arg));
   if (unknown) return `unknown option for ${command}: ${unknown}`;
-  return { command, flags: new Set(rest) };
+  const flags = new Set(rest.filter((arg) => !args.includes(arg)));
+  if (command === "install") {
+    if (flags.has("--list") ? args.length > 0 || flags.has("--force") : args.length !== 1) return "install takes one package name, https URL or directory, or --list";
+  }
+  return { command, flags, args };
 }
 
 const summary = (p: PluginEntry) => ({ tool: p.tool, status: p.status, ...(p.reason ? { reason: p.reason } : {}), file: p.file });
@@ -35,13 +45,41 @@ function openBrowser(url: string): void {
   catch { console.error("acon: could not open a browser; open the link above yourself"); }
 }
 
+async function install(home: string, source: string | undefined, flags: Set<string>): Promise<number> {
+  const index = process.env.ACON_ASSETS_INDEX || DEFAULT_INDEX;
+  try {
+    if (flags.has("--list")) {
+      const { packages } = await fetchIndex(index);
+      if (flags.has("--json")) console.log(JSON.stringify({ index, packages }));
+      else {
+        console.log(`Packages in ${printable(index, 500)}:`);
+        for (const p of packages) console.log(`${p.kind.padEnd(5)} ${p.id.padEnd(16)} ${`${Math.ceil(p.size / 1024)} KB`.padStart(8)}  ${printable(p.name, 64)}${p.description ? `: ${printable(p.description)}` : ""}`);
+        console.log("Install one with acon install <id>.");
+      }
+      return 0;
+    }
+    const r = await installPackage(source!, { home, index, force: flags.has("--force") });
+    if (flags.has("--json")) console.log(JSON.stringify(r));
+    else {
+      console.log(`acon: ${r.replaced ? "replaced" : "installed"} ${r.kind} ${r.id} in ${r.dir} (${r.files.length} files)`);
+      console.log(r.verified ? "acon: every file matched its sha256 in the index." : "acon: not hash-verified (installed by URL or directory); the package passed the same checks the console runs.");
+      console.log("acon: run acon ui again to see it.");
+    }
+    return 0;
+  } catch (error) {
+    console.error(`acon: ${error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`}`);
+    return 1;
+  }
+}
+
 export async function main(argv: string[]): Promise<number> {
   const parsed = parse(argv);
   if (typeof parsed === "string") { console.error(`acon: ${parsed}\n\n${USAGE}`); return 2; }
-  const { command, flags } = parsed;
+  const { command, flags, args } = parsed;
   if (["--version", "-v", "version"].includes(command)) { console.log(pkg.version); return 0; }
   if (["help", "--help", "-h"].includes(command)) { console.log(USAGE); return 0; }
   const home = familyHome();
+  if (command === "install") return await install(home, args[0], flags);
   const scan = scanPlugins(home);
   if (command === "plugins") {
     if (flags.has("--json")) console.log(JSON.stringify({ dir: scan.dir, ...(scan.error ? { error: scan.error } : {}), plugins: scan.entries.map(summary) }));
