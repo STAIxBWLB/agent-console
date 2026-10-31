@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 /**
  * Console plugin contract, api 1. Changes are additive only.
  * Plan of record: entelecheia/ai-workspace#60 §2.3; UX additions: STAIxBWLB/vault-mem#48.
