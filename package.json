@@ -13,7 +13,8 @@
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "three": "0.187.0"
   },
   "exports": {
     ".": "./src/contract.ts",

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { loadAssetPacks } from "../src/assets.ts";
 import { startServer } from "../src/server.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
-import { writeAssetPack } from "./fixtures/asset-pack.ts";
+import { glbModel, writeAssetPack } from "./fixtures/asset-pack.ts";
 
 const temps: string[] = [];
 const servers: ReturnType<typeof startServer>[] = [];
@@ -13,9 +13,9 @@ afterEach(async () => {
   while (servers.length) await servers.pop()!.stop();
   while (temps.length) rmSync(temps.pop()!, { recursive: true, force: true });
 });
-async function boot(marker = false) {
+async function boot(marker = false, models = false) {
   const dir = mkdtempSync(join(tmpdir(), "acon-space-server-")); temps.push(dir);
-  const packDir = writeAssetPack(dir);
+  const packDir = writeAssetPack(dir, "office", models ? { models: { desk: "desk.glb" } } : {});
   const { packs } = loadAssetPacks([dir]);
   const plugin = createDemoPlugin();
   const provider = await plugin.open({ home: dir, log() {} });
@@ -76,4 +76,32 @@ test("asset routes require sessions, expose safe metadata and refuse replaced fi
   expect((await get("/assets/office/floor")).status).toBe(404);
   truncateSync(floor, 4 * 1024 * 1024 + 1);
   expect((await get("/assets/office/floor")).status).toBe(404);
+});
+
+test("model routes require sessions, expose logical names and revalidate every response", async () => {
+  const { server, get, post, packDir, dir } = await boot(false, true);
+  expect((await fetch(`${server.origin}/models/office/desk`)).status).toBe(401);
+  const response = await get("/models/office/desk");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toBe("model/gltf-binary");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  expect(Buffer.from(await response.arrayBuffer()).equals(glbModel())).toBe(true);
+  const tools = await (await post("/tools", {})).json();
+  expect(tools.assetPacks[0].models).toEqual(["desk"]);
+  expect(JSON.stringify(tools.assetPacks)).not.toContain(dir);
+  for (const route of ["/models/unknown/desk", "/models/office/unknown", "/models/office/constructor", "/models/office/..%2Fdesk", "/models/office/desk.glb"]) expect((await get(route)).status).toBe(404);
+  const moved = `${packDir}-moved`;
+  renameSync(packDir, moved); symlinkSync(moved, packDir);
+  try { expect((await get("/models/office/desk")).status).toBe(404); }
+  finally { rmSync(packDir); renameSync(moved, packDir); }
+  const file = join(packDir, "desk.glb");
+  const replacement = join(dir, "replacement.glb"); writeFileSync(replacement, glbModel());
+  rmSync(file); symlinkSync(replacement, file);
+  expect((await get("/models/office/desk")).status).toBe(404);
+  rmSync(file); writeFileSync(file, glbModel({ images: [{ uri: "https://example.invalid/texture.png" }] }));
+  expect((await get("/models/office/desk")).status).toBe(404);
+  writeFileSync(file, "not a model");
+  expect((await get("/models/office/desk")).status).toBe(404);
+  truncateSync(file, 4 * 1024 * 1024 + 1);
+  expect((await get("/models/office/desk")).status).toBe(404);
 });

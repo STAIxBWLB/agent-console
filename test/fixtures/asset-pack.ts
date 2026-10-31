@@ -29,6 +29,24 @@ export function pngImage(width = 2, height = 2, rgba: readonly [number, number, 
 /** Small WebP signature fixture for validation; PNG above supplies complete renderable pixels. */
 export const webpImage = (): Buffer => Buffer.from("UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAEAcQERGIiP4HAA==", "base64");
 
+/** A generated triangle, not artwork: complete GLB 2 for loader and browser fixtures. */
+export function glbModel(overrides: Record<string, unknown> = {}): Buffer {
+  const vertices = Buffer.alloc(36);
+  [0, 0, 0, 1, 0, 0, 0, 1, 0].forEach((value, index) => vertices.writeFloatLE(value, index * 4));
+  const model = {
+    asset: { version: "2.0" }, scene: 0, scenes: [{ nodes: [0] }], nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 } }] }],
+    buffers: [{ byteLength: vertices.length }], bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: vertices.length }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }], ...overrides,
+  };
+  const json = Buffer.from(JSON.stringify(model));
+  const padded = Buffer.alloc(Math.ceil(json.length / 4) * 4, 0x20); json.copy(padded);
+  const header = Buffer.alloc(12); header.write("glTF"); header.writeUInt32LE(2, 4); header.writeUInt32LE(12 + 8 + padded.length + 8 + vertices.length, 8);
+  const jsonHeader = Buffer.alloc(8); jsonHeader.writeUInt32LE(padded.length); jsonHeader.writeUInt32LE(0x4e4f534a, 4);
+  const binHeader = Buffer.alloc(8); binHeader.writeUInt32LE(vertices.length); binHeader.writeUInt32LE(0x004e4942, 4);
+  return Buffer.concat([header, jsonHeader, padded, binHeader, vertices]);
+}
+
 /** Writes a small install-shaped pack for tests and isolated UI probes. */
 export function writeAssetPack(root: string, directory = "office", overrides: Record<string, unknown> = {}): string {
   const dir = join(root, directory);
@@ -36,5 +54,6 @@ export function writeAssetPack(root: string, directory = "office", overrides: Re
   writeFileSync(join(dir, "pack.json"), JSON.stringify({ id: directory, name: "Fixture office", version: 1, tile: [64, 32], images: { floor: "floor.png", desk: "desk.png" }, ...overrides }));
   writeFileSync(join(dir, "floor.png"), pngImage(64, 32));
   writeFileSync(join(dir, "desk.png"), pngImage(8, 8, [80, 96, 112, 255]));
+  if (overrides.models) writeFileSync(join(dir, "desk.glb"), glbModel());
   return dir;
 }

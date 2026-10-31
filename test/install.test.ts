@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { glbModel } from "./fixtures/asset-pack.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("h
 const sheet = pngImage(4, 4);
 const petJson = JSON.stringify({ id: "gyul", displayName: "Gyul", description: "Fixture pet", spriteVersionNumber: 2, spritesheetPath: "spritesheet.png" });
 const floor = pngImage(8, 8);
-const glb = Buffer.concat([Buffer.from("glTF"), Buffer.alloc(16)]);
+const glb = glbModel();
 const packJson = JSON.stringify({ id: "office", name: "Office", version: 1, tile: [64, 64], images: { floor: "floor.png" }, models: { desk: "desk.glb" } });
 
 let files: Record<string, Uint8Array | string> = {};
@@ -163,7 +164,7 @@ describe("install by URL and directory (AC2)", () => {
     files["/pets/gyul/spritesheet.png"] = "GIF89a not an image";
     await expect(installPackage(`${base}/pets/gyul/pet.json`, opts(h))).rejects.toThrow("not a WebP or PNG image");
     files["/console/packs/office/desk.glb"] = "not a model";
-    await expect(installPackage(`${base}/console/packs/office/pack.json`, opts(h))).rejects.toThrow("not a binary glTF");
+    await expect(installPackage(`${base}/console/packs/office/pack.json`, opts(h))).rejects.toThrow("must be a GLB 2 model");
     await Bun.sleep(10);
     expect(existsSync(join(h, "console", "pets", "gyul"))).toBe(false);
     expect(existsSync(join(h, "console", "assets", "office"))).toBe(false);
