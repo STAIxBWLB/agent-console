@@ -704,7 +704,9 @@ function showConfirm(tool, d, note, opts) {
     confirmResolve = resolve;
     const dlg = confirmEl;
     // A confirmation for an action started in Mini opens in Mini's window; everything else opens in the console.
-    (pip && miniAction ? pip.document.body : document.body).append(dlg);
+    // Reparent only when the window changes, closing first: moving an open modal drops it from the top layer.
+    const home = pip && miniAction ? pip.document.body : document.body;
+    if (dlg.parentNode !== home) { if (dlg.open) dlg.close(); home.append(dlg); }
     const verb = str(d.verb) || opts.label || "Confirm";
     const deadline = Date.now() + (d.validMs ?? 60000);
     const OPS = { create: ["Create", "ok"], modify: ["Modify", "accent"], delete: ["Delete", "err"], log: ["Log", ""] };
