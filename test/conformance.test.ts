@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { registerConsoleConformance, stableAtProblems } from "../src/conformance.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
@@ -27,3 +28,11 @@ test("the demo plugin keeps at stable, also after an item is handled", async () 
   await provider.action({ action: "accept", id: "n1" });
   expect(stableAtProblems(before, await inbox(provider))).toEqual([]);
 });
+
+test("the registered suite fails a plugin that re-stamps reused item objects", () => {
+  const run = Bun.spawnSync([process.execPath, "test", join(import.meta.dir, "fixtures", "restamp-conformance.ts")], { stdout: "pipe", stderr: "pipe" });
+  const output = run.stdout.toString() + run.stderr.toString();
+  expect(run.exitCode).not.toBe(0);
+  expect(output).toMatch(/\(fail\)[^\n]*inbox at is stable across snapshots/);
+  expect(output).toContain(" 1 fail");
+}, 30_000);

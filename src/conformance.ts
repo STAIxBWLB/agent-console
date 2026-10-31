@@ -69,7 +69,8 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
       for (const item of result.items as unknown[]) expect(inboxItemProblems(item)).toEqual([]);
     });
     if (plugin.manifest.capabilities?.inbox) test("inbox at is stable across snapshots", async () => {
-      const first = await provider.snapshot({ after: 0, panel: "inbox" });
+      // Copy before the next call: a provider may reuse and mutate the same item objects.
+      const first = structuredClone(await provider.snapshot({ after: 0, panel: "inbox" }));
       await Bun.sleep(50);
       const second = await provider.snapshot({ after: 0, panel: "inbox" });
       expect(stableAtProblems(first.items as unknown[], second.items as unknown[])).toEqual([]);
