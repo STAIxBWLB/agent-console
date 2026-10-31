@@ -1000,6 +1000,8 @@ async function popOutMini() {
         // Only a dialog that lives in the closing window comes back (cancelled if open); one open in the console stays modal.
         if (confirmEl.ownerDocument !== document) {
           if (confirmEl.open) confirmEl.dispatchEvent(new Event("cancel"));
+          // A busy confirmation ignores cancel; close it anyway so a later preview reopens it modally in the console.
+          if (confirmEl.open) confirmEl.close();
           document.body.append(confirmEl);
         }
         pip = null;
