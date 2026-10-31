@@ -260,7 +260,7 @@ function renderRail() {
   $("areas").replaceChildren(
     item(hashFor("inbox"), "inbox", "Inbox", r.area === "inbox", count ? h("span", { class: "badge", "aria-label": `${count} waiting`, text: String(count) }) : null),
     ...readyTools().map((t) => item(hashFor(t.tool), toolIcon(t), t.title, r.area === "tool" && r.tool === t.tool)),
-    spaceTools().length ? item(spaceHash(), "agents", "Space", r.area === "space") : null,
+    ...(spaceTools().length ? [item(spaceHash(), "agents", "Space", r.area === "space")] : []),
     item(hashFor("system"), "system", "System", r.area === "system", issues ? h("span", { class: "badge warn", "aria-label": `${issues} issues`, text: "!" }) : null),
   );
   if (focused) $("areas").querySelector(`a[href="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
