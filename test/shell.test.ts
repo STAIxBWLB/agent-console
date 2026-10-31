@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
+import type { ConsoleUi } from "../src/contract.ts";
 
 const shell = (name: string) => readFileSync(join(import.meta.dir, "..", "shell", name), "utf8");
 
@@ -26,5 +28,105 @@ describe("shell files fit the CSP", () => {
       expect(text).not.toMatch(/https?:\/\//);
       expect(text).not.toMatch(/@import/);
     }
+  });
+});
+
+// A small DOM test double for the kit's text/node contract; navigation is checked in a browser.
+class KitNode {
+  tagName: string;
+  childNodes: KitNode[] = [];
+  attributes = new Map<string, string>();
+  listeners = new Map<string, (event: { preventDefault(): void }) => void>();
+  className = "";
+  value = "";
+  ownText = "";
+  constructor(tag: string) { this.tagName = tag.toUpperCase(); }
+  set textContent(value: string) { this.ownText = String(value); this.childNodes = []; }
+  get textContent(): string { return this.ownText + this.childNodes.map((n) => n.textContent).join(""); }
+  append(...nodes: (KitNode | string)[]) {
+    for (const node of nodes) {
+      if (node instanceof KitNode) this.childNodes.push(node);
+      else { const text = new KitNode("#text"); text.ownText = String(node); this.childNodes.push(text); }
+    }
+  }
+  setAttribute(key: string, value: string) { this.attributes.set(key, value); if (key === "value") this.value = value; }
+  addEventListener(key: string, fn: (event: { preventDefault(): void }) => void) { this.listeners.set(key, fn); }
+  reportValidity(): boolean { return walk(this).every((n) => n.tagName !== "INPUT" || !n.attributes.has("required") || Boolean(n.value)); }
+}
+function walk(node: KitNode): KitNode[] { return [node, ...node.childNodes.flatMap(walk)]; }
+function kit(): ConsoleUi {
+  const js = shell("shell.js");
+  const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+  return runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nconsoleUi`, {
+    Node: KitNode, document: { createElement: (tag: string) => new KitNode(tag) },
+  }) as ConsoleUi;
+}
+const node = (el: HTMLElement) => el as unknown as KitNode;
+
+describe("public panel kit", () => {
+  test("detail builds the shared template and treats HTML-looking data as text", () => {
+    const ui = kit();
+    const text = "<script>alert('data')</script>";
+    const detail = node(ui.detail({
+      kind: text, title: text, state: { text, tone: "warn" }, whoseMove: "you",
+      actions: [ui.h("button", { type: "button", text: "Next action" })], summary: text,
+      provenance: [{ label: "Source", value: text, at: "2026-10-31T00:00:00Z" }],
+      sections: [{ title: text, body: text }, { title: "Open section", body: ui.h("code", { text }), open: true }],
+      footer: [text],
+    }));
+    const all = walk(detail);
+    for (const cls of ["ui-detail-head", "ui-detail-actions", "ui-detail-summary", "ui-provenance", "ui-detail-footer"]) {
+      expect(all.some((n) => n.className.split(" ").includes(cls))).toBe(true);
+    }
+    expect(detail.textContent).toContain(text);
+    expect(detail.textContent).toContain("Your move");
+    expect(all.some((n) => n.tagName === "SCRIPT")).toBe(false);
+    const sections = all.filter((n) => n.tagName === "DETAILS");
+    expect(sections[0]!.attributes.has("open")).toBe(false);
+    expect(sections[1]!.attributes.has("open")).toBe(true);
+    expect(all.find((n) => n.tagName === "TIME")!.attributes.get("datetime")).toBe("2026-10-31T00:00:00Z");
+  });
+
+  test("rows expose open controls and empty lists return null", () => {
+    const ui = kit();
+    let opened = 0;
+    const rows = node(ui.rows(["<b>note</b>"], (title) => ui.row({ title, sub: "waiting", onOpen: () => opened++, chip: { text: "Review", tone: "warn" } }))!);
+    expect(rows.tagName).toBe("UL");
+    expect(rows.className).toContain("ui-rows");
+    expect(rows.textContent).toContain("<b>note</b>");
+    walk(rows).find((n) => n.className.includes("ui-row-open"))!.listeners.get("click")!({ preventDefault() {} });
+    expect(opened).toBe(1);
+    expect(ui.rows([], () => ui.row({ title: "unused" }))).toBeNull();
+    expect(node(ui.empty("Nothing", "Try later")).textContent).toBe("NothingTry later");
+    expect(node(ui.notice("Offline", "err")).className).toContain("err");
+  });
+
+  test("h attaches functions, renders text and rejects executable elements or attributes", () => {
+    const ui = kit();
+    let clicked = false;
+    const button = node(ui.h("button", { text: "<img src=x>", onclick: () => { clicked = true; }, "aria-label": "Action" }));
+    button.listeners.get("click")!({ preventDefault() {} });
+    expect(clicked).toBe(true);
+    expect(button.textContent).toBe("<img src=x>");
+    expect(() => ui.h("script", {}, "alert(1)")).toThrow();
+    expect(() => ui.h("div", { style: "color:red" })).toThrow();
+    expect(() => ui.h("button", { onclick: "alert(1)" })).toThrow();
+    expect(() => ui.h("div", { srcdoc: "<script>" })).toThrow();
+  });
+
+  test("forms have associated labels, validate required fields and submit current string values", () => {
+    const ui = kit();
+    let values: Record<string, string> | undefined;
+    const form = node(ui.form([{ name: "reason", label: "Reason", required: true }, { name: "note", label: "Note", value: "draft" }], { label: "Save", primary: true }, (v) => { values = v; }));
+    const labels = walk(form).filter((n) => n.tagName === "LABEL");
+    expect(labels).toHaveLength(2);
+    expect(labels.every((n) => n.childNodes.some((c) => c.tagName === "INPUT"))).toBe(true);
+    let prevented = false;
+    form.listeners.get("submit")!({ preventDefault() { prevented = true; } });
+    expect(prevented).toBe(true);
+    expect(values).toBeUndefined();
+    walk(form).find((n) => n.attributes.get("name") === "reason")!.value = "duplicate";
+    form.listeners.get("submit")!({ preventDefault() {} });
+    expect(values).toEqual({ reason: "duplicate", note: "draft" });
   });
 });

@@ -38,6 +38,67 @@ The module's default export is a `ConsolePlugin` (`@staix/agent-console/contract
 - Reversible actions may return `undo: {action, ...}`; the console offers it for 10 seconds.
 - Panels run under a strict CSP: no inline scripts or `style=` attributes, nothing from other origins. Style with the `--acon-*` tokens.
 
+### Panel kit
+
+Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/contract`. The kit returns DOM nodes and renders strings as text, including strings containing HTML. Use it through the host; panels do not import shell files.
+
+| Method | Result |
+|---|---|
+| `h(tag, props?, ...kids)` | An element with text or node children; `text` sets text and function-valued `on*` props attach event listeners. |
+| `rows(items, render)` | A list of rendered rows, or `null` when the array is empty. |
+| `row({title, sub?, onOpen?, chip?, verbs?})` | A row with an open control, optional subtitle, state chip and action nodes. |
+| `empty(title, hint?)` | An empty state with an optional hint. |
+| `chip(text, tone?)` | A compact state label. |
+| `notice(text, tone?)` | A status notice. |
+| `form(fields, submit, onSubmit)` | A labeled form; fields are `{name, label, required?, value?}`, submit is `{label, primary?}`, and the callback receives string values by field name. |
+| `detail(options)` | The shared detail template: kind/title/state header, whose move, actions, summary, provenance, collapsible sections and mono footer. |
+
+`h` accepts these tags: `div`, `span`, `p`, `strong`, `em`, `small`, `code`, `pre`, `section`, `article`, `header`, `footer`, `h1`, `h2`, `h3`, `h4`, `ul`, `ol`, `li`, `dl`, `dt`, `dd`, `button`, `input`, `textarea`, `select`, `option`, `form`, `label`, `fieldset`, `legend`, `details`, `summary`, `time`, `hr`, `br`.
+
+Its attributes are `class`, `text`, `id`, `title`, `role`, `tabindex`, `type`, `name`, `value`, `placeholder`, `required`, `disabled`, `readonly`, `checked`, `multiple`, `autocomplete`, `maxlength`, `min`, `max`, `step`, `for`, `open`, `datetime`, plus `aria-*` and `data-*`. Event props such as `onclick` accept functions only. Unsupported tags or attributes throw `TypeError`; URL attributes, `style` and string event handlers are unsupported.
+
+`Tone` is `"ok" | "warn" | "err" | "neutral"`. `detail` accepts `kind` and `title`, optional `state: {text, tone?}`, `whoseMove: "you" | "agent"`, `actions`, `summary`, `provenance: {label, value, at?}[]`, `sections: {title, body, open?}[]` and `footer: string[]`. Sections start collapsed unless `open` is true; section strings are text, while node bodies can contain other kit elements.
+
+```js
+export default (host) => {
+  const { ui } = host;
+  host.onSnapshot((snapshot) => {
+    const rows = ui.rows(snapshot.notes ?? [], (note) => ui.row({
+      title: note.title,
+      sub: note.status,
+      onOpen: () => host.navigate(host.tool, "notes", { id: note.id }),
+      verbs: [ui.h("button", {
+        type: "button", class: "btn danger", text: "Delete...",
+        onclick: () => host.action({ action: "delete", id: note.id }),
+      })],
+    }));
+    host.mount.replaceChildren(rows ?? ui.empty("No notes", "New notes will appear here."));
+  });
+  return { show() {}, hide() {}, destroy() { host.mount.replaceChildren(); } };
+};
+```
+
+With focus on kit rows inside a panel, `j` and `k` move between rows and `Enter` opens the focused row. Form input keeps its normal typing behavior. Run actions through `host.action()` so destructive actions keep the shell's confirmation flow.
+
+### Public styling contract
+
+Panels may use these classes. Modifiers apply only with their base class:
+
+- Lists and rows: `rows`, `row`, `row-main`, `row-text`, `row-title`, `row-sub`, `row-verbs`, `ui-rows`, `ui-row-open`.
+- Controls and status: `btn` with `primary` or `danger`; `chip` with `ok`, `warn`, `err` or `accent`; `notice`; `ui-notice` with `ok`, `warn` or `err`.
+- Containers and text: `empty`, `card`, `mono`, `ui-form`, `ui-field`.
+- Details: `ui-detail`, `ui-detail-head`, `ui-detail-kind`, `ui-detail-move`, `ui-detail-actions`, `ui-detail-summary`, `ui-provenance`, `ui-detail-section`, `ui-detail-body`, `ui-detail-footer`.
+
+The public CSS tokens are:
+
+- Surfaces and text: `--acon-bg`, `--acon-surface`, `--acon-surface-2`, `--acon-line`, `--acon-line-2`, `--acon-text`, `--acon-text-2`.
+- Accent and status: `--acon-accent`, `--acon-accent-soft`, `--acon-accent-text`, `--acon-on-accent`, `--acon-ok`, `--acon-ok-soft`, `--acon-warn`, `--acon-warn-soft`, `--acon-err`, `--acon-err-soft`, `--acon-focus`.
+- Spacing: `--acon-space-1`, `--acon-space-2`, `--acon-space-3`, `--acon-space-4`, `--acon-space-5`, `--acon-space-6`.
+- Shape and motion: `--acon-radius-1`, `--acon-radius-2`, `--acon-radius-3`, `--acon-shadow`, `--acon-ease`.
+- Fonts: `--acon-font-ui`, `--acon-font-mono`.
+
+Use the tokens in a plugin's own CSS for light and dark themes. `host.theme.tokens` exposes the color tokens; other tokens are available as CSS custom properties. Shell selectors outside the documented public classes are private and may change.
+
 Check a plugin with the conformance suite:
 
 ```ts
