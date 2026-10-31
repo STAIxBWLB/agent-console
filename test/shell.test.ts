@@ -7,6 +7,26 @@ import type { ConsoleUi } from "../src/contract.ts";
 const shell = (name: string) => readFileSync(join(import.meta.dir, "..", "shell", name), "utf8");
 
 describe("shell files fit the CSP", () => {
+  test("replaceChildren never receives a bare null (DOM would render it as text)", () => {
+    // h() drops null children itself; only a ternary ending in null at replaceChildren's own argument level leaks "null".
+    const js = shell("shell.js");
+    const leaks: string[] = [];
+    let calls = 0;
+    for (let at = js.indexOf("replaceChildren("); at !== -1; at = js.indexOf("replaceChildren(", at + 1)) {
+      calls += 1;
+      let depth = 0, quote = "";
+      for (let i = at + "replaceChildren".length; i < js.length; i += 1) {
+        const c = js[i]!;
+        if (quote) { if (c === "\\") i += 1; else if (c === quote) quote = ""; continue; }
+        if (c === "\"" || c === "'" || c === "`") { quote = c; continue; }
+        if ("([{".includes(c)) depth += 1;
+        else if (")]}".includes(c) && --depth === 0) break;
+        else if (depth === 1 && /^:\s*null\b/.test(js.slice(i, i + 12))) leaks.push(js.slice(at, at + 80));
+      }
+    }
+    expect(calls).toBeGreaterThan(10);
+    expect(leaks).toEqual([]);
+  });
   test("the type scale uses documented rem tokens and detail actions have a group role", () => {
     const css = shell("shell.css");
     expect(css).not.toMatch(/font-size:\s*\d+(?:\.\d+)?px/);

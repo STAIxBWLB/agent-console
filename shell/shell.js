@@ -558,13 +558,13 @@ function renderPeek() {
   const add = (k, v) => { if (v) dl.append(h("dt", { text: k }), h("dd", { text: v })); };
   add("Kind", item.kind); add("Tool", toolById(item.tool)?.title ?? item.tool); add("Project", item.project); add("From", item.actor);
   add("Waiting since", `${new Date(item.at).toLocaleString()} (${ago(item.at)})`);
-  body.replaceChildren(
+  body.replaceChildren(...[
     h("div", { class: "sheet-verbs" }, item.chip ? h("span", { class: `chip ${toneClass(item.chip.tone)}`, text: str(item.chip.text) }) : null, h("span", { class: "chip", text: GROUPS.find(([g]) => g === item.group)?.[1] })),
     item.detail ? h("p", { class: "detail", text: item.detail }) : null,
     dl,
     h("div", { class: "sheet-verbs item-verbs" }, verbButtons(item, 8)),
     h("div", { class: "sheet-verbs" }, h("button", { type: "button", class: "btn", onclick: () => openItem(item) }, h("span", { text: `Open in ${toolById(item.tool)?.title ?? item.tool}` }), icon("go"))),
-  );
+  ].filter(Boolean));
   if (focusAt >= 0 && !reasonFocused) (body.querySelectorAll("button")[focusAt] ?? $("sheet-close")).focus({ preventScroll: true });
   if (reasonBox?.key === key) placeReason(reasonFocused);
 }
@@ -919,7 +919,7 @@ function renderPet() {
   btn.hidden = !pet;
   if (!pet) { btn.replaceChildren(); return; }
   btn.setAttribute("aria-label", petLabel(pet, pose, count));
-  btn.replaceChildren(petSprite(pet, pose), count ? h("span", { class: "badge", "aria-hidden": "true", text: String(count) }) : null);
+  btn.replaceChildren(...[petSprite(pet, pose), count ? h("span", { class: "badge", "aria-hidden": "true", text: String(count) }) : null].filter(Boolean));
 }
 function openOldestNeed() {
   const item = needsMe()[0];
