@@ -177,6 +177,8 @@ export function startServer(options: ServerOptions) {
       } catch {
         return reject(400, "invalid JSON");
       }
+      // Every accepted body has a canonical form; this refuses numbers like 1e400 that would collide with null.
+      try { canonical(input); } catch { return reject(400, "numbers must be finite"); }
       if (path === "/session") {
         const ticket = typeof input.ticket === "string" ? input.ticket : "";
         if (!tickets.delete(ticket)) return reject(401, "this link was already used or has expired; run acon ui");

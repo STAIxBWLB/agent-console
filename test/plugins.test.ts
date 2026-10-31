@@ -159,4 +159,13 @@ describe("plugin discovery", () => {
     const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
     expect(scanPlugins(dir).entries[0]?.status).toBe("verified");
   });
+
+  test("a data: import is refused", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-data-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'import injected from "data:text/javascript,export default 42";\nexport default { injected };\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("not a package file") }));
+  });
 });

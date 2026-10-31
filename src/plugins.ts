@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { CONSOLE_API, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
@@ -96,10 +97,12 @@ function importEscapes(entry: string, root: string): string | undefined {
     if (seen.size > TREE_MAX) return `${root} imports more than ${TREE_MAX} files`;
     if (!CODE.test(file)) continue;
     for (const { path } of new Bun.Transpiler({ loader: LOADER(file) }).scanImports(readFileSync(file, "utf8"))) {
-      if (/^(node|bun):/.test(path) || path === "bun") continue;
+      if (/^(node|bun):/.test(path) || path === "bun" || builtinModules.includes(path)) continue;
+      // Any other scheme (data:, file:, http:) would load code that is not a verified file.
+      if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return `${file} imports ${path.slice(0, 40)}, which is not a package file`;
       let resolved: string;
       try { resolved = Bun.resolveSync(path, dirname(file)); } catch { continue; } // import() itself will fail and the plugin is marked failed
-      if (!isAbsolute(resolved)) continue; // builtin module
+      if (!isAbsolute(resolved)) return `${file} imports ${path.slice(0, 40)}, which is not a package file`;
       if (dependencyDirs.some((d) => resolved.startsWith(d))) continue;
       const real = realpathSync(resolved);
       if (!inside(real)) return `${file} imports ${path}, which is outside the plugin package`;

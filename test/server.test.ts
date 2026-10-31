@@ -144,6 +144,16 @@ describe("actions and confirm tokens", () => {
     expect((await post(server, "/p/demo/action", { action: "delete", id: "n1", confirmToken: t2 }, other)).status).toBe(409);
   });
 
+  test("a token cannot be moved to input that only differs in an unrepresentable number", async () => {
+    const { server, plugin } = await boot();
+    const cookie = await login(server);
+    const raw = (body: string) => fetch(`${server.origin}/p/demo/action`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json", Cookie: cookie }, body });
+    expect((await raw('{"action":"delete","id":"n1","amount":1e400}')).status).toBe(400);
+    const token = (await (await raw('{"action":"delete","id":"n1","amount":0}')).json() as { confirmToken: string }).confirmToken;
+    expect((await raw(`{"action":"delete","id":"n1","amount":-0,"confirmToken":"${token}"}`)).status).toBe(409);
+    expect(plugin.calls.some((c) => c.confirmed)).toBe(false);
+  });
+
   test("an expired token is refused", async () => {
     let t = Date.now();
     const { server } = await boot({ now: () => t });
