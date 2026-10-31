@@ -110,7 +110,10 @@ export function createSpaceViewController(host) {
       return;
     }
     scroll.scrollLeft = 0; scroll.scrollTop = 0;
-    const width = Math.max(280, scroll.clientWidth - 2), height = Math.max(480, Math.min(720, window.innerHeight * .65));
+    // The stage never outgrows the scroll box (max-height 70vh): in 3D the box clips instead of scrolling.
+    const cap = parseFloat(getComputedStyle(scroll).maxHeight);
+    const width = Math.max(280, scroll.clientWidth - 2);
+    const height = Math.max(200, Math.min(Number.isFinite(cap) ? cap - 2 : Infinity, Math.max(480, Math.min(720, window.innerHeight * .65))));
     stage.style.width = `${width}px`; stage.style.height = `${height}px`;
     plane.style.width = `${width}px`; plane.style.minWidth = "0"; plane.style.height = `${height}px`;
     if (webgl) {
