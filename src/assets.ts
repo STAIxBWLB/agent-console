@@ -3,16 +3,19 @@ import { dirname, join, resolve } from "node:path";
 
 export type ImageType = "image/webp" | "image/png";
 export interface AssetImage { file: string; type: ImageType }
+export interface AssetModel { file: string; type: "model/gltf-binary" }
 export interface AssetPack {
   id: string;
   name: string;
   version: 1;
   tile: [number, number];
   images: Record<string, AssetImage>;
+  models?: Record<string, AssetModel>;
 }
 
 const ASSET_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const IMAGE_FILE = /^[A-Za-z0-9._-]+\.(webp|png)$/;
+const MODEL_FILE = /^[A-Za-z0-9._-]+\.glb$/;
 const MANIFEST_MAX = 16 * 1024;
 const IMAGE_MAX = 4 * 1024 * 1024;
 const codeOf = (error: unknown) => (error as NodeJS.ErrnoException | null)?.code ?? "error";
@@ -71,7 +74,66 @@ export function validateImage(file: string, maxBytes: number, label = "image"): 
   return typeof result === "string" ? result : { file, type: result.type };
 }
 
-/** Validates one local pack. No package, manifest or image leaf may be a symlink. */
+/** GLB 2 files are self-contained: the browser never follows a model's resource URLs. */
+function modelProblem(bytes: Buffer): string | undefined {
+  if (bytes.length < 20 || bytes.toString("latin1", 0, 4) !== "glTF" || bytes.readUInt32LE(4) !== 2 || bytes.readUInt32LE(8) !== bytes.length) return "must be a GLB 2 model with a valid glTF header and length";
+  let offset = 12, json: unknown, binaryLength = 0, binarySeen = false;
+  while (offset < bytes.length) {
+    if (offset + 8 > bytes.length) return "has a truncated chunk header";
+    const length = bytes.readUInt32LE(offset), type = bytes.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (length % 4 !== 0 || start + length > bytes.length) return "has an invalid chunk length";
+    if (offset === 12) {
+      if (type !== 0x4e4f534a || length === 0) return "must start with a JSON chunk";
+      try { json = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start, start + length))); }
+      catch { return "has an invalid JSON chunk"; }
+    } else if (type === 0x004e4942 && !binarySeen) { binaryLength = length; binarySeen = true; }
+    else return "has an unsupported or duplicate chunk";
+    offset = start + length;
+  }
+  const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+  if (!object(json) || !object(json.asset) || json.asset.version !== "2.0") return "must declare glTF asset version 2.0";
+  if (json.buffers !== undefined) {
+    if (!Array.isArray(json.buffers) || json.buffers.length > 1) return "must use a single embedded buffer";
+    for (const buffer of json.buffers) {
+      if (!object(buffer) || buffer.uri !== undefined) return "must use embedded buffers without resource URLs";
+      if (!Number.isSafeInteger(buffer.byteLength) || (buffer.byteLength as number) < 0 || (buffer.byteLength as number) > binaryLength || binaryLength - (buffer.byteLength as number) > 3) return "has an invalid embedded buffer length";
+    }
+  }
+  if (json.bufferViews !== undefined) {
+    if (!Array.isArray(json.bufferViews)) return "bufferViews must be an array";
+    const bufferLength = Array.isArray(json.buffers) && object(json.buffers[0]) ? json.buffers[0].byteLength as number : 0;
+    for (const view of json.bufferViews) {
+      if (!object(view) || view.buffer !== 0) return "has an invalid embedded buffer view";
+      const start = view.byteOffset ?? 0, length = view.byteLength;
+      if (typeof start !== "number" || typeof length !== "number" || !Number.isSafeInteger(start) || !Number.isSafeInteger(length) || start < 0 || length < 0 || start + length > bufferLength) return "has an invalid embedded buffer view";
+    }
+  }
+  if (json.images !== undefined) {
+    if (!Array.isArray(json.images)) return "images must be an array";
+    for (const image of json.images) {
+      if (!object(image) || image.uri !== undefined) return "must use embedded images without resource URLs";
+      if (!Number.isSafeInteger(image.bufferView) || (image.bufferView as number) < 0 || !Array.isArray(json.bufferViews) || (image.bufferView as number) >= json.bufferViews.length || !["image/png", "image/jpeg", "image/webp"].includes(String(image.mimeType))) return "has an invalid embedded image";
+    }
+  }
+}
+
+/** Returns exactly the descriptor-checked bytes, with the same 4 MB cap used at serve time. */
+export function readValidatedModel(file: string, maxBytes = IMAGE_MAX, label = "model"): { bytes: Uint8Array; type: "model/gltf-binary" } | string {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) return `${label} size limit must be a positive safe integer`;
+  const bytes = readRegularFile(file, Math.min(maxBytes, IMAGE_MAX), label);
+  if (typeof bytes === "string") return bytes;
+  const problem = modelProblem(bytes);
+  return problem ? `${label} ${problem}` : { bytes, type: "model/gltf-binary" };
+}
+
+/** Shared with local installation; model paths are never sent to the page. */
+export function validateModel(file: string, maxBytes = IMAGE_MAX, label = "model"): AssetModel | string {
+  const result = readValidatedModel(file, maxBytes, label);
+  return typeof result === "string" ? result : { file, type: result.type };
+}
+
+/** Validates one local pack. No package, manifest, image or model leaf may be a symlink. */
 export function validateAssetPack(dir: string): AssetPack | string {
   try {
     const directory = resolve(dir);
@@ -95,7 +157,18 @@ export function validateAssetPack(dir: string): AssetPack | string {
       if (typeof image === "string") return `image ${name}: ${image}`;
       images[name] = image;
     }
-    return { id: row.id, name: row.name.trim(), version: 1, tile: [row.tile[0] as number, row.tile[1] as number], images };
+    const models: Record<string, AssetModel> = Object.create(null) as Record<string, AssetModel>;
+    if (row.models !== undefined) {
+      if (!row.models || typeof row.models !== "object" || Array.isArray(row.models)) return "models must be an object";
+      for (const [name, file] of Object.entries(row.models)) {
+        if (!ASSET_ID.test(name)) return `model ${name}: logical name must match [a-z0-9][a-z0-9-]{0,31}`;
+        if (typeof file !== "string" || !MODEL_FILE.test(file)) return `model ${name}: file must be a .glb file name in the package`;
+        const model = validateModel(join(directory, file), IMAGE_MAX, `model ${name}`);
+        if (typeof model === "string") return `model ${name}: ${model}`;
+        models[name] = model;
+      }
+    }
+    return { id: row.id, name: row.name.trim(), version: 1, tile: [row.tile[0] as number, row.tile[1] as number], images, ...(row.models !== undefined ? { models } : {}) };
   } catch (error) {
     return unreadable(error);
   }

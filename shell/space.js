@@ -1,3 +1,5 @@
+import { createSpaceViewController } from "./space-view.js";
+
 // Private shell module. Public collaboration facts enter through the space snapshot allowlist.
 export const SPACE_CAPS = { actors: 32, cards: 200, links: 64 };
 const ACTOR_WIDTH = 180, ACTOR_STEP = 200, ZONE_WIDTH = 234, ZONE_STEP = 250;
@@ -95,6 +97,7 @@ export function createSpaceRenderer(root, host) {
   const roster = h("section", { class: "space-roster", "aria-label": "Space roster" });
   const empty = h("p", { class: "sub", text: "No actors or work items are reported yet.", hidden: true });
   root.replaceChildren(h("h1", { class: "lead", id: "space-lead", text: "Space" }), notice, h("div", { class: "space-content" }, scroll, roster), empty);
+  const views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError });
   const actorNodes = new Map(), cardNodes = new Map(), zoneNodes = new Map(), linkNodes = new Map(), rosterNodes = new Map();
   const entries = new Map();
   const seenMessages = new Map(), samples = new Map();
@@ -174,12 +177,16 @@ export function createSpaceRenderer(root, host) {
     for (const card of model.cards) {
       entries.set(`card:${card.id}`, card);
       let n = cardNodes.get(card.id);
-      if (!n) { n = h("button", { type: "button", class: "space-card", "data-key": card.id, onclick: () => target(`card:${card.id}`) }); n.style.setProperty("transition", "none"); plane.append(n); cardNodes.set(card.id, n); freshCards.add(card.id); }
-      setText(n, `${card.link.tool} / ${card.title}`); n.setAttribute("aria-label", `${card.link.tool}: ${card.title}`); n.dataset.tone = card.tone ?? "neutral";
+      if (!n) { n = h("button", { type: "button", class: "space-card", "data-key": card.id, onclick: () => target(`card:${card.id}`) }, h("span", { class: "space-card-label" })); n.style.setProperty("transition", "none"); plane.append(n); cardNodes.set(card.id, n); freshCards.add(card.id); }
+      setText(n.firstElementChild, `${card.link.tool} / ${card.title}`); n.setAttribute("aria-label", `${card.link.tool}: ${card.title}`); n.dataset.tone = card.tone ?? "neutral";
     }
     prune(actorNodes, new Set(model.actors.map((a) => a.id))); prune(cardNodes, new Set(model.cards.map((c) => c.id))); prune(zoneNodes, new Set(model.zones.map((z) => z.id)));
     prune(rosterNodes, new Set([...model.actors.map((a) => `actor:${a.id}`), ...model.zones.map((z) => `zone:${z.id}`)]));
-    const sizes = { actors: new Map([...actorNodes].map(([k, n]) => [k, n.el.getBoundingClientRect().height])), cards: new Map([...cardNodes].map(([k, n]) => [k, n.getBoundingClientRect().height])), zones: new Map([...zoneNodes].map(([k, n]) => [k, n.title.getBoundingClientRect().height])) };
+    root.dataset.spaceMeasuring = "true";
+    const sizes = { actors: new Map([...actorNodes].map(([k, n]) => [k, n.el.offsetHeight])), cards: new Map([...cardNodes].map(([k, n]) => [k, n.offsetHeight])), zones: new Map([...zoneNodes].map(([k, n]) => [k, n.title.offsetHeight])) };
+    const actorMetrics = [...actorNodes].map(([id, n]) => ({ id, el: n.el, width: n.el.offsetWidth, height: n.el.offsetHeight }));
+    const cardMetrics = [...cardNodes].map(([id, el]) => ({ id, el, width: el.offsetWidth, height: el.offsetHeight }));
+    delete root.dataset.spaceMeasuring;
     const next = spaceLayout(model, layout, sampledAt, sizes);
     const settle = force || !factChange || next.settle || sourceGap || firstSource || model.failed.length > 0;
     if (plane.dataset.settle !== String(settle)) plane.dataset.settle = String(settle);
@@ -217,6 +224,10 @@ export function createSpaceRenderer(root, host) {
     }
     prune(linkNodes, linkKeys);
     layout = next;
+    views.update({ model, layout, pack, pets: host.pets(), plane, scroll,
+      actors: actorMetrics,
+      cards: cardMetrics,
+      zones: [...zoneNodes].map(([id, n]) => ({ id, el: n.el, width: n.el.offsetWidth, height: n.el.offsetHeight })) });
   }
   let geometry = "";
   const observer = new ResizeObserver(() => {
@@ -226,5 +237,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden) update(lastModel, true);
   });
   observer.observe(root);
-  return { update, destroy() { observer.disconnect(); root.replaceChildren(); } };
+  return { update, get viewStats() { return views.stats; }, destroy() { observer.disconnect(); views.destroy(); root.replaceChildren(); } };
 }

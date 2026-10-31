@@ -89,7 +89,7 @@ interface Layout {
   signatures: Map<string, string>; at: number; settle: boolean; received: number;
 }
 const source = readFileSync(join(import.meta.dir, "..", "shell", "space.js"), "utf8");
-const browserModel = runInNewContext(`${source.replace(/^export /gm, "")}\n({mergeSpaceScenes, spaceLayout, SPACE_CAPS})`) as {
+const browserModel = runInNewContext(`${source.replace(/^import .*;$/gm, "").replace(/^export /gm, "")}\n({mergeSpaceScenes, spaceLayout, SPACE_CAPS})`) as {
   mergeSpaceScenes(entries: Map<string, { scene: SpaceScene }>): Model;
   spaceLayout(model: Model, previous: Layout | null, now: number): Layout;
   SPACE_CAPS: { actors: number; cards: number; links: number };

@@ -411,3 +411,26 @@ body.pip { margin: 0; overflow-y: auto; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* Private shell Space cameras. Room uses a real transform hierarchy, without WebGL. */
+.space-view-bar, .space-view-choices, .space-camera { display: flex; flex-wrap: wrap; align-items: center; gap: var(--acon-space-2); }
+.space-view-bar { gap: var(--acon-space-4); margin-top: var(--acon-space-3); }
+.space-view-choices .btn[aria-pressed="true"] { color: var(--acon-accent-text); background: var(--acon-accent-soft); border-color: var(--acon-accent); }
+.space-stage { position: relative; min-width: 100%; }
+[data-space-view="room"] .space-scroll { perspective: 4000px; perspective-origin: center 240px; }
+[data-space-view="room"] .space-stage, [data-space-view="room"] .space-plane { transform-style: preserve-3d; }
+[data-space-view="room"] .space-plane { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform .3s ease; }
+[data-space-view="room"] .space-wall { height: 80px; transform: rotateX(-90deg); transform-origin: top; backface-visibility: visible; }
+[data-space-view="room"] .space-plane::after { content: ""; position: absolute; left: 0; top: 0; width: 80px; height: 100%; background: var(--acon-surface-2); border: 1px solid var(--acon-line); transform: rotateY(90deg); transform-origin: left; }
+[data-space-view="room"] .space-actor, [data-space-view="room"] .space-card { z-index: auto; transform-origin: 0 0; transition: none; backface-visibility: visible; }
+[data-space-view="room"] .space-desk { box-shadow: 4px 4px 0 var(--acon-line-2); }
+.space-webgl { position: absolute; inset: 0; }
+.space-webgl canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+[data-space-view="3d"] .space-plane { background: transparent; min-height: 0; pointer-events: none; }
+[data-space-view="3d"] .space-scroll { overflow: hidden; perspective: none; }
+[data-space-view="3d"]:not([data-space-measuring]) .space-wall, [data-space-view="3d"]:not([data-space-measuring]) .space-zone, [data-space-view="3d"]:not([data-space-measuring]) .space-link { display: none; }
+[data-space-view="3d"]:not([data-space-measuring]) .space-actor, [data-space-view="3d"]:not([data-space-measuring]) .space-card { pointer-events: auto; transition: none; width: 44px; height: 44px; min-height: 44px; padding: 0; color: transparent; background: transparent; border: 1px dashed var(--acon-line-2); opacity: 1; }
+[data-space-view="3d"]:not([data-space-measuring]) .space-actor > * { visibility: hidden; }
+.space-selection { overflow-wrap: anywhere; }
+[data-space-view="3d"]:not([data-space-measuring]) .space-card-label { visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { [data-space-view="room"] .space-plane { transition: none; } }

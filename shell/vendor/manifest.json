@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "name": "three",
+  "version": "0.187.0",
+  "license": "MIT",
+  "entries": [
+    "three.module.js",
+    "GLTFLoader.js"
+  ],
+  "files": {
+    "BufferGeometryUtils.js": {
+      "source": "examples/jsm/utils/BufferGeometryUtils.js",
+      "bytes": 39165,
+      "sha256": "319782169ed48af21fcaa251d839ecb8e58f14174aacbf68b74a437f3d6a3a98"
+    },
+    "GLTFLoader.js": {
+      "source": "examples/jsm/loaders/GLTFLoader.js",
+      "bytes": 119859,
+      "sha256": "7bbda9f3af9b5acbd89a33cfc0aeb020f34d2d31a72829c79c0b354f9502c8e5"
+    },
+    "SkeletonUtils.js": {
+      "source": "examples/jsm/utils/SkeletonUtils.js",
+      "bytes": 11547,
+      "sha256": "eedd768765d6553f8082953ab3882e2c86dacc2eb7d180a312d1d52e86bb35c5"
+    },
+    "three.core.js": {
+      "source": "build/three.core.js",
+      "bytes": 1474799,
+      "sha256": "613e370f76638fdef83926642bf256dc9615684922de1ce1f63a8583e5d78578"
+    },
+    "three.module.js": {
+      "source": "build/three.module.js",
+      "bytes": 658900,
+      "sha256": "104f56145899722094556490d787aae0617cc2fc3382f31df02d724ea1aee341"
+    },
+    "NOTICE": {
+      "source": "LICENSE",
+      "bytes": 1336,
+      "sha256": "c770e734cedbccb910baeba499630cc34ada04aecbefdc604e1a701a9dd4aa9a"
+    }
+  }
+}

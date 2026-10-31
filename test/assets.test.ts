@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadAssetPacks, readValidatedImage, validateAssetPack, validateImage } from "../src/assets.ts";
-import { pngImage, webpImage, writeAssetPack } from "./fixtures/asset-pack.ts";
+import { loadAssetPacks, readValidatedImage, readValidatedModel, validateAssetPack, validateImage, validateModel } from "../src/assets.ts";
+import { glbModel, pngImage, webpImage, writeAssetPack } from "./fixtures/asset-pack.ts";
 
 const roots: string[] = [];
 const root = () => { const dir = mkdtempSync(join(tmpdir(), "acon-assets-")); roots.push(dir); return dir; };
@@ -45,6 +45,35 @@ describe("image validation", () => {
 });
 
 describe("asset packs", () => {
+  test("optional models validate to private paths while image-only packs retain their shape", () => {
+    const imageOnly = validateAssetPack(writeAssetPack(root()));
+    expect(typeof imageOnly).not.toBe("string");
+    if (typeof imageOnly === "string") throw new Error(imageOnly);
+    expect(Object.hasOwn(imageOnly, "models")).toBe(false);
+    const dir = writeAssetPack(root(), "office", { models: { desk: "desk.glb" } });
+    const pack = validateAssetPack(dir);
+    expect(typeof pack).not.toBe("string");
+    if (typeof pack === "string") throw new Error(pack);
+    expect(pack.models?.desk).toEqual({ file: join(dir, "desk.glb"), type: "model/gltf-binary" });
+    expect(pack.models?.constructor).toBeUndefined();
+  });
+
+  test("model manifests refuse path names, invalid maps, missing files and links", () => {
+    const dir = writeAssetPack(root(), "office", { models: { desk: "desk.glb" } });
+    const valid = JSON.parse(readFileSync(join(dir, "pack.json"), "utf8")) as Record<string, unknown>;
+    for (const [models, reason] of [
+      [null, "models must be an object"], [[], "models must be an object"],
+      [{ "../desk": "desk.glb" }, "logical name must match"], [{ desk: "../desk.glb" }, "file must be"],
+      [{ desk: "sub/desk.glb" }, "file must be"], [{ desk: "desk.gltf" }, "file must be"],
+      [{ desk: "missing.glb" }, "missing or not a regular file"],
+    ] as const) {
+      writeFileSync(join(dir, "pack.json"), JSON.stringify({ ...valid, models }));
+      expect(validateAssetPack(dir)).toContain(reason);
+    }
+    writeFileSync(join(dir, "pack.json"), JSON.stringify({ ...valid, models: { desk: "link.glb" } }));
+    symlinkSync(join(dir, "desk.glb"), join(dir, "link.glb"));
+    expect(validateAssetPack(dir)).toContain("missing or not a regular file");
+  });
   test("validates metadata and first valid id wins across directories", () => {
     const a = root(), b = root();
     writeAssetPack(a, "office");
@@ -116,5 +145,53 @@ describe("asset packs", () => {
     expect(validateAssetPack(join(dir, "missing"))).toBe("pack path is missing or not a directory");
     writeFileSync(join(dir, "pack.json"), "{bad"); expect(validateAssetPack(dir)).toBe("pack.json is not valid JSON");
     writeFileSync(join(dir, "pack.json"), "[]"); expect(validateAssetPack(dir)).toBe("pack.json must be an object");
+  });
+});
+
+describe("GLB validation", () => {
+  test("returns the exact checked bytes of an embedded GLB 2 model", () => {
+    const file = join(root(), "desk.glb"), bytes = glbModel(); writeFileSync(file, bytes);
+    expect(validateModel(file)).toEqual({ file, type: "model/gltf-binary" });
+    const result = readValidatedModel(file);
+    if (typeof result === "string") throw new Error(result);
+    writeFileSync(file, "changed after descriptor read");
+    expect(Buffer.from(result.bytes).equals(bytes)).toBe(true);
+    expect(result.type).toBe("model/gltf-binary");
+  });
+
+  test("refuses malformed headers, chunks and JSON, external resources and invalid embedded ranges", () => {
+    const file = join(root(), "desk.glb");
+    const magic = glbModel(); magic.write("not!");
+    const version = glbModel(); version.writeUInt32LE(1, 4);
+    const length = glbModel(); length.writeUInt32LE(length.length - 4, 8);
+    const chunk = glbModel(); chunk.writeUInt32LE(chunk.length, 12);
+    const json = glbModel(); json[20] = 0x21;
+    const invalid = [magic, version, length, chunk, json,
+      glbModel({ asset: { version: "1.0" } }),
+      glbModel({ buffers: [{ byteLength: 36, uri: "https://example.invalid/remote.bin" }] }),
+      glbModel({ buffers: [{ byteLength: 36, uri: "data:application/octet-stream;base64,AA==" }] }),
+      glbModel({ images: [{ uri: "texture.png" }] }),
+      glbModel({ images: [{ bufferView: 99, mimeType: "image/png" }] }),
+      glbModel({ buffers: [{ byteLength: 1000 }] }),
+      glbModel({ bufferViews: [{ buffer: 0, byteOffset: 32, byteLength: 36 }] }),
+    ];
+    for (const bytes of invalid) { writeFileSync(file, bytes); expect(typeof readValidatedModel(file)).toBe("string"); }
+  });
+
+  test("refuses symlinks, unreadable and oversized models, while bad packs do not hide good ones", () => {
+    const dir = root(), file = join(dir, "model.glb"); writeFileSync(file, glbModel());
+    symlinkSync(file, join(dir, "link.glb"));
+    expect(validateModel(join(dir, "link.glb"))).toContain("missing or not a regular file");
+    chmodSync(file, 0o000);
+    try { expect(readValidatedModel(file)).toBe("could not be read (EACCES)"); }
+    finally { chmodSync(file, 0o600); }
+    truncateSync(file, 4 * 1024 * 1024 + 1);
+    expect(readValidatedModel(file)).toBe("model is larger than 4 MB");
+    expect(readValidatedModel(file, 8 * 1024 * 1024)).toBe("model is larger than 4 MB");
+    const bad = writeAssetPack(dir, "bad", { models: { desk: "desk.glb" } }); writeFileSync(join(bad, "desk.glb"), "bad");
+    writeAssetPack(dir, "valid", { models: { desk: "desk.glb" } });
+    const { packs, problems } = loadAssetPacks([dir]);
+    expect(packs.map((pack) => pack.id)).toEqual(["valid"]);
+    expect(problems.some((problem) => problem.startsWith(`${bad}: model desk:`))).toBe(true);
   });
 });

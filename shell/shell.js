@@ -903,7 +903,7 @@ let spaceModule = null, spaceRenderer = null, spaceLoading = null;
 async function showSpace() {
   if (!spaceLoading) spaceLoading = import("/space.js").then((mod) => {
     spaceModule = mod;
-    spaceRenderer = mod.createSpaceRenderer($("view-space"), { h, navigate, petSprite, pets: () => state.pets, packs: () => state.assetPacks });
+    spaceRenderer = mod.createSpaceRenderer($("view-space"), { h, navigate, petSprite, pets: () => state.pets, packs: () => state.assetPacks, onError: (error) => clientError("acon", "space 3D", error) });
   }).catch((error) => {
     clientError("acon", "space load", error);
     $("view-space").replaceChildren(h("h1", { class: "lead", id: "space-lead", text: "Space" }), h("p", { class: "notice", text: "The space could not load. Details are in System." }));

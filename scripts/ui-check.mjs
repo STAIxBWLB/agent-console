@@ -9,18 +9,23 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, spaceMotionOnly: false };
+const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, spaceMotionOnly: false, spaceViewsOnly: false, artRoot: null };
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
   if (arg === "--help") {
-    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only]\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
+    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only] [--space-views-only] [--art-root DIR]\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
     process.exit(0);
   }
   if (arg === "--force-overflow") options.forceOverflow = true;
   else if (arg === "--space-motion-only") options.spaceMotionOnly = true;
+  else if (arg === "--space-views-only") options.spaceViewsOnly = true;
+  else if (arg === "--art-root" && process.argv[i + 1]) options.artRoot = resolve(process.argv[++i]);
   else if ((arg === "--output" || arg === "--baseline") && process.argv[i + 1]) options[arg === "--output" ? "output" : "baseline"] = resolve(process.argv[++i]);
   else throw new Error(`Unknown or incomplete argument: ${arg}`);
 }
+
+if (options.spaceMotionOnly && options.spaceViewsOnly) throw new Error("Choose only one focused probe mode");
+if (options.artRoot && !options.spaceViewsOnly) throw new Error("--art-root requires --space-views-only");
 
 async function findPlaywright() {
   const require = createRequire(join(root, "package.json"));
@@ -83,16 +88,19 @@ import { writeAssetPack, pngImage } from ${JSON.stringify(pathToFileURL(join(roo
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 const home = ${JSON.stringify(home)};
-const assetsDir = join(home,"console","assets");
-const petsDir = join(home,"console","pets");
-writeAssetPack(assetsDir,"office");
+const artRoot = ${JSON.stringify(options.artRoot)};
+const assetsDir = artRoot ? join(artRoot,"assets") : join(home,"console","assets");
+const petsDir = artRoot ? join(artRoot,"pets") : join(home,"console","pets");
+if(!artRoot) {
+writeAssetPack(assetsDir,"office",{models:{desk:"desk.glb",shelf:"desk.glb",board:"desk.glb"}});
 const petDir = join(petsDir,"fixture-pet");
 mkdirSync(petDir,{recursive:true});
 writeFileSync(join(petDir,"pet.json"),JSON.stringify({id:"fixture-pet",displayName:"Fixture pet",spriteVersionNumber:2,spritesheetPath:"spritesheet.png"}));
 writeFileSync(join(petDir,"spritesheet.png"),pngImage(8,11));
+}
 const {pets,problems:petProblems} = loadPets([petsDir]);
 const {packs:assetPacks,problems:assetProblems} = loadAssetPacks([assetsDir]);
-if(petProblems.length || assetProblems.length || pets.length!==1 || assetPacks.length!==1) throw new Error("Synthetic fixture packages failed validation: "+[...petProblems,...assetProblems].join("; "));
+if(petProblems.length || assetProblems.length || (!artRoot && pets.length!==1) || assetPacks.length!==1) throw new Error("Synthetic fixture packages failed validation: "+[...petProblems,...assetProblems].join("; "));
 async function entry(tool) {
 const plugin = createDemoPlugin(tool);
 if(tool==="echo") {plugin.manifest.title="Echo";plugin.manifest.capabilities={space:true};plugin.manifest.commands=[];}
@@ -221,7 +229,7 @@ function measurePage() {
   const dialog = document.querySelector("dialog[open]");
   const sheet = document.querySelector("#sheet:not([hidden])");
   const surface = dialog ?? sheet ?? document.querySelector("#app");
-  const textSelectors = [".search-label", ".row-title", ".row-sub", ".tab[aria-selected='true']", ".opt-title", ".opt-sub", ".sheet-head h2", ".ui-detail-head h2", ".space-actor strong", ".space-card", ".space-zone h2", ".space-roster-actor", ".space-roster-zone", ".space-roster-link"];
+  const textSelectors = [".search-label", ".row-title", ".row-sub", ".tab[aria-selected='true']", ".opt-title", ".opt-sub", ".sheet-head h2", ".ui-detail-head h2", ".space-actor strong", ".space-card-label", ".space-zone h2", ".space-roster-actor", ".space-roster-zone", ".space-roster-link"];
   for (const selector of textSelectors) {
     for (const el of surface.querySelectorAll(selector)) {
       if (!shown(el)) continue;
@@ -264,10 +272,14 @@ function measurePage() {
   for (let i = 0; i < controls.length; i += 1) for (let j = i + 1; j < controls.length; j += 1) {
     const a = controls[i]; const b = controls[j];
     if (a.contains(b) || b.contains(a)) continue;
+    // Camera views intentionally occlude depth-ordered scene controls. Their projection,
+    // retained keyboard order and equivalent roster are checked by runSpaceViews instead.
+    // Normal shell controls and the roster retain the strict pairwise overlap check.
+    if (a.closest("[data-space-view='room'] .space-plane,[data-space-view='3d'] .space-plane") && b.closest("[data-space-view='room'] .space-plane,[data-space-view='3d'] .space-plane")) continue;
     const ar = visibleBox(a); const br = visibleBox(b);
     if (Math.min(ar.right, br.right) - Math.max(ar.left, br.left) > 2 && Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top) > 2) findings.push({ kind: "overlapping-controls", detail: `${describe(a)} overlaps ${describe(b)}` });
   }
-  const fontSelectors = ["h1.lead", ".row-title", ".row-sub", ".tab", ".btn", ".chip", ".opt-title", ".opt-sub", ".ui-detail-head h2", ".ui-detail-kind", ".ui-detail-summary", ".ui-provenance", ".ui-detail-section > summary", ".ui-detail-footer", ".ui-field", "#confirm-title", "#palette-input", ".space-actor strong", ".space-card", ".space-zone h2", ".space-roster-actor", ".space-roster-zone", ".space-roster-link"];
+  const fontSelectors = ["h1.lead", ".row-title", ".row-sub", ".tab", ".btn", ".chip", ".opt-title", ".opt-sub", ".ui-detail-head h2", ".ui-detail-kind", ".ui-detail-summary", ".ui-provenance", ".ui-detail-section > summary", ".ui-detail-footer", ".ui-field", "#confirm-title", "#palette-input", ".space-actor strong", ".space-card-label", ".space-zone h2", ".space-roster-actor", ".space-roster-zone", ".space-roster-link"];
   for (const selector of fontSelectors) [...surface.querySelectorAll(selector)].filter(shown).forEach((el, i) => { fonts[`${selector}#${i}`] = Number.parseFloat(getComputedStyle(el).fontSize); });
   return { findings, fonts, rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize), documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth };
 }
@@ -743,6 +755,153 @@ async function runSpaceMotion(ticket) {
   }
 }
 
+/** Room/WebGL share the actual keyed DOM controls; projected graphics have separate geometry checks. */
+async function runSpaceViews(ticket) {
+  report.spaceViews = [];
+  const keyboardOrder = async (page, keys) => {
+    const actual = []; let visibleFocus = true;
+    await page.locator(".space-scroll").focus();
+    for (let index = 0; index < keys.length; index += 1) {
+      await page.keyboard.press("Tab");
+      const current = await page.evaluate(() => { const el = document.activeElement, css = getComputedStyle(el); const description = document.querySelector(".space-selection"); return { key: el.dataset.key, outline: css.outlineStyle !== "none" && Number.parseFloat(css.outlineWidth) > 0 && description && !description.hidden && description.textContent === el.getAttribute("aria-label") }; });
+      actual.push(current.key); visibleFocus &&= current.outline;
+    }
+    return { expected: keys, actual, visibleFocus, passed: JSON.stringify(keys) === JSON.stringify(actual) && visibleFocus };
+  };
+  for (const width of [375, 1440]) for (const theme of ["light", "dark"]) for (const textPercent of [100, 200]) {
+    const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme, reducedMotion: "reduce" });
+    const page = await context.newPage(); page.setDefaultTimeout(12000);
+    const findings = [], requests = [], errors = [];
+    page.on("pageerror", (error) => errors.push({ kind: "page-error", detail: error.message }));
+    page.on("console", (message) => { if (message.type() === "error") errors.push({ kind: "console-error", detail: message.text().slice(0, 1000) }); });
+    page.on("response", (response) => requests.push({ path: new URL(response.url()).pathname, status: response.status() }));
+    const evidence = { width, theme, textPercent, requests, findings };
+    try {
+      await page.goto((await ticket()).url, { waitUntil: "networkidle" });
+      await page.evaluate(({ size, force }) => {
+        document.documentElement.style.fontSize = `${size}%`; location.hash = "#/local/space";
+        if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
+      }, { size: textPercent, force: options.forceOverflow });
+      await page.locator(".space-actor").nth(5).waitFor();
+      await page.locator(".space-card").nth(5).waitFor();
+      const keys = await page.locator(".space-plane button").evaluateAll((nodes) => nodes.map((n) => n.dataset.key));
+      await page.locator("[data-space-view='room']").click();
+      await settle(page);
+      evidence.room = await page.locator("#view-space").evaluate((view) => ({
+        view: view.dataset.spaceView, keys: [...view.querySelectorAll(".space-plane button")].map((n) => n.dataset.key),
+        transform: getComputedStyle(view.querySelector(".space-plane")).transform,
+        preserve: getComputedStyle(view.querySelector(".space-plane")).transformStyle,
+        transition: getComputedStyle(view.querySelector(".space-plane")).transitionDuration,
+      }));
+      if (JSON.stringify(keys) !== JSON.stringify(evidence.room.keys) || evidence.room.view !== "room" || evidence.room.preserve !== "preserve-3d" || evidence.room.transform === "none" || evidence.room.transition !== "0s") findings.push({ kind: "space-room-contract", detail: JSON.stringify(evidence.room) });
+      await page.locator(".space-scroll").focus(); await page.keyboard.press("ArrowRight"); await settle(page);
+      const rotated = await page.locator(".space-plane").evaluate((el) => getComputedStyle(el).transform);
+      if (rotated === evidence.room.transform) findings.push({ kind: "space-room-keyboard", detail: "ArrowRight did not rotate the Room camera" });
+      if (requests.some((r) => r.path.startsWith("/vendor/") || r.path === "/space3d.js")) findings.push({ kind: "space-lazy-vendor", detail: "Flat or Room loaded WebGL code" });
+      await page.locator(".space-scroll").scrollIntoViewIfNeeded();
+      await capture(page, { width, theme, textPercent }, "space-room", findings);
+      evidence.roomKeyboard = await keyboardOrder(page, keys);
+      if (!evidence.roomKeyboard.passed) findings.push({ kind: "space-room-focus", detail: JSON.stringify(evidence.roomKeyboard) });
+      const button = page.locator("button[data-space-view='3d']");
+      if (await button.count() !== 1) throw new Error("Browser fixture must support WebGL2 to verify 3D");
+      if (width === 1440 && theme === "light" && textPercent === 100) await page.emulateMedia({ reducedMotion: "no-preference" });
+      await button.click();
+      await page.locator(".space-webgl[data-ready='true'][data-pending-frames='0']").waitFor();
+      const geometry = () => page.locator("#view-space").evaluate((view) => {
+        const plane = view.querySelector(".space-plane").getBoundingClientRect();
+        const canvas = view.querySelector("canvas").getBoundingClientRect(), scroll = view.querySelector(".space-scroll").getBoundingClientRect();
+        const canvasVisible = canvas.width > 0 && canvas.height > 0 && canvas.left >= scroll.left - 1 && canvas.top >= scroll.top - 1 && canvas.right <= scroll.right + 1 && canvas.bottom <= scroll.bottom + 1;
+        return { canvasVisible, canvas: { x: canvas.x, y: canvas.y, width: canvas.width, height: canvas.height }, scroll: { x: scroll.x, y: scroll.y, width: scroll.width, height: scroll.height }, view: view.dataset.spaceView, keys: [...view.querySelectorAll(".space-plane button")].map((n) => n.dataset.key),
+          errors: [...view.querySelectorAll(".space-actor,.space-card")].map((el) => { const box = el.getBoundingClientRect(); return Math.hypot(box.left + box.width / 2 - plane.left - Number(el.dataset.projectedX), box.top + box.height / 2 - plane.top - Number(el.dataset.projectedY)); }),
+          ...view.querySelector(".space-webgl").dataset };
+      });
+      evidence.initial3d = await geometry();
+      await page.locator(".space-camera button").filter({ hasText: "Rotate left" }).click(); await settle(page);
+      evidence.rotated3d = await geometry();
+      // Read the current drawing buffer in the same frame as a camera invalidation.
+      // This catches an opaque backdrop accidentally painting over every pet sprite.
+      evidence.spritePixels = await page.evaluate(() => {
+        document.querySelector(".space-scroll").dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        return new Promise((done) => requestAnimationFrame(() => {
+          const canvas = document.querySelector(".space-canvas"), gl = canvas.getContext("webgl2");
+          const scale = canvas.width / canvas.getBoundingClientRect().width;
+          const pixels = [...document.querySelectorAll(".space-actor")].map((actor) => {
+            const bytes = new Uint8Array(4);
+            gl.readPixels(Math.floor(Number(actor.dataset.projectedX) * scale), canvas.height - 1 - Math.floor(Number(actor.dataset.projectedY) * scale), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+            return { id: actor.dataset.key, rgba: [...bytes] };
+          });
+          done(pixels);
+        }));
+      });
+      if (!evidence.spritePixels.some(({ rgba }) => rgba.slice(0, 3).some((channel) => channel < 190))) findings.push({ kind: "space-sprite-occluded", detail: JSON.stringify(evidence.spritePixels) });
+      for (const sample of [evidence.initial3d, evidence.rotated3d]) {
+        if (!sample.canvasVisible || sample.view !== "3d" || JSON.stringify(sample.keys) !== JSON.stringify(keys) || sample.errors.some((error) => !Number.isFinite(error) || error > 8)) findings.push({ kind: "space-projected-overlay", detail: JSON.stringify(sample) });
+        if (!(Number(sample.modelCount) > 0)) findings.push({ kind: "space-model-fixture", detail: "Installed GLB fixture did not produce model furniture" });
+      }
+      await page.locator(".space-scroll").scrollIntoViewIfNeeded();
+      await capture(page, { width, theme, textPercent }, "space-3d");
+      if (width === 1440 && theme === "light" && textPercent === 100) {
+        const beforeBurst = await page.locator(".space-webgl").evaluate((el) => Number(el.dataset.renderCount));
+        await page.route("**/p/demo/snapshot", async (route) => {
+          const response = await route.fetch(), body = await response.json();
+          if (body.scene) body.scene.actors[0].state = "blocked";
+          await route.fulfill({ response, json: body });
+        });
+        findings.push(...await waitSpacePoll(page));
+        await page.locator(".space-webgl[data-pending-frames='0']").waitFor();
+        evidence.burst = await page.locator(".space-webgl").evaluate((el, before) => ({ before, after: Number(el.dataset.renderCount), reduced: matchMedia("(prefers-reduced-motion: reduce)").matches, pending: Number(el.dataset.pendingFrames) }), beforeBurst);
+        if (evidence.burst.reduced || evidence.burst.after <= evidence.burst.before + 1 || evidence.burst.pending !== 0) findings.push({ kind: "space-bounded-burst", detail: JSON.stringify(evidence.burst) });
+        evidence.idle = await page.locator(".space-webgl").evaluate(async (mount) => {
+          const before = Number(mount.dataset.renderCount), started = performance.now();
+          await new Promise((done) => setTimeout(done, 10000));
+          return { milliseconds: performance.now() - started, before, after: Number(mount.dataset.renderCount), pending: Number(mount.dataset.pendingFrames) };
+        });
+        if (evidence.idle.after !== evidence.idle.before || evidence.idle.pending !== 0 || evidence.idle.milliseconds < 10000) findings.push({ kind: "space-idle-cost", detail: JSON.stringify(evidence.idle) });
+      }
+      evidence.webglKeyboard = await keyboardOrder(page, keys);
+      if (!evidence.webglKeyboard.passed) findings.push({ kind: "space-3d-focus", detail: JSON.stringify(evidence.webglKeyboard) });
+      await page.locator(".space-webgl canvas").evaluate((canvas) => canvas.getContext("webgl2").getExtension("WEBGL_lose_context").loseContext());
+      await page.locator("#view-space[data-space-view='room']").waitFor();
+      if (!(await page.locator(".space-view-notice").isVisible())) findings.push({ kind: "space-context-loss", detail: "Context loss failed to reveal Room fallback notice" });
+      evidence.contextLoss = "Room with notice";
+    } catch (error) { findings.push({ kind: "space-views-probe", detail: error.message.slice(0, 1500) }); }
+    finally {
+      findings.push(...errors); report.findings.push(...findings.map((f) => ({ capture: `${width}-${theme}-${textPercent}-space-views`, ...f })));
+      report.spaceViews.push(evidence); await context.close();
+    }
+  }
+  // Real WebGL2 with no pack must still render usable box furniture.
+  const boxContext = await browser.newContext({ viewport: { width: 375, height: 1000 }, reducedMotion: "reduce" });
+  const boxPage = await boxContext.newPage();
+  try {
+    await boxPage.goto((await ticket(true)).url, { waitUntil: "networkidle" });
+    await boxPage.evaluate(() => { location.hash = "#/local/space"; });
+    await boxPage.locator(".space-actor").first().waitFor();
+    await boxPage.locator("button[data-space-view='3d']").click();
+    await boxPage.locator(".space-webgl[data-ready='true'][data-pending-frames='0']").waitFor();
+    const stats = await boxPage.locator(".space-webgl").evaluate((el) => ({ ...el.dataset }));
+    if (!(Number(stats.boxCount) > 0) || Number(stats.modelCount) !== 0) report.findings.push({ kind: "space-box-fallback", detail: JSON.stringify(stats) });
+    report.spaceViews.push({ pack: false, ...stats });
+    await boxPage.locator(".space-scroll").scrollIntoViewIfNeeded();
+    await capture(boxPage, { width: 375, theme: "light", textPercent: 100 }, "space-3d-boxes");
+  } catch (error) { report.findings.push({ kind: "space-box-fallback", detail: error.message }); }
+  finally { await boxContext.close(); }
+  // Explicit no-WebGL2 path, including a persisted 3D preference.
+  const context = await browser.newContext({ viewport: { width: 375, height: 1000 }, reducedMotion: "reduce" });
+  const page = await context.newPage();
+  try {
+    await page.addInitScript(() => { const original = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function(type, ...args) { return type === "webgl2" ? null : original.call(this, type, ...args); }; localStorage.setItem("acon.space.view", "3d"); });
+    await page.goto((await ticket(true)).url, { waitUntil: "networkidle" });
+    await page.evaluate(() => { location.hash = "#/local/space"; });
+    await page.locator("#view-space[data-space-view='room'] .space-actor").first().waitFor();
+    const hidden = await page.locator("button[data-space-view='3d']").count() === 0;
+    const notice = await page.locator(".space-view-notice").isVisible();
+    if (!hidden || !notice) report.findings.push({ kind: "space-no-webgl", detail: `3D hidden=${hidden}, fallback notice=${notice}` });
+    report.spaceViews.push({ webgl2: false, hidden, notice });
+  } catch (error) { report.findings.push({ kind: "space-no-webgl", detail: error.message }); }
+  finally { await context.close(); }
+}
+
 try {
   await mkdir(options.output, { recursive: true });
   if (options.baseline) baseline = JSON.parse(await readFile(options.baseline, "utf8"));
@@ -757,11 +916,12 @@ try {
   process.env.TMPDIR = env.TMPDIR;
   browser = await chromium.launch({ headless: true, env, ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
   report.browserVersion = browser.version();
-  if (!options.spaceMotionOnly) {
+  if (!options.spaceMotionOnly && !options.spaceViewsOnly) {
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
   }
-  await runSpaceMotion(ticket);
+  if (!options.spaceViewsOnly) await runSpaceMotion(ticket);
+  if (!options.spaceMotionOnly) await runSpaceViews(ticket);
 } catch (error) {
   report.findings.push({ kind: "setup-error", detail: error.message.slice(0, 1500) });
 } finally {

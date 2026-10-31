@@ -4,7 +4,7 @@ import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionResult } from "./contract.ts";
 import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import type { PetPackage } from "./pets.ts";
-import { readValidatedImage, type AssetPack } from "./assets.ts";
+import { readValidatedImage, readValidatedModel, type AssetPack } from "./assets.ts";
 import { sanitizeSpaceScene } from "./space.ts";
 import type { ServeOptions } from "./serve.ts";
 
@@ -62,8 +62,10 @@ export function startServer(options: ServerOptions) {
   const log = options.log ?? ((line: string) => console.error(`acon: ${line}`));
   const startedAt = new Date(now()).toISOString();
   const serve = options.serve;
-  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
+  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
   const files = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
+  // Fixed vendored module allowlist, never a request-derived filesystem path.
+  for (const name of ["three.module.js", "three.core.js", "GLTFLoader.js", "BufferGeometryUtils.js", "SkeletonUtils.js"]) files[`/vendor/${name}`] = { body: asset(`vendor/${name}`), type: "text/javascript; charset=utf-8" };
   const tools = new Map(options.plugins.filter((p) => p.status === "ready").map((p) => [p.tool, p]));
   const tickets = new Map<string, { expires: number }>();
   const sessions = new Map<string, { expires: number }>();
@@ -190,6 +192,7 @@ export function startServer(options: ServerOptions) {
       const live = serve ? true : cookie !== undefined && sessions.has(cookie);
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
       const packedImage = /^\/assets\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
+      const packedModel = /^\/models\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
       const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action)$/.exec(path);
       if (req.method === "GET") {
         const file = files[path];
@@ -218,6 +221,15 @@ export function startServer(options: ServerOptions) {
           const image = readValidatedImage(entry.file, 4 * 1024 * 1024);
           if (typeof image === "string") return reject(404, "unknown asset");
           return new Response(new Uint8Array(image.bytes), { headers: { ...HEADERS, "Content-Type": image.type } });
+        }
+        if (packedModel) {
+          if (!live) return reject(401, "session expired or missing; run acon ui");
+          const pack = assetPacks.find((p) => p.id === packedModel[1]);
+          const entry = pack?.models?.[packedModel[2]!];
+          if (!entry) return reject(404, "unknown model");
+          const model = readValidatedModel(entry.file);
+          if (typeof model === "string") return reject(404, "unknown model");
+          return new Response(new Uint8Array(model.bytes), { headers: { ...HEADERS, "Content-Type": model.type } });
         }
         return reject(404, "not found");
       }
@@ -248,7 +260,7 @@ export function startServer(options: ServerOptions) {
       }
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
-        return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images }) => ({ id, name, version, tile, images: Object.keys(images) })), errors });
+        return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images, models }) => ({ id, name, version, tile, images: Object.keys(images), ...(models ? { models: Object.keys(models) } : {}) })), errors });
       }
       const entry = tools.get(plugin![1]!);
       if (!entry) return reject(404, "unknown tool");
