@@ -7,6 +7,14 @@ import type { ConsoleUi } from "../src/contract.ts";
 const shell = (name: string) => readFileSync(join(import.meta.dir, "..", "shell", name), "utf8");
 
 describe("shell files fit the CSP", () => {
+  test("the type scale uses documented rem tokens and detail actions have a group role", () => {
+    const css = shell("shell.css");
+    expect(css).not.toMatch(/font-size:\s*\d+(?:\.\d+)?px/);
+    expect(css).not.toMatch(/font:\s*\d+px/);
+    for (const [, token] of css.matchAll(/(--acon-text-[a-z0-9]+):\s*[\d.]+rem/g)) {
+      expect(readFileSync(join(import.meta.dir, "..", "README.md"), "utf8")).toContain(token!);
+    }
+  });
   test("index.html has no inline script, style or handlers", () => {
     const html = shell("index.html");
     expect(html).not.toMatch(/<script(?![^>]*\bsrc=)[^>]*>/);
@@ -78,6 +86,7 @@ describe("public panel kit", () => {
     for (const cls of ["ui-detail-head", "ui-detail-actions", "ui-detail-summary", "ui-provenance", "ui-detail-footer"]) {
       expect(all.some((n) => n.className.split(" ").includes(cls))).toBe(true);
     }
+    expect(all.find((n) => n.className === "ui-detail-actions")!.attributes.get("role")).toBe("group");
     expect(detail.textContent).toContain(text);
     expect(detail.textContent).toContain("Your move");
     expect(all.some((n) => n.tagName === "SCRIPT")).toBe(false);

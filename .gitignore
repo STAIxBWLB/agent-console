@@ -1,6 +1,7 @@
 node_modules/
 .worktrees/
 *.tgz
+ui-check/
 .agenthub/state/
 .agenthub/config.local.json
 .agenthub/routing.local.toml
