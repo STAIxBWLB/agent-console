@@ -41,6 +41,8 @@ beforeAll(() => {
     fetch(req) {
       const path = new URL(req.url).pathname;
       if (path === "/console/index.json") return new Response(index());
+      if (path === "/signed/pet.json") return new URL(req.url).searchParams.get("token") === "x" ? new Response(petJson) : new Response("query required", { status: 403 });
+      if (path === "/signed/spritesheet.png") return new Response(new Blob([new Uint8Array(sheet)]));
       if (path === "/redirect-http/pet.json") return new Response(null, { status: 302, headers: { location: "http://example.com/pet.json" } });
       if (path === "/big") {
         // No content-length: the cap must trip while streaming.
@@ -134,6 +136,11 @@ describe("install by URL and directory (AC2)", () => {
     const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", `${base}/console/packs/office/pack.json`], { env: { ...process.env, AGENTHUB_HOME: h }, stdout: "pipe", stderr: "pipe" });
     expect(await new Response(proc.stdout).text()).toContain("not hash-verified");
     expect(await proc.exited).toBe(0);
+  });
+
+  test("a manifest URL keeps its query string; referenced files resolve beside it", async () => {
+    const r = await installPackage(`${base}/signed/pet.json?token=x`, opts(home()));
+    expect(r).toMatchObject({ kind: "pet", id: "gyul", verified: false });
   });
 
   test("a local directory installs without hashes", async () => {

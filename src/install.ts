@@ -201,7 +201,8 @@ export async function installPackage(source: string, o: InstallOptions): Promise
       if (stat.size > max) return fail(`${label} is larger than ${max} bytes`);
       return readFileSync(file);
     }
-    const bytes = await fetchCapped(new URL(name, src.manifestUrl), max, label, o.timeoutMs);
+    // The manifest is fetched exactly as given (a signed URL keeps its query); only referenced files resolve against it.
+    const bytes = await fetchCapped(name === manifestName ? src.manifestUrl! : new URL(name, src.manifestUrl), max, label, o.timeoutMs);
     if (src.hashes) {
       const want = src.hashes[name];
       if (!want) return fail(`${label} (${name}) has no sha256 in the index`);
