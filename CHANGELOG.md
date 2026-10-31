@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Plugin discovery scans files that start with a `#!` line (CLI entry files) instead of marking the plugin "cannot be read"; a file that cannot be scanned is now named in the reason.
+
 ### Added
 
 - Repeatable UI checks across phone, tablet and desktop widths, both themes and 200% text; rem type tokens, discoverable scrolling tabs and inline status chips on phones (#7).

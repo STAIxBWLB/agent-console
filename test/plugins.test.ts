@@ -161,6 +161,18 @@ describe("plugin discovery", () => {
     expect(scanPlugins(dir).entries[0]?.status).toBe("verified");
   });
 
+  test("a CLI file with a #! line in the import graph passes; an unparsable file is named", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-shebang-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    writeFileSync(join(pkg, "cli.ts"), "#!/usr/bin/env bun\nimport \"node:fs\";\nexport const run = () => 1;\n");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'import { run } from "./cli.ts";\nexport default { run };\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]?.status).toBe("verified");
+    writeFileSync(join(pkg, "cli.ts"), "export const = ;\n");
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("cli.ts could not be scanned for imports") }));
+  });
+
   test("a data: import is refused", () => {
     const pkg = mkdtempSync(join(tmpdir(), "acon-data-"));
     writeFileSync(join(pkg, "package.json"), "{}");

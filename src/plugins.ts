@@ -99,7 +99,12 @@ function importEscapes(entry: string, root: string, verified: Set<string>): stri
     seen.add(file);
     if (seen.size > TREE_MAX) return `${root} imports more than ${TREE_MAX} files`;
     if (!CODE.test(file)) continue;
-    for (const { path } of new Bun.Transpiler({ loader: LOADER(file) }).scanImports(readFileSync(file, "utf8"))) {
+    // A leading #! line is valid in a Bun module (CLI entry files have one), but Bun's import scanner throws on it.
+    const source = readFileSync(file, "utf8").replace(/^#![^\n]*/, "");
+    let imports: { path: string }[];
+    try { imports = new Bun.Transpiler({ loader: LOADER(file) }).scanImports(source); }
+    catch { return `${file} could not be scanned for imports`; }
+    for (const { path } of imports) {
       if (/^(node|bun):/.test(path) || path === "bun" || builtinModules.includes(path)) continue;
       // Any other scheme (data:, file:, http:) would load code that is not a verified file.
       if (/^[a-z][a-z0-9+.-]*:/i.test(path)) return `${file} imports ${path.slice(0, 40)}, which is not a package file`;
