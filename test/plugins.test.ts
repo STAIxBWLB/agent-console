@@ -178,4 +178,15 @@ describe("plugin discovery", () => {
     const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
     expect(loaded.map((p) => `${p.status}:${p.reason ?? ""}`)).toEqual(["failed:manifest is not JSON-serializable", "ready:"]);
   });
+
+  test("an import into a skipped directory such as .git is refused", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-git-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    mkdirSync(join(pkg, ".git"));
+    writeFileSync(join(pkg, ".git", "helper.ts"), "export const x = 1;\n");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'import "./.git/helper.ts";\nexport default {};\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("outside the plugin package") }));
+  });
 });

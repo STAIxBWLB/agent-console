@@ -54,6 +54,7 @@ export function replaceableBy(path: string): string | undefined {
   }
   // ponytail: a full walk on every start; fine for a package of a few thousand files, cache by mtime if it grows.
   const stack = [root];
+  const verified = new Set<string>();
   let seen = 0;
   while (stack.length) {
     const current = stack.pop()!;
@@ -68,26 +69,28 @@ export function replaceableBy(path: string): string | undefined {
     }
     const bad = problem(current, info, false);
     if (bad) return bad;
+    if (info.isFile()) verified.add(current);
     if (info.isDirectory()) for (const name of readdirSync(current)) if (name !== ".git" && name !== "node_modules") stack.push(join(current, name));
   }
-  return importEscapes(entry, root);
+  return importEscapes(entry, root, verified);
 }
 
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const LOADER = (file: string) => (/\.(ts|mts|cts)$/.test(file) ? "ts" : /\.tsx$/.test(file) ? "tsx" : /\.jsx$/.test(file) ? "jsx" : "js");
 
 /**
- * Follows the static import graph from the entry: every file it reaches must be inside the verified package tree or in
+ * Follows the static import graph from the entry: every file it reaches must be one the package walk verified, or in
  * a node_modules directory of the root or one of its ancestors, or Bun's install cache (installed dependencies, the
  * installer's responsibility).
  * ponytail: dynamic import() with a computed specifier cannot be followed; literal ones are.
  */
-function importEscapes(entry: string, root: string): string | undefined {
+function importEscapes(entry: string, root: string, verified: Set<string>): string | undefined {
   const dependencyDirs: string[] = [];
   for (let dir = root, prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) dependencyDirs.push(`${join(dir, "node_modules")}/`);
   // Bun's install cache serves dependencies when a package has no node_modules (auto-install).
   dependencyDirs.push(`${process.env.BUN_INSTALL_CACHE_DIR || join(process.env.BUN_INSTALL || join(homedir(), ".bun"), "install", "cache")}/`);
-  const inside = (file: string) => file.startsWith(`${root}/`) && !file.slice(root.length).includes("/node_modules/");
+  // Package files must be ones the walk checked; skipped directories (.git, node_modules) never qualify.
+  if (!verified.has(entry)) return `${entry} is not a verified package file`;
   const seen = new Set<string>();
   const queue = [entry];
   while (queue.length) {
@@ -105,7 +108,7 @@ function importEscapes(entry: string, root: string): string | undefined {
       if (!isAbsolute(resolved)) return `${file} imports ${path.slice(0, 40)}, which is not a package file`;
       if (dependencyDirs.some((d) => resolved.startsWith(d))) continue;
       const real = realpathSync(resolved);
-      if (!inside(real)) return `${file} imports ${path}, which is outside the plugin package`;
+      if (!verified.has(real)) return `${file} imports ${path}, which is outside the plugin package`;
       queue.push(real);
     }
   }
