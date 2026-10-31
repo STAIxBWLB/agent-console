@@ -7,3 +7,4 @@
 - Errors: content areas show one-line summaries; provider exception text reaches System and the terminal only.
 - Shell: data rendered as text, keyboard path for every action, visible focus, both themes, phone layout without horizontal scroll.
 - Require typecheck, boundary check, tests and package dry-run. Distinguish local evidence from hosted Linux/macOS CI and from browser checks.
+- For UI changes, attach the `scripts/ui-check.mjs` JSON report and screenshots (375/768/1024/1440 px, light/dark, 100%/200% text), plus the forced-overflow negative-control result. Record actual Safari/VoiceOver announcements for inbox, peek, palette and confirm; mark unverified entries explicitly and leave blocking findings to the owner.

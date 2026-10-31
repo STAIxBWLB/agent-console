@@ -105,7 +105,7 @@ const consoleUi = {
         h("h2", { text: o.title }),
         o.state ? consoleUi.chip(o.state.text, o.state.tone) : null,
         o.whoseMove ? h("span", { class: "ui-detail-move", text: o.whoseMove === "you" ? "Your move" : "Agent's move" }) : null),
-      o.actions?.length ? h("div", { class: "ui-detail-actions", "aria-label": "Next actions" }, o.actions) : null,
+      o.actions?.length ? h("div", { class: "ui-detail-actions", role: "group", "aria-label": "Next actions" }, o.actions) : null,
       o.summary ? h("p", { class: "ui-detail-summary", text: o.summary }) : null,
       o.provenance?.length ? h("dl", { class: "ui-provenance" }, o.provenance.flatMap((p) => [h("dt", { text: p.label }), h("dd", {}, h("span", { text: p.value }), p.at ? h("time", { datetime: p.at, text: p.at }) : null)])) : null,
       ...(o.sections ?? []).map((s) => h("details", { class: "ui-detail-section", open: s.open }, h("summary", { text: s.title }), h("div", { class: "ui-detail-body" }, s.body))),
@@ -269,7 +269,24 @@ function renderTabs() {
     onclick: () => navigate(tool.tool, p.id), text: p.title,
   })));
   if (hadFocus) tabs.querySelector('[aria-selected="true"]')?.focus();
+  requestAnimationFrame(() => {
+    tabs.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    updateTabOverflow();
+  });
 }
+function updateTabOverflow() {
+  const tabs = $("tabs");
+  const before = !tabs.hidden && tabs.scrollLeft > 1;
+  const after = !tabs.hidden && tabs.scrollWidth - tabs.clientWidth - tabs.scrollLeft > 1;
+  tabs.classList.toggle("more-before", before);
+  tabs.classList.toggle("more-after", after);
+  tabs.classList.toggle("has-overflow", before || after);
+}
+$("tabs").addEventListener("scroll", updateTabOverflow, { passive: true });
+new ResizeObserver(() => {
+  $("tabs").querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  updateTabOverflow();
+}).observe($("tabs"));
 tabsKeys();
 function tabsKeys() {
   $("tabs").addEventListener("keydown", (e) => {

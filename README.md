@@ -96,6 +96,7 @@ The public CSS tokens are:
 - Spacing: `--acon-space-1`, `--acon-space-2`, `--acon-space-3`, `--acon-space-4`, `--acon-space-5`, `--acon-space-6`.
 - Shape and motion: `--acon-radius-1`, `--acon-radius-2`, `--acon-radius-3`, `--acon-shadow`, `--acon-ease`.
 - Fonts: `--acon-font-ui`, `--acon-font-mono`.
+- Type sizes: `--acon-text-2xs` (11), `--acon-text-xs` (12), `--acon-text-sm` (13), `--acon-text-md` (14), `--acon-text-base` (15), `--acon-text-lg` (16), `--acon-text-xl` (17), `--acon-text-2xl` (22). Values are rem, with the listed pixel equivalents at the default 16 px browser font size; spacing stays in px.
 
 Use the tokens in a plugin's own CSS for light and dark themes. `host.theme.tokens` exposes the color tokens; other tokens are available as CSS custom properties. Shell selectors outside the documented public classes are private and may change.
 
@@ -112,5 +113,11 @@ registerConsoleConformance(plugin, { destructive: [{ action: "delete", id: "x" }
 bun install --frozen-lockfile
 bun run check   # typecheck, boundary, tests, pack dry-run
 ```
+
+Before UI PRs, run `node scripts/ui-check.mjs`. It finds an existing Playwright install at run time, starts an isolated fixture server and writes screenshots plus `ui-check/report.json`. It checks 375/768/1024/1440 px, both themes and 100%/200% text. It exits non-zero on browser errors, text clipping, overlap or horizontal overflow. Playwright is a development tool supplied by the person running the check, not a package dependency or CI gate.
+
+Use `PLAYWRIGHT_MODULE` for an absolute Playwright or playwright-core module path, `PLAYWRIGHT_EXECUTABLE_PATH` for an existing Chromium executable, and `BUN_BIN` for Bun when it is not on PATH. `--output <dir>` changes the artifact directory; `--baseline <report.json>` compares 100% text metrics against an earlier run (1 px tolerance). `--force-overflow` is a negative control and must exit non-zero. Use the workspace's remote runner when local browser workloads are deferred.
+
+Record a real macOS Safari/VoiceOver pass in the PR for inbox, peek, palette and confirm: focused element, announced role/name/state, keyboard result and any finding. DOM checks do not substitute for VoiceOver announcements; the owner decides whether a VoiceOver finding blocks merge.
 
 License: MIT
