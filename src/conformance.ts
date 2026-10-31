@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConsolePlugin, ConsoleProvider } from "./contract.ts";
 import { manifestProblems, providerProblems, withTimeout } from "./plugins.ts";
+import { spaceSceneProblems } from "./space.ts";
+
+export { spaceSceneProblems } from "./space.ts";
 
 export interface ConformanceOptions {
   /** Family home passed to open(); a fresh temp directory by default. */
@@ -79,6 +82,10 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
       const result = await provider.snapshot({ after: 0, panel: "search", q: "a", limit: 10 });
       expect(Array.isArray(result.hits)).toBe(true);
       expect(typeof result.total).toBe("number");
+    });
+    if (plugin.manifest.capabilities?.space) test("space answers a public scene within 5 s", async () => {
+      const result = await withTimeout(provider.snapshot({ after: 0, panel: "space" }), 5_000, "space snapshot");
+      expect(spaceSceneProblems(result.scene)).toEqual([]);
     });
     test("an unknown action answers ok: false", async () => {
       const result = await provider.action({ action: "acon-conformance-unknown" });

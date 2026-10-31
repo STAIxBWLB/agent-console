@@ -2,6 +2,8 @@ import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
 import { loadPets, petDirs } from "./pets.ts";
+import { loadAssetPacks } from "./assets.ts";
+import { join } from "node:path";
 
 const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem and vault-mem
 
@@ -53,10 +55,13 @@ export async function main(argv: string[]): Promise<number> {
   const log = (line: string) => console.error(`acon: ${line}`);
   const plugins = await loadPlugins(scan, { home, log });
   const { pets, problems: petProblems } = loadPets(petDirs(home));
+  const { packs: assetPacks, problems: assetProblems } = loadAssetPacks([join(home, "console", "assets")]);
   const server = startServer({
     plugins,
     pets,
     petProblems,
+    assetPacks,
+    assetProblems,
     version: pkg.version,
     pluginsDir: scan.dir,
     pluginsError: scan.error,

@@ -185,6 +185,7 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
   if (m.pollMs !== undefined && (typeof m.pollMs !== "number" || !Number.isFinite(m.pollMs) || m.pollMs <= 0)) out.push("manifest.pollMs must be a positive number");
   const actions = m.capabilities?.actions;
   if (actions !== undefined && (!Array.isArray(actions) || actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
+  if (m.capabilities?.space !== undefined && typeof m.capabilities.space !== "boolean") out.push("capabilities.space must be a boolean");
   if (m.commands !== undefined) {
     if (!Array.isArray(m.commands)) out.push("manifest.commands must be an array");
     else {

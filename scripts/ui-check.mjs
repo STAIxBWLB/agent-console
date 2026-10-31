@@ -9,14 +9,15 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false };
+const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, spaceMotionOnly: false };
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
   if (arg === "--help") {
-    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow]\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
+    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only]\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
     process.exit(0);
   }
   if (arg === "--force-overflow") options.forceOverflow = true;
+  else if (arg === "--space-motion-only") options.spaceMotionOnly = true;
   else if ((arg === "--output" || arg === "--baseline") && process.argv[i + 1]) options[arg === "--output" ? "output" : "baseline"] = resolve(process.argv[++i]);
   else throw new Error(`Unknown or incomplete argument: ${arg}`);
 }
@@ -76,13 +77,32 @@ function fixturePanel(host) {
 function serverSource(home) {
   return `import { startServer } from ${JSON.stringify(pathToFileURL(join(root, "src", "server.ts")).href)};
 import { createDemoPlugin } from ${JSON.stringify(pathToFileURL(join(root, "test", "fixtures", "demo-plugin.ts")).href)};
-const plugin = createDemoPlugin();
+import { loadAssetPacks } from ${JSON.stringify(pathToFileURL(join(root, "src", "assets.ts")).href)};
+import { loadPets } from ${JSON.stringify(pathToFileURL(join(root, "src", "pets.ts")).href)};
+import { writeAssetPack, pngImage } from ${JSON.stringify(pathToFileURL(join(root, "test", "fixtures", "asset-pack.ts")).href)};
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const home = ${JSON.stringify(home)};
+const assetsDir = join(home,"console","assets");
+const petsDir = join(home,"console","pets");
+writeAssetPack(assetsDir,"office");
+const petDir = join(petsDir,"fixture-pet");
+mkdirSync(petDir,{recursive:true});
+writeFileSync(join(petDir,"pet.json"),JSON.stringify({id:"fixture-pet",displayName:"Fixture pet",spriteVersionNumber:2,spritesheetPath:"spritesheet.png"}));
+writeFileSync(join(petDir,"spritesheet.png"),pngImage(8,11));
+const {pets,problems:petProblems} = loadPets([petsDir]);
+const {packs:assetPacks,problems:assetProblems} = loadAssetPacks([assetsDir]);
+if(petProblems.length || assetProblems.length || pets.length!==1 || assetPacks.length!==1) throw new Error("Synthetic fixture packages failed validation: "+[...petProblems,...assetProblems].join("; "));
+async function entry(tool) {
+const plugin = createDemoPlugin(tool);
+if(tool==="echo") {plugin.manifest.title="Echo";plugin.manifest.capabilities={space:true};plugin.manifest.commands=[];}
+plugin.manifest.pollMs=2000;
 plugin.manifest.panels = [
   {id:"notes",title:"Notes and proposed changes"}, {id:"log",title:"Activity and provenance log"},
   {id:"lint",title:"Lint findings and suggested repairs"}, {id:"graph",title:"Knowledge graph relationships"},
   {id:"review",title:"Items awaiting a personal review"}, {id:"archive",title:"Archived decisions and reference notes"}
 ];
-const provider = await plugin.open({home:${JSON.stringify(home)},log:()=>{}});
+const provider = await plugin.open({home,log:()=>{}});
 provider.assets = {js:${JSON.stringify(`export default ${fixturePanel.toString()};`)}};
 const snapshot = provider.snapshot.bind(provider);
 provider.snapshot = async (input) => {
@@ -90,12 +110,16 @@ provider.snapshot = async (input) => {
   if (result.notes) return {...result,notes:result.notes.map((note)=>({...note,title:note.title+" with additional review context"}))};
   return result;
 };
-const server = startServer({plugins:[{tool:"demo",file:"ui-check-fixture.json",status:"ready",manifest:plugin.manifest,provider}],version:"ui-check",pluginsDir:${JSON.stringify(home)},log:()=>{},onIdle:()=>process.exit(0)});
-const emit = () => console.log(JSON.stringify({url:server.issue(),origin:server.origin}));
+return {tool,file:"ui-check-fixture.json",status:"ready",manifest:plugin.manifest,provider};
+}
+async function makeServer(packed) {return startServer({plugins:[await entry("demo"),await entry("echo")],pets,petProblems,assetPacks:packed?assetPacks:[],assetProblems,version:"ui-check",pluginsDir:home,log:()=>{},idleMs:15*60*1000});}
+const server = await makeServer(true);
+const fallback = await makeServer(false);
+const emit = (source=server) => console.log(JSON.stringify({url:source.issue(),origin:source.origin}));
 emit();
 let input="";
-process.stdin.on("data",(chunk)=>{input+=chunk.toString();let end;while((end=input.indexOf("\\n"))>=0){const line=input.slice(0,end);input=input.slice(end+1);if(line==="ticket")emit();}});
-for (const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{void server.stop().finally(()=>process.exit(0));});`;
+process.stdin.on("data",(chunk)=>{input+=chunk.toString();let end;while((end=input.indexOf("\\n"))>=0){const line=input.slice(0,end);input=input.slice(end+1);if(line==="ticket")emit();else if(line==="fallback")emit(fallback);}});
+for (const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{void Promise.all([server.stop(),fallback.stop()]).finally(()=>process.exit(0));});`;
 }
 
 let child;
@@ -122,8 +146,9 @@ async function cleanup() {
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { void cleanup().finally(() => process.exit(signal === "SIGINT" ? 130 : 143)); });
 
 const report = {
-  schema: 1, startedAt: new Date().toISOString(), matrix: { widths: [375, 768, 1024, 1440], themes: ["light", "dark"], textPercent: [100, 200] },
-  forceOverflow: options.forceOverflow, baseline: options.baseline, captures: [], findings: [],
+  schema: 1, mode: options.spaceMotionOnly ? "space-motion-only" : "full", startedAt: new Date().toISOString(), matrix: { widths: [375, 768, 1024, 1440], themes: ["light", "dark"], textPercent: [100, 200] },
+  supplementalMatrix: { widths: [320], themes: ["light", "dark"], textPercent: [100], view: "space-fallback" },
+  forceOverflow: options.forceOverflow, baseline: options.baseline, captures: [], findings: [], spaceChecks: [],
   screenReader: { status: "not_run", reason: "This browser probe does not run VoiceOver or establish screen-reader announcements. Record the separate macOS Safari pass in the PR." },
 };
 
@@ -146,7 +171,7 @@ async function startFixture(env) {
   });
   const first = await next();
   let initial = first;
-  return async () => { if (initial) { const value = initial; initial = null; return value; } child.stdin.write("ticket\n"); return next(); };
+  return async (fallback = false) => { if (initial && !fallback) { const value = initial; initial = null; return value; } child.stdin.write(fallback ? "fallback\n" : "ticket\n"); return next(); };
 }
 
 async function settle(page) {
@@ -196,7 +221,7 @@ function measurePage() {
   const dialog = document.querySelector("dialog[open]");
   const sheet = document.querySelector("#sheet:not([hidden])");
   const surface = dialog ?? sheet ?? document.querySelector("#app");
-  const textSelectors = [".search-label", ".row-title", ".row-sub", ".tab[aria-selected='true']", ".opt-title", ".opt-sub", ".sheet-head h2", ".ui-detail-head h2"];
+  const textSelectors = [".search-label", ".row-title", ".row-sub", ".tab[aria-selected='true']", ".opt-title", ".opt-sub", ".sheet-head h2", ".ui-detail-head h2", ".space-actor strong", ".space-card", ".space-zone h2", ".space-roster-actor", ".space-roster-zone", ".space-roster-link"];
   for (const selector of textSelectors) {
     for (const el of surface.querySelectorAll(selector)) {
       if (!shown(el)) continue;
@@ -242,7 +267,7 @@ function measurePage() {
     const ar = visibleBox(a); const br = visibleBox(b);
     if (Math.min(ar.right, br.right) - Math.max(ar.left, br.left) > 2 && Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top) > 2) findings.push({ kind: "overlapping-controls", detail: `${describe(a)} overlaps ${describe(b)}` });
   }
-  const fontSelectors = ["h1.lead", ".row-title", ".row-sub", ".tab", ".btn", ".chip", ".opt-title", ".opt-sub", ".ui-detail-head h2", ".ui-detail-kind", ".ui-detail-summary", ".ui-provenance", ".ui-detail-section > summary", ".ui-detail-footer", ".ui-field", "#confirm-title", "#palette-input"];
+  const fontSelectors = ["h1.lead", ".row-title", ".row-sub", ".tab", ".btn", ".chip", ".opt-title", ".opt-sub", ".ui-detail-head h2", ".ui-detail-kind", ".ui-detail-summary", ".ui-provenance", ".ui-detail-section > summary", ".ui-detail-footer", ".ui-field", "#confirm-title", "#palette-input", ".space-actor strong", ".space-card", ".space-zone h2", ".space-roster-actor", ".space-roster-zone", ".space-roster-link"];
   for (const selector of fontSelectors) [...surface.querySelectorAll(selector)].filter(shown).forEach((el, i) => { fonts[`${selector}#${i}`] = Number.parseFloat(getComputedStyle(el).fontSize); });
   return { findings, fonts, rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize), documentWidth: document.documentElement.scrollWidth, viewportWidth: document.documentElement.clientWidth };
 }
@@ -288,16 +313,127 @@ async function capture(page, scenario, view, extra = []) {
   report.findings.push(...findings.map((finding) => ({ capture: key, ...finding })));
 }
 
+async function waitSpacePoll(page) {
+  const responses = await Promise.all(["demo", "echo"].map((tool) => page.waitForResponse((response) => {
+    if (new URL(response.url()).pathname !== `/p/${tool}/snapshot` || response.request().method() !== "POST") return false;
+    try { return response.request().postDataJSON().panel === "space"; } catch { return false; }
+  }, { timeout: 12000 })));
+  await Promise.all(responses.map((response) => response.finished()));
+  await settle(page);
+  return responses.flatMap((response) => response.status() === 200 ? [] : [{ kind: "space-poll-failed", detail: `${new URL(response.url()).pathname}: ${response.status()}` }]);
+}
+
+async function checkSpace(page, scenario, resources, packed) {
+  await page.locator("#areas a[href='#/local/space']").waitFor();
+  await page.evaluate(() => { location.hash = "#/local/space"; });
+  await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
+  await page.waitForFunction(() => document.querySelectorAll("#view-space .space-actor").length === 6);
+  await settle(page);
+  const facts = await page.locator("#view-space").evaluate((view, expectPack) => {
+    const findings = [];
+    const actors = [...view.querySelectorAll(".space-actor")];
+    const cards = [...view.querySelectorAll(".space-card")];
+    const zones = [...view.querySelectorAll(".space-zone")];
+    const keys = (nodes) => nodes.map((node) => node.dataset.key).sort();
+    const actorKeys = keys(actors); const cardKeys = keys(cards); const zoneKeys = keys(zones);
+    const rosterActors = keys([...view.querySelectorAll(".space-roster-actor")]);
+    const rosterZones = keys([...view.querySelectorAll(".space-roster-zone")]);
+    const expectedActors = ["demo:claude", "demo:codex", "demo:local", "echo:claude", "echo:codex", "echo:local"].sort();
+    const expectedCards = ["demo:n1", "demo:n2", "demo:n3", "echo:n1", "echo:n2", "echo:n3"].sort();
+    const expectedZones = ["demo:queue", "demo:work", "demo:review", "demo:done", "echo:queue", "echo:work", "echo:review", "echo:done"].sort();
+    for (const [name, actual, expected] of [["actors", actorKeys, expectedActors], ["cards", cardKeys, expectedCards], ["zones", zoneKeys, expectedZones], ["roster actors", rosterActors, expectedActors], ["roster zones", rosterZones, expectedZones]]) {
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) findings.push({ kind: "space-namespace", detail: `${name}: expected ${expected.join(", ")}, got ${actual.join(", ")}` });
+    }
+    for (const node of [...actors, ...cards]) {
+      const name = node.getAttribute("aria-label")?.trim() || node.textContent.trim();
+      if (node.tagName !== "BUTTON" || node.disabled || node.tabIndex < 0 || !name) findings.push({ kind: "space-accessible-control", detail: node.dataset.key ?? "unnamed actor/card" });
+    }
+    const plane = view.querySelector(".space-plane");
+    if (plane?.dataset.pack !== (expectPack ? "office" : "fallback")) findings.push({ kind: "space-pack", detail: `Expected ${expectPack ? "office" : "fallback"} plane, got ${plane?.dataset.pack ?? "no plane"}` });
+    const imageStyles = [...view.querySelectorAll("*")].map((node) => getComputedStyle(node).backgroundImage).filter((image) => image !== "none");
+    const hasFloor = imageStyles.some((image) => image.includes("/assets/office/floor"));
+    const hasDesk = imageStyles.some((image) => image.includes("/assets/office/desk"));
+    if (expectPack && (!hasFloor || !hasDesk)) findings.push({ kind: "space-pack-images", detail: `Installed pack background use: floor=${hasFloor}, desk=${hasDesk}` });
+    if (!expectPack && imageStyles.some((image) => image.includes("/assets/"))) findings.push({ kind: "space-fallback", detail: "No-pack scene still references an asset image" });
+    const scroll = view.querySelector(".space-scroll"); const roster = view.querySelector(".space-roster");
+    if (!scroll || !roster) findings.push({ kind: "space-equivalent", detail: "Scene scroll box or text roster missing" });
+    else {
+      if (innerWidth <= 720 && roster.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 1) findings.push({ kind: "space-phone-roster", detail: "Phone roster does not lead above the visual scene" });
+      if (scroll.scrollWidth > scroll.clientWidth + 1 && !["auto", "scroll"].includes(getComputedStyle(scroll).overflowX)) findings.push({ kind: "space-scroll-container", detail: "Wide scene lacks its own horizontal scroll box" });
+    }
+    const moving = [...view.querySelectorAll(".pet-sprite,[data-pose]")].filter((node) => {
+      const css = getComputedStyle(node);
+      return css.animationName !== "none" && css.animationDuration.split(",").some((duration) => Number.parseFloat(duration) > 0);
+    });
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches && moving.length) findings.push({ kind: "space-reduced-motion", detail: `${moving.length} sprites still animate` });
+    return { findings, actorKeys, cardKeys, zoneKeys, rosterActors, rosterZones, pack: plane?.dataset.pack, hasFloor, hasDesk };
+  }, packed);
+  const metadata = await page.evaluate(async () => {
+    const response = await fetch("/tools", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const data = await response.json();
+    return { status: response.status, assetPacks: data.assetPacks ?? [], pets: (data.pets ?? []).map((pet) => pet.id) };
+  });
+  const findings = [...facts.findings];
+  if (metadata.status !== 200 || JSON.stringify(metadata.pets) !== JSON.stringify(["fixture-pet"])) findings.push({ kind: "space-fixture-pets", detail: "Fixture server did not expose only its explicit synthetic pet" });
+  if (packed && (metadata.assetPacks.length !== 1 || metadata.assetPacks[0]?.id !== "office")) findings.push({ kind: "space-fixture-pack", detail: "Installed fixture pack missing from /tools" });
+  if (!packed && metadata.assetPacks.length) findings.push({ kind: "space-fixture-pack", detail: "Fallback fixture server unexpectedly lists packs" });
+  if (packed) {
+    try {
+      await page.waitForFunction(() => ["floor", "desk"].every((name) => performance.getEntriesByType("resource").some((entry) => new URL(entry.name).pathname === `/assets/office/${name}`)));
+    } catch { findings.push({ kind: "space-image-request", detail: "Installed floor and desk did not both finish loading" }); }
+    for (const name of ["floor", "desk"]) if (!resources.some((entry) => entry.path === `/assets/office/${name}` && entry.status === 200)) findings.push({ kind: "space-image-response", detail: `No successful /assets/office/${name} response` });
+    if (!resources.some((entry) => entry.path === "/pets/fixture-pet/sheet" && entry.status === 200)) findings.push({ kind: "space-image-response", detail: "No successful synthetic pet sheet response" });
+  } else if (resources.some((entry) => entry.path.startsWith("/assets/"))) findings.push({ kind: "space-fallback-request", detail: "No-pack context requested an asset image" });
+
+  // Let the first real poll finish before observing, so a one-time ResizeObserver settle is complete.
+  findings.push(...await waitSpacePoll(page));
+  await page.evaluate(() => {
+    const records = [];
+    const observer = new MutationObserver((changes) => records.push(...changes.map((change) => `${change.type}:${change.attributeName ?? ""}:${change.target.nodeName}`)));
+    observer.observe(document.querySelector("#view-space"), { subtree: true, childList: true, attributes: true, characterData: true });
+    window.__aconUiSpaceWatch = { observer, records };
+  });
+  let writes;
+  try { findings.push(...await waitSpacePoll(page)); }
+  finally {
+    writes = await page.evaluate(() => {
+      const state = window.__aconUiSpaceWatch;
+      state.records.push(...state.observer.takeRecords().map((change) => `${change.type}:${change.attributeName ?? ""}:${change.target.nodeName}`));
+      state.observer.disconnect(); delete window.__aconUiSpaceWatch;
+      return state.records;
+    });
+  }
+  if (writes.length) findings.push({ kind: "space-unchanged-writes", detail: `${writes.length} DOM writes after unchanged polls: ${writes.slice(0, 5).join(", ")}` });
+  await page.evaluate(() => { window.scrollTo(0, 0); const column = document.querySelector(".column"); if (column) column.scrollTop = 0; });
+  await capture(page, scenario, packed ? "space" : "space-fallback", findings);
+  await page.locator("#view-space .space-scroll").scrollIntoViewIfNeeded();
+  await capture(page, scenario, packed ? "space-scene" : "space-fallback-scene");
+  report.spaceChecks.push({ ...scenario, packed, ...facts, metadata, resources: resources.filter((entry) => entry.path.startsWith("/assets/") || entry.path.startsWith("/pets/")), unchangedWrites: writes.length });
+
+  for (const [selector, tool, id] of [[".space-actor[data-key='demo:claude']", "demo", "n1"], [".space-card[data-key='echo:n2']", "echo", "n2"]]) {
+    await page.locator(`#view-space:not([hidden]) ${selector}`).click();
+    await page.waitForFunction(({ tool, id }) => {
+      const [route, query = ""] = location.hash.split("?");
+      return route === `#/local/${tool}/notes` && new URLSearchParams(query).get("id") === id;
+    }, { tool, id });
+    await page.locator(".panel-mount:not([hidden]) .ui-detail").waitFor();
+    await page.evaluate(() => { location.hash = "#/local/space"; });
+    await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
+  }
+}
+
 let baseline;
-async function runScenario(ticket, scenario) {
+async function runScenario(ticket, scenario, fallback = false) {
   const context = await browser.newContext({ viewport: { width: scenario.width, height: 1000 }, colorScheme: scenario.theme, reducedMotion: "reduce" });
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   const errors = [];
+  const resources = [];
   page.on("pageerror", (error) => errors.push({ kind: "page-error", detail: error.message.slice(0, 500) }));
   page.on("console", (message) => { if (message.type() === "error") errors.push({ kind: "console-error", detail: message.text().slice(0, 500) }); });
+  page.on("response", (response) => { const path = new URL(response.url()).pathname; if (path.startsWith("/assets/") || path.startsWith("/pets/")) resources.push({ path, status: response.status() }); });
   try {
-    await page.goto((await ticket()).url, { waitUntil: "networkidle" });
+    await page.goto((await ticket(fallback)).url, { waitUntil: "networkidle" });
     await page.locator("#view-inbox .row-main").first().waitFor();
     await page.evaluate(({ theme, textPercent, force }) => {
       localStorage.setItem("acon.theme", JSON.stringify(theme));
@@ -305,6 +441,7 @@ async function runScenario(ticket, scenario) {
       document.documentElement.style.fontSize = `${textPercent}%`;
       if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
     }, { ...scenario, force: options.forceOverflow });
+    if (fallback) { await checkSpace(page, scenario, resources, false); return; }
     await capture(page, scenario, "inbox", await checkSkipKeyboard(page));
     await page.locator("#view-inbox .row-main").first().focus();
     await page.keyboard.press("Space");
@@ -357,11 +494,251 @@ async function runScenario(ticket, scenario) {
     await page.locator("#tabs .tab:last-child[aria-selected='true']").waitFor();
     await settle(page);
     await capture(page, scenario, "last-tab", await checkTabs(page, true));
+    await checkSpace(page, scenario, resources, true);
   } catch (error) {
     report.findings.push({ capture: `${scenario.width}-${scenario.theme}-${scenario.textPercent}`, kind: "probe-error", detail: error.message.slice(0, 1000) });
     await page.screenshot({ path: join(options.output, `${scenario.width}-${scenario.theme}-${scenario.textPercent}-error.png`), fullPage: true }).catch(() => {});
   } finally {
     report.findings.push(...errors.map((error) => ({ capture: `${scenario.width}-${scenario.theme}-${scenario.textPercent}`, ...error })));
+    await context.close();
+  }
+}
+
+/** One real-motion context; only public fixture facts in intercepted snapshot responses change. */
+async function runSpaceMotion(ticket) {
+  const scenario = { width: 1440, theme: "light", textPercent: 100 };
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: "light", reducedMotion: "no-preference" });
+  const page = await context.newPage();
+  page.setDefaultTimeout(8000);
+  const findings = [];
+  const evidence = { ...scenario, status: "in_progress", initial: null, factChange: null, bulkChange: null, gap: null, followUp: null, unchangedWrites: null };
+  report.spaceMotion = evidence;
+  let stage = 0;
+  const initialAt = new Date().toISOString();
+  let messageAt;
+  let settledAt;
+  let gapGate;
+  let capturedCount = 0;
+  let motionCapture;
+  page.on("pageerror", (error) => findings.push({ kind: "page-error", detail: error.message.slice(0, 500) }));
+  page.on("console", (message) => { if (message.type() === "error") findings.push({ kind: "console-error", detail: message.text().slice(0, 500) }); });
+  await page.route("**/p/*/snapshot", async (route) => {
+    let input;
+    try { input = route.request().postDataJSON(); } catch { await route.continue(); return; }
+    if (input?.panel !== "space") { await route.continue(); return; }
+    const currentStage = stage;
+    const gate = currentStage === 3 ? gapGate : null;
+    const tool = new URL(route.request().url()).pathname.split("/")[2];
+    const response = await route.fetch();
+    const body = await response.json();
+    if (tool === "demo" && body.scene) {
+      const { scene } = body;
+      scene.links = [...(scene.links ?? []), { kind: "message", from: "claude", to: "codex", label: "Initial history", at: initialAt }];
+      if (currentStage >= 1) {
+        const actor = scene.actors.find((item) => item.id === "claude");
+        const card = scene.cards.find((item) => item.id === "n1");
+        actor.state = "blocked";
+        card.zone = "done";
+        for (const zone of scene.zones) {
+          if (zone.id === "work") zone.count -= 1;
+          if (zone.id === "done") zone.count += 1;
+        }
+        scene.links.push({ kind: "message", from: "claude", to: "codex", label: "Motion probe handoff", at: messageAt });
+      }
+      if (currentStage >= 2) {
+        for (const item of scene.actors) item.name += " updated";
+        for (const zone of scene.zones) zone.count += 1;
+        scene.links.push({ kind: "message", from: "codex", to: "local", label: "Settled handoff", at: settledAt });
+      }
+      if (currentStage >= 3) {
+        scene.actors.find((item) => item.id === "local").state = "working";
+        scene.cards.find((item) => item.id === "n3").zone = "work";
+        for (const zone of scene.zones) {
+          if (zone.id === "queue") zone.count -= 1;
+          if (zone.id === "work") zone.count += 1;
+        }
+      }
+      if (currentStage >= 4) scene.actors.find((item) => item.id === "local").name += " follow-up";
+    }
+    if (gate) {
+      gate.pending.add(tool);
+      if (gate.pending.has("demo") && gate.pending.has("echo")) gate.markReady();
+      await gate.promise;
+    }
+    await route.fulfill({ response, json: body });
+  });
+  try {
+    await page.goto((await ticket()).url, { waitUntil: "networkidle" });
+    await page.locator("#areas a[href='#/local/space']").waitFor();
+    await page.evaluate((force) => {
+      document.documentElement.dataset.theme = "light"; document.documentElement.style.fontSize = "100%"; location.hash = "#/local/space";
+      if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
+    }, options.forceOverflow);
+    await page.locator("#view-space .space-actor").nth(5).waitFor();
+    findings.push(...await waitSpacePoll(page));
+    const actorCount = await page.locator("#view-space .space-actor").count();
+    if (actorCount !== 6) findings.push({ kind: "space-motion-actors", detail: `Expected six namespaced actors, got ${actorCount}` });
+    evidence.initial = await page.locator("#view-space").evaluate((view) => {
+      const actor = view.querySelector(".space-actor[data-key='demo:claude']");
+      const idle = view.querySelector(".space-actor[data-key='demo:local'] .pet-sprite");
+      const card = view.querySelector(".space-card[data-key='demo:n1']");
+      const working = actor.querySelector(".pet-sprite");
+      const describeSprite = (sprite) => {
+        if (!sprite) return null;
+        const css = getComputedStyle(sprite);
+        return { row: Number(css.getPropertyValue("--row")), animation: css.animationName, duration: css.animationDuration, timing: css.animationTimingFunction };
+      };
+      window.__aconUiMotionNodes = { actor, card, target: card.style.transform };
+      return { settle: view.querySelector(".space-plane").dataset.settle, working: describeSprite(working), idle: describeSprite(idle), cardTarget: card.style.transform, messageLabels: [...view.querySelectorAll(".space-link[data-kind='message']")].map((node) => node.textContent), reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches };
+    });
+    const initial = evidence.initial;
+    if (initial.reducedMotion || initial.settle !== "true") findings.push({ kind: "space-motion-initial", detail: `Initial non-reduced scene did not settle: ${JSON.stringify(initial)}` });
+    if (initial.working?.row !== 7 || initial.working.animation !== "pet-6" || !/^steps\(6(?:, (?:end|jump-end))?\)$/.test(initial.working.timing) || !initial.working.duration.split(",").some((duration) => Number.parseFloat(duration) > 0)) findings.push({ kind: "space-working-pose", detail: `Working sprite is not animated row 7 with six frames: ${JSON.stringify(initial.working)}` });
+    if (initial.idle?.row !== 0 || initial.idle.animation !== "none") findings.push({ kind: "space-idle-motion", detail: `Idle sprite is not a static row 0: ${JSON.stringify(initial.idle)}` });
+    if (initial.messageLabels.length) findings.push({ kind: "space-initial-message-replay", detail: `First settled snapshot replayed message history: ${initial.messageLabels.join(", ")}` });
+
+    stage = 1;
+    messageAt = new Date().toISOString(); // Constant for all following polls of this fact stage.
+    findings.push(...await waitSpacePoll(page));
+    evidence.factChange = await page.locator("#view-space").evaluate((view) => {
+      const actor = view.querySelector(".space-actor[data-key='demo:claude']");
+      const card = view.querySelector(".space-card[data-key='demo:n1']");
+      const sprite = actor.querySelector(".pet-sprite");
+      const link = [...view.querySelectorAll(".space-link[data-kind='message']")].find((node) => node.textContent === "Motion probe handoff");
+      const css = getComputedStyle(card);
+      const spriteCss = sprite && getComputedStyle(sprite);
+      const linkCss = link && getComputedStyle(link);
+      const seconds = (value) => value.split(",").map((duration) => Number.parseFloat(duration) / (duration.trim().endsWith("ms") ? 1000 : 1));
+      return {
+        actorRetained: actor === window.__aconUiMotionNodes.actor, cardRetained: card === window.__aconUiMotionNodes.card,
+        beforeTarget: window.__aconUiMotionNodes.target, afterTarget: card.style.transform, settle: view.querySelector(".space-plane").dataset.settle,
+        transitionProperty: css.transitionProperty, transitionSeconds: seconds(css.transitionDuration), activeTransformTransitions: card.getAnimations().filter((animation) => animation.transitionProperty === "transform").length,
+        state: actor.dataset.state, row: spriteCss ? Number(spriteCss.getPropertyValue("--row")) : null,
+        messageAnimation: linkCss?.animationName ?? null, messageSeconds: linkCss ? seconds(linkCss.animationDuration) : [],
+        rosterMessage: [...view.querySelectorAll(".space-roster-link")].find((node) => node.textContent.includes("Motion probe handoff"))?.textContent ?? null,
+        messageLabels: [...view.querySelectorAll(".space-link[data-kind='message']")].map((node) => node.textContent),
+      };
+    });
+    const fact = evidence.factChange;
+    if (!fact.actorRetained || !fact.cardRetained) findings.push({ kind: "space-keyed-identity", detail: "Actor/card nodes were replaced after a public fact changed" });
+    if (fact.settle !== "false" || fact.beforeTarget === fact.afterTarget) findings.push({ kind: "space-card-motion", detail: `Single fact did not move the existing card with settle=false: ${JSON.stringify(fact)}` });
+    if (!fact.transitionProperty.split(",").map((value) => value.trim()).includes("transform") || !fact.transitionSeconds.some((duration) => duration > 0) || fact.transitionSeconds.some((duration) => duration > 0.8)) findings.push({ kind: "space-card-transition", detail: `Expected a transform transition of at most 0.8s: ${fact.transitionProperty} ${fact.transitionSeconds.join(", ")}s` });
+    if (fact.activeTransformTransitions < 1) findings.push({ kind: "space-card-transition", detail: "The changed card had no actual transform transition running" });
+    if (fact.state !== "blocked" || fact.row !== 5) findings.push({ kind: "space-blocked-pose", detail: `Blocked actor did not use row 5: ${fact.state}, row ${fact.row}` });
+    if (fact.messageAnimation !== "space-message" || fact.messageSeconds.length !== 1 || fact.messageSeconds[0] !== 10) findings.push({ kind: "space-message-motion", detail: `New message did not use its 10s CSS fade: ${fact.messageAnimation} ${fact.messageSeconds.join(", ")}s` });
+    if (!fact.rosterMessage?.includes("demo / claude → demo / codex: message, Motion probe handoff")) findings.push({ kind: "space-message-equivalent", detail: "The full relationship label was missing from the readable roster" });
+    if (fact.messageLabels.length !== 1 || fact.messageLabels[0] !== "Motion probe handoff") findings.push({ kind: "space-initial-message-replay", detail: `An unrelated fact replayed initial message history: ${fact.messageLabels.join(", ")}` });
+    // Observe the actual CSS transition completion, never a guessed sleep interval.
+    await page.locator(".space-card[data-key='demo:n1']").evaluate(async (card) => { await Promise.all(card.getAnimations().filter((animation) => animation.transitionProperty === "transform").map((animation) => animation.finished.catch(() => {}))); });
+    await page.locator("#view-space .space-scroll").scrollIntoViewIfNeeded();
+    await capture(page, scenario, "space-motion", findings);
+    motionCapture = report.captures.at(-1);
+    capturedCount = findings.length;
+
+    await page.evaluate(() => {
+      const records = [];
+      const observer = new MutationObserver((changes) => records.push(...changes.map((change) => `${change.type}:${change.attributeName ?? ""}:${change.target.nodeName}`)));
+      observer.observe(document.querySelector("#view-space"), { subtree: true, childList: true, attributes: true, characterData: true });
+      window.__aconUiSpaceWatch = { observer, records };
+    });
+    let writes;
+    try { findings.push(...await waitSpacePoll(page)); }
+    finally {
+      writes = await page.evaluate(() => {
+        const watch = window.__aconUiSpaceWatch;
+        watch.records.push(...watch.observer.takeRecords().map((change) => `${change.type}:${change.attributeName ?? ""}:${change.target.nodeName}`));
+        watch.observer.disconnect(); delete window.__aconUiSpaceWatch;
+        return watch.records;
+      });
+    }
+    evidence.unchangedWrites = writes.length;
+    if (writes.length) findings.push({ kind: "space-motion-unchanged-writes", detail: `${writes.length} DOM writes when the fact stage was unchanged: ${writes.slice(0, 5).join(", ")}` });
+
+    settledAt = new Date().toISOString();
+    stage = 2; // Three actor names plus four zone counts change, exceeding the six-record motion cap.
+    findings.push(...await waitSpacePoll(page));
+    evidence.bulkChange = await page.locator("#view-space").evaluate((view) => ({
+      settle: view.querySelector(".space-plane").dataset.settle,
+      transitionSeconds: [...view.querySelectorAll(".space-card")].flatMap((card) => getComputedStyle(card).transitionDuration.split(",").map((duration) => Number.parseFloat(duration))),
+      messageLinks: view.querySelectorAll(".space-link[data-kind='message']").length,
+      updatedActors: [...view.querySelectorAll(".space-actor strong")].filter((node) => node.textContent.includes("updated")).length,
+      zoneCounts: Object.fromEntries([...view.querySelectorAll(".space-roster-zone")].filter((node) => node.dataset.key.startsWith("demo:")).map((node) => [node.dataset.key, Number(node.textContent.slice(node.textContent.lastIndexOf(":") + 1).trim())])),
+    }));
+    const bulk = evidence.bulkChange;
+    const expectedCounts = { "demo:queue": 2, "demo:work": 1, "demo:review": 2, "demo:done": 2 };
+    const countsUpdated = Object.keys(bulk.zoneCounts).length === 4 && Object.entries(expectedCounts).every(([key, value]) => bulk.zoneCounts[key] === value);
+    if (bulk.settle !== "true" || bulk.updatedActors !== 3 || !countsUpdated || bulk.transitionSeconds.some((duration) => duration !== 0) || bulk.messageLinks !== 0) findings.push({ kind: "space-bulk-settle", detail: `Bulk fact change replayed motion or failed to update seven records: ${JSON.stringify(bulk)}` });
+
+    // Hold both next responses while the normal one-second shell ticks keep running.
+    // This distinguishes the true snapshot gap from render/no-op calls in between.
+    await page.evaluate(() => {
+      window.__aconUiLastSpaceObservedAt = Date.now();
+      window.__aconUiGapCard = document.querySelector(".space-card[data-key='demo:n3']");
+      window.__aconUiGapTarget = window.__aconUiGapCard.style.transform;
+    });
+    let releaseGate;
+    let markReady;
+    gapGate = {
+      pending: new Set(),
+      promise: new Promise((done) => { releaseGate = done; }),
+      ready: new Promise((done) => { markReady = done; }),
+      release: () => releaseGate(),
+      markReady: () => markReady(),
+    };
+    stage = 3; // One actor state, one card zone and two zone counts change: four records only.
+    const gapPoll = waitSpacePoll(page);
+    await Promise.race([gapGate.ready, gapPoll]);
+    if (!gapGate.pending.has("demo") || !gapGate.pending.has("echo")) throw new Error("Both fixture Space responses were not held at the gap gate");
+    const waitedMs = await page.evaluate(async () => {
+      const deadline = window.__aconUiLastSpaceObservedAt + 3000;
+      await new Promise((done) => {
+        const check = () => {
+          const remaining = deadline - Date.now();
+          if (remaining < 0) done();
+          else setTimeout(check, remaining + 1);
+        };
+        check();
+      });
+      return Date.now() - window.__aconUiLastSpaceObservedAt;
+    });
+    gapGate.release();
+    findings.push(...await gapPoll);
+    evidence.gap = await page.locator("#view-space").evaluate((view, held) => {
+      const card = view.querySelector(".space-card[data-key='demo:n3']");
+      return {
+        ...held, settle: view.querySelector(".space-plane").dataset.settle,
+        cardRetained: card === window.__aconUiGapCard, beforeTarget: window.__aconUiGapTarget, afterTarget: card.style.transform,
+        transitionSeconds: getComputedStyle(card).transitionDuration.split(",").map((duration) => Number.parseFloat(duration)),
+        localState: view.querySelector(".space-actor[data-key='demo:local']").dataset.state,
+        messageLabels: [...view.querySelectorAll(".space-link[data-kind='message']")].map((node) => node.textContent),
+      };
+    }, { waitedMs, pendingTools: [...gapGate.pending].sort() });
+    const gap = evidence.gap;
+    if (!(gap.waitedMs > 3000) || !gap.cardRetained || gap.beforeTarget === gap.afterTarget || gap.localState !== "working" || gap.settle !== "true" || gap.transitionSeconds.some((duration) => duration !== 0)) findings.push({ kind: "space-receipt-gap-settle", detail: `An actual >3s receipt gap did not move directly to the final facts: ${JSON.stringify(gap)}` });
+    if (gap.messageLabels.length) findings.push({ kind: "space-settled-message-replay", detail: `A gap replayed consumed messages: ${gap.messageLabels.join(", ")}` });
+
+    stage = 4; // A single unrelated actor name changes while all message identities stay unchanged.
+    findings.push(...await waitSpacePoll(page));
+    evidence.followUp = await page.locator("#view-space").evaluate((view, at) => ({
+      settle: view.querySelector(".space-plane").dataset.settle,
+      name: view.querySelector(".space-actor[data-key='demo:local'] strong").textContent,
+      messageLabels: [...view.querySelectorAll(".space-link[data-kind='message']")].map((node) => node.textContent),
+      settledMessageAgeMs: Date.now() - Date.parse(at),
+    }), settledAt);
+    const followUp = evidence.followUp;
+    if (followUp.settle !== "false" || !followUp.name.includes("follow-up")) findings.push({ kind: "space-follow-up-fact", detail: `A single subsequent fact did not enter the non-settled state: ${JSON.stringify(followUp)}` });
+    if (!(followUp.settledMessageAgeMs < 10000)) findings.push({ kind: "space-replay-probe-age", detail: `Settled handoff was already ${followUp.settledMessageAgeMs}ms old; the replay check did not exercise the 10s window` });
+    if (followUp.messageLabels.length) findings.push({ kind: "space-settled-message-replay", detail: `A small unrelated fact replayed consumed messages: ${followUp.messageLabels.join(", ")}` });
+  } catch (error) {
+    findings.push({ kind: "space-motion-probe", detail: error.message.slice(0, 1000) });
+    await page.screenshot({ path: join(options.output, "1440-light-100-space-motion-error.png"), fullPage: true }).catch(() => {});
+  } finally {
+    gapGate?.release();
+    const pending = findings.slice(capturedCount);
+    if (motionCapture) motionCapture.findings.push(...pending);
+    report.findings.push(...pending.map((finding) => ({ capture: "1440-light-100-space-motion", ...finding })));
+    evidence.findings = findings;
+    evidence.status = findings.length || motionCapture?.findings.length ? "failed" : "passed";
     await context.close();
   }
 }
@@ -380,7 +757,11 @@ try {
   process.env.TMPDIR = env.TMPDIR;
   browser = await chromium.launch({ headless: true, env, ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
   report.browserVersion = browser.version();
-  for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
+  if (!options.spaceMotionOnly) {
+    for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
+    for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
+  }
+  await runSpaceMotion(ticket);
 } catch (error) {
   report.findings.push({ kind: "setup-error", detail: error.message.slice(0, 1500) });
 } finally {

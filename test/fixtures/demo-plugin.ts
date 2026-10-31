@@ -69,12 +69,24 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
         { id: "reopen-n1", title: "Reopen the first note", hint: "restore n1", action: "restore", input: { id: "n1" } },
         { id: "delete-n3", title: "Delete the stale lint note", action: "delete", input: { id: "n3" } },
       ],
-      capabilities: { actions: ["accept", "reject", "restore", "delete"], confirm: true, inbox: true, search: true },
+      capabilities: { actions: ["accept", "reject", "restore", "delete"], confirm: true, inbox: true, search: true, space: true },
     },
     async open() {
       return {
         assets: { js: PANEL_JS },
         async snapshot(input) {
+          if (input.panel === "space") {
+            const cards = notes.map((n) => ({ id: n.id, title: n.title, zone: n.status !== "open" ? "done" : n.id === "n1" ? "work" : n.id === "n2" ? "review" : "queue", owner: n.id === "n1" ? "claude" : n.id === "n2" ? "codex" : "local", link: { panel: "notes", params: { id: n.id } } }));
+            return { scene: {
+              actors: [
+                { id: "claude", name: "claude", state: notes.find((n) => n.id === "n1")?.status === "open" ? "working" : "idle", card: "n1", marks: [{ kind: "mode", text: "Implement" }], link: { panel: "notes", params: { id: "n1" } } },
+                { id: "codex", name: "codex", state: notes.find((n) => n.id === "n2")?.status === "open" ? "waiting" : "idle", card: "n2", marks: [{ kind: "approval", text: "1 approval" }], link: { panel: "notes", params: { id: "n2" } } },
+                { id: "local", name: "local", state: "idle", link: { panel: "log" } },
+              ],
+              zones: ["queue", "work", "review", "done"].map((kind) => ({ id: kind, title: kind === "queue" ? "To do" : kind[0]!.toUpperCase() + kind.slice(1), kind, count: cards.filter((c) => c.zone === kind).length })),
+              cards, links: [{ kind: "message", from: "claude", to: "codex", label: "Review handoff", at: new Date(opened).toISOString() }],
+            }, cursor: 1 };
+          }
           if (input.panel === "inbox") return { items: notes.filter((n) => n.status === "open").map(item) };
           if (input.panel === "search") {
             const q = String(input.q ?? "").toLowerCase();

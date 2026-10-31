@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { lstatSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionResult } from "./contract.ts";
 import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import type { PetPackage } from "./pets.ts";
+import { readValidatedImage, type AssetPack } from "./assets.ts";
+import { sanitizeSpaceScene } from "./space.ts";
 
 export interface ServerOptions {
   plugins: PluginEntry[];
@@ -13,6 +15,8 @@ export interface ServerOptions {
   /** Local pet packages (src/pets.ts); problems are listed in System. */
   pets?: PetPackage[];
   petProblems?: string[];
+  assetPacks?: AssetPack[];
+  assetProblems?: string[];
   now?: () => number;
   idleMs?: number;
   /** Limit for one provider call; 30 s by default. */
@@ -54,7 +58,7 @@ export function startServer(options: ServerOptions) {
   const callMs = options.callMs ?? CALL_MS;
   const log = options.log ?? ((line: string) => console.error(`acon: ${line}`));
   const startedAt = new Date(now()).toISOString();
-  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
+  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
   const files = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
   const tools = new Map(options.plugins.filter((p) => p.status === "ready").map((p) => [p.tool, p]));
   const tickets = new Map<string, { expires: number }>();
@@ -63,6 +67,7 @@ export function startServer(options: ServerOptions) {
   const errors: ConsoleError[] = [];
   let lastSeen = now();
   const pets = options.pets ?? [];
+  const assetPacks = options.assetPacks ?? [];
 
   const record = (tool: string, where: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -71,6 +76,7 @@ export function startServer(options: ServerOptions) {
     errors.length = Math.min(errors.length, ERRORS);
   };
   for (const problem of options.petProblems ?? []) record("acon", "pet package skipped", new Error(problem));
+  for (const problem of options.assetProblems ?? []) record("acon", "asset pack skipped", new Error(problem));
   const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
     new Response(JSON.stringify(body), { status, headers: { ...HEADERS, "Content-Type": "application/json", ...extra } });
   const reject = (status: number, error: string, extra: Record<string, unknown> = {}) => json({ ok: false, error, ...extra }, status);
@@ -86,7 +92,7 @@ export function startServer(options: ServerOptions) {
   async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {
     const caps = entry.manifest!.capabilities ?? {};
     const panel = input.panel;
-    const allowed = entry.manifest!.panels.some((p) => p.id === panel) || (panel === "inbox" && caps.inbox) || (panel === "search" && caps.search);
+    const allowed = entry.manifest!.panels.some((p) => p.id === panel) || (panel === "inbox" && caps.inbox) || (panel === "search" && caps.search) || (panel === "space" && caps.space === true);
     if (typeof panel !== "string" || !allowed) return reject(400, "unknown panel");
     const after = input.after ?? 0;
     if (typeof after !== "number" || !Number.isSafeInteger(after) || after < 0) return reject(400, "invalid cursor");
@@ -98,6 +104,10 @@ export function startServer(options: ServerOptions) {
     try {
       const result = await call(entry.tool, "snapshot", () => entry.provider!.snapshot({ ...input, after, panel }));
       if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
+      if (panel === "space" && caps.space === true) {
+        const clean = sanitizeSpaceScene(result.scene);
+        return json({ ok: true, ...clean, ...(Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {}) });
+      }
       return json(result);
     } catch (error) {
       record(entry.tool, `snapshot ${panel}`, error);
@@ -169,6 +179,7 @@ export function startServer(options: ServerOptions) {
       const cookie = cookieOf(req);
       const live = cookie !== undefined && sessions.has(cookie);
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
+      const packedImage = /^\/assets\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
       const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action)$/.exec(path);
       if (req.method === "GET") {
         const file = files[path];
@@ -184,9 +195,19 @@ export function startServer(options: ServerOptions) {
           if (!live) return reject(401, "session expired or missing; run acon ui");
           const entry = pets.find((p) => p.id === pet[1]);
           // Re-check at serve time: the file may have been swapped for a link or grown since the scan.
-          const stat = entry && lstatSync(entry.file, { throwIfNoEntry: false });
-          if (!entry || !stat?.isFile() || stat.size > 8 * 1024 * 1024) return reject(404, "unknown pet");
-          return new Response(Bun.file(entry.file), { headers: { ...HEADERS, "Content-Type": entry.type } });
+          if (!entry) return reject(404, "unknown pet");
+          const image = readValidatedImage(entry.file, 8 * 1024 * 1024, "the sprite sheet");
+          if (typeof image === "string") return reject(404, "unknown pet");
+          return new Response(new Uint8Array(image.bytes), { headers: { ...HEADERS, "Content-Type": image.type } });
+        }
+        if (packedImage) {
+          if (!live) return reject(401, "session expired or missing; run acon ui");
+          const pack = assetPacks.find((p) => p.id === packedImage[1]);
+          const entry = pack?.images[packedImage[2]!];
+          if (!entry) return reject(404, "unknown asset");
+          const image = readValidatedImage(entry.file, 4 * 1024 * 1024);
+          if (typeof image === "string") return reject(404, "unknown asset");
+          return new Response(new Uint8Array(image.bytes), { headers: { ...HEADERS, "Content-Type": image.type } });
         }
         return reject(404, "not found");
       }
@@ -216,7 +237,7 @@ export function startServer(options: ServerOptions) {
       }
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
-        return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), errors });
+        return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images }) => ({ id, name, version, tile, images: Object.keys(images) })), errors });
       }
       const entry = tools.get(plugin![1]!);
       if (!entry) return reject(404, "unknown tool");
