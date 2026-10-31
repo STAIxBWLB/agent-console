@@ -216,7 +216,11 @@ export async function loadPlugins(scan: Scan, ctx: ConsoleContext): Promise<Plug
       const provider = await withTimeout(plugin.open(ctx), OPEN_MS, "open()");
       const pp = providerProblems(provider);
       if (pp.length) { out.push({ ...entry, status: "failed", reason: pp[0] }); continue; }
-      out.push({ ...entry, status: "ready", manifest: plugin.manifest, provider });
+      // The manifest goes to the browser as JSON; a value that cannot (BigInt, cycles) fails this plugin only.
+      let manifest: ConsolePanelManifest;
+      try { manifest = JSON.parse(JSON.stringify(plugin.manifest)) as ConsolePanelManifest; }
+      catch { out.push({ ...entry, status: "failed", reason: "manifest is not JSON-serializable" }); continue; }
+      out.push({ ...entry, status: "ready", manifest, provider });
     } catch (error) {
       ctx.log(`${entry.tool}: load failed: ${error instanceof Error ? error.message : String(error)}`);
       out.push({ ...entry, status: "failed", reason: "plugin failed to load; see the terminal" });

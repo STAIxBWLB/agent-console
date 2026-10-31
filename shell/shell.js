@@ -289,7 +289,9 @@ function renderInbox(force = false) {
   const sig = JSON.stringify([items, failed, state.selectedKey, readyTools().length]);
   if (!force && sig === state.inboxSig) return;
   state.inboxSig = sig;
-  const focusKey = document.activeElement?.closest?.(".row")?.dataset.key;
+  const focusRow = document.activeElement?.closest?.(".row");
+  const focusKey = focusRow?.dataset.key;
+  const focusIndex = focusRow ? [...focusRow.querySelectorAll("button")].indexOf(document.activeElement) : -1;
   if (!items.some((i) => i.key === state.selectedKey)) state.selectedKey = items[0]?.key ?? null;
   const [lead, sub] = leadText(items);
   const sources = readyTools().filter((t) => t.capabilities?.inbox);
@@ -307,7 +309,9 @@ function renderInbox(force = false) {
       h("ul", { class: "rows" }, group.map(rowFor))));
   }
   view.replaceChildren(...kids);
-  if (focusKey) view.querySelector(`.row[data-key="${CSS.escape(focusKey)}"] .row-main`)?.focus({ preventScroll: true });
+  // Focus returns to the same control of the same row (title or verb), so background updates never move it.
+  const row = focusKey ? view.querySelector(`.row[data-key="${CSS.escape(focusKey)}"]`) : null;
+  if (row) (row.querySelectorAll("button")[focusIndex] ?? row.querySelector(".row-main"))?.focus({ preventScroll: true });
 }
 function whose(item) {
   if (item.group === "alert") return h("span", { class: "whose alert", title: "Alert" }, icon("alert"));
@@ -521,7 +525,8 @@ async function runAction(tool, input, opts) {
 }
 function afterAction(tool, opts = {}) {
   const p = state.panels.get(tool);
-  if (p) p.next = 0;
+  // A snapshot already in flight predates the action: discard it (pollPanel re-polls on a generation change).
+  if (p) { p.next = 0; p.gen += 1; }
   pollPanel();
   if (opts.inbox !== false && toolById(tool)?.capabilities?.inbox) pollInbox();
 }

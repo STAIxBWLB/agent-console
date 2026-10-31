@@ -168,4 +168,14 @@ describe("plugin discovery", () => {
     const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
     expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("not a package file") }));
   });
+
+  test("a manifest that cannot become JSON fails that plugin only", async () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-big-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'export default { manifest: { api: 1, tool: "aa", version: "1", title: "A", icon: 1n, panels: [{ id: "p", title: "P" }] }, async open() { return { assets: { js: "export default () => ({})" }, async snapshot() { return {}; }, async action() { return { ok: false, error: "x" }; } }; } };\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) }, "demo.json": { api: 1, tool: "demo", module: fixture, sha256: sha(fixture) } });
+    const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(loaded.map((p) => `${p.status}:${p.reason ?? ""}`)).toEqual(["failed:manifest is not JSON-serializable", "ready:"]);
+  });
 });

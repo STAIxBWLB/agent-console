@@ -39,7 +39,10 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
     });
     afterAll(async () => { await provider?.close?.(); });
 
-    test("manifest is valid", () => expect(manifestProblems(plugin.manifest)).toEqual([]));
+    test("manifest is valid JSON-serializable data", () => {
+      expect(manifestProblems(plugin.manifest)).toEqual([]);
+      expect(() => JSON.stringify(plugin.manifest)).not.toThrow();
+    });
     test("open() resolves to a provider", () => expect(providerProblems(provider)).toEqual([]));
     test("every panel answers a snapshot within 5 s", async () => {
       for (const panel of plugin.manifest.panels) {
