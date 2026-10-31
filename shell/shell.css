@@ -326,7 +326,7 @@ body.pip { margin: 0; overflow-y: auto; }
 /* PRIVATE Space scene. Public facts only; the roster remains the text equivalent. */
 .space-content { display: flex; flex-direction: column; gap: var(--acon-space-4); margin-top: var(--acon-space-4); min-width: 0; }
 .space-scroll { overflow: auto; max-width: 100%; max-height: 70vh; border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-bg); }
-.space-plane { position: relative; width: 1000px; min-height: 240px; background-color: var(--acon-bg); background-image: var(--space-floor, none), linear-gradient(135deg, var(--acon-line) 1px, transparent 1px); background-size: 64px 32px; }
+.space-plane { position: relative; width: 100%; min-width: 1000px; min-height: 240px; background-color: var(--acon-bg); background-image: var(--space-floor, none), linear-gradient(135deg, var(--acon-line) 1px, transparent 1px); background-size: 64px 32px; }
 .space-wall { position: absolute; inset: 0 0 auto; height: 20px; background-color: var(--acon-surface-2); background-image: var(--space-wall, none); background-size: contain; }
 .space-actor { position: absolute; left: 0; top: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: var(--acon-space-1); width: 180px; min-height: 44px; padding: var(--acon-space-2); font: inherit; color: var(--acon-text); background: var(--acon-surface); border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); cursor: pointer; overflow-wrap: anywhere; }
 .space-actor strong { max-width: 100%; font-weight: 600; }
@@ -335,9 +335,14 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-actor[data-state="blocked"] { border-color: var(--acon-err); }
 .space-actor[data-state="away"], .space-actor[data-stale="true"] { border-style: dashed; }
 .space-actor:focus-visible, .space-card:focus-visible { outline-offset: -3px; }
-.space-visual { display: flex; flex-direction: column; align-items: center; min-height: 56px; }
-.space-desk { display: block; width: 64px; height: 16px; background-color: var(--acon-surface-2); background-image: var(--space-desk, none); background-position: center; background-size: contain; background-repeat: no-repeat; border-bottom: 2px solid var(--acon-line-2); }
-.space-token { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 39px; border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); color: var(--acon-accent-text); background: var(--acon-accent-soft); font-weight: 600; }
+.space-visual { display: flex; flex-direction: column; align-items: center; width: 112px; min-height: 176px; padding: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); }
+.space-visual .pet-sprite { --cell-w: 72px; --cell-h: 78px; }
+/* Artwork remains legible on a light tile when the surrounding UI is dark. */
+:root[data-theme="dark"] .space-visual { background: var(--acon-text); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .space-visual { background: var(--acon-text); } }
+.space-desk { display: block; width: 64px; height: 82px; background-image: var(--space-desk, none); background-position: center bottom; background-size: contain; background-repeat: no-repeat; border-bottom: 2px solid var(--acon-line-2); }
+.space-plane[data-pack="fallback"] .space-desk { background-color: var(--acon-surface-2); border: 1px solid var(--acon-line-2); }
+.space-token { display: inline-flex; align-items: center; justify-content: center; width: 72px; height: 78px; border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); color: var(--acon-accent-text); background: var(--acon-accent-soft); font-weight: 600; }
 .space-marks { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--acon-space-1); max-width: 100%; }
 .space-zone { position: absolute; left: 0; top: 0; width: 234px; border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); background-color: var(--acon-surface-2); background-image: var(--space-furniture, none); background-position: right 8px top 8px; background-size: 36px 36px; background-repeat: no-repeat; }
 .space-zone h2 { margin: 0; padding: var(--acon-space-2) 48px var(--acon-space-2) var(--acon-space-2); font-size: var(--acon-text-sm); overflow-wrap: anywhere; }
@@ -355,7 +360,7 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-roster-link[data-kind="message"] { animation: space-message 10s linear both; }
 .space-link[data-kind="conflict"] { border-color: var(--acon-err); }
 .space-link[data-kind="message"] { opacity: 0; animation: space-message 10s linear both; }
-.pet-sprite[data-pose="working"] { --row: 7; animation: pet-8 1.2s steps(8) infinite; }
+.pet-sprite[data-pose="working"] { --row: 7; animation: pet-6 0.9s steps(6) infinite; }
 @keyframes space-message { 0%, 85% { opacity: 1; visibility: visible; } 100% { opacity: 0; visibility: hidden; } }
 
 /* Tablet: icon rail */

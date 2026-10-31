@@ -27,6 +27,18 @@ describe("shell files fit the CSP", () => {
     expect(calls).toBeGreaterThan(10);
     expect(leaks).toEqual([]);
   });
+  test("Codex v2 poses never animate into transparent padding cells", () => {
+    const css = shell("shell.css");
+    // The v2 running row has six frames, unlike the eight-frame locomotion rows.
+    for (const [pose, row, frames] of [["waiting", 6, 6], ["failed", 5, 8], ["review", 8, 6], ["working", 7, 6]] as const) {
+      const selector = `.pet-sprite[data-pose="${pose}"]`;
+      expect(css).toContain(selector);
+      const rule = css.slice(css.indexOf(selector)).split("}")[0]!;
+      expect(rule).toContain(`--row: ${row};`);
+      expect(rule).toContain(`animation: pet-${frames} `);
+      expect(rule).toContain(`steps(${frames})`);
+    }
+  });
   test("the Space area preserves an existing plugin's space route", () => {
     const js = shell("shell.js");
     const parser = js.slice(js.indexOf("function parseRoute()"), js.indexOf("function route()"));

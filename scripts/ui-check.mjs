@@ -586,14 +586,14 @@ async function runSpaceMotion(ticket) {
       const describeSprite = (sprite) => {
         if (!sprite) return null;
         const css = getComputedStyle(sprite);
-        return { row: Number(css.getPropertyValue("--row")), animation: css.animationName, duration: css.animationDuration };
+        return { row: Number(css.getPropertyValue("--row")), animation: css.animationName, duration: css.animationDuration, timing: css.animationTimingFunction };
       };
       window.__aconUiMotionNodes = { actor, card, target: card.style.transform };
       return { settle: view.querySelector(".space-plane").dataset.settle, working: describeSprite(working), idle: describeSprite(idle), cardTarget: card.style.transform, messageLabels: [...view.querySelectorAll(".space-link[data-kind='message']")].map((node) => node.textContent), reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches };
     });
     const initial = evidence.initial;
     if (initial.reducedMotion || initial.settle !== "true") findings.push({ kind: "space-motion-initial", detail: `Initial non-reduced scene did not settle: ${JSON.stringify(initial)}` });
-    if (initial.working?.row !== 7 || initial.working.animation === "none" || !initial.working.duration.split(",").some((duration) => Number.parseFloat(duration) > 0)) findings.push({ kind: "space-working-pose", detail: `Working sprite is not animated row 7: ${JSON.stringify(initial.working)}` });
+    if (initial.working?.row !== 7 || initial.working.animation !== "pet-6" || !/^steps\(6(?:, (?:end|jump-end))?\)$/.test(initial.working.timing) || !initial.working.duration.split(",").some((duration) => Number.parseFloat(duration) > 0)) findings.push({ kind: "space-working-pose", detail: `Working sprite is not animated row 7 with six frames: ${JSON.stringify(initial.working)}` });
     if (initial.idle?.row !== 0 || initial.idle.animation !== "none") findings.push({ kind: "space-idle-motion", detail: `Idle sprite is not a static row 0: ${JSON.stringify(initial.idle)}` });
     if (initial.messageLabels.length) findings.push({ kind: "space-initial-message-replay", detail: `First settled snapshot replayed message history: ${initial.messageLabels.join(", ")}` });
 
