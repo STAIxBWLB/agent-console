@@ -448,12 +448,12 @@ function moveSelection(step) {
   selectKey(next.key);
 }
 const selectedItem = () => sortedItems().find((i) => i.key === state.selectedKey);
-async function runVerb(item, verb, reason) {
+async function runVerb(item, verb, reason, extra = {}) {
   if ((verb.reason === "required" || verb.reason === "optional") && reason === undefined) { askReason(item, verb); return; }
   const list = sortedItems();
   const i = list.findIndex((x) => x.key === item.key);
   const next = list[i + 1] ?? list[i - 1];
-  const result = await runAction(item.tool, { action: verb.id, id: item.id, ...(reason ? { reason } : {}) }, { label: verb.label, inbox: false });
+  const result = await runAction(item.tool, { action: verb.id, id: item.id, ...(reason ? { reason } : {}) }, { label: verb.label, inbox: false, ...extra });
   if (!result?.ok) return;
   await pollInbox();
   // Triage flow: the next item takes the handled one's place, in the list and in the peek.
@@ -658,7 +658,7 @@ async function runAction(tool, input, opts) {
     return confirmFlow(tool, input, d, opts);
   }
   if (d?.ok) {
-    toast(str(d.message) || `${opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo" }) } : {});
+    toast(str(d.message) || `${opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo", mini: opts.mini }) } : {});
     afterAction(tool, opts);
   } else if (r.status !== 401) toast(str(d?.error) || "The action failed.", { tone: "err" });
   return d;
@@ -682,7 +682,7 @@ async function confirmFlow(tool, input, first, opts) {
     if (d?.stale) { current = { ...current, expired: true }; note = "This preview expired or was already used. Refresh it to continue."; continue; }
     closeConfirm();
     if (d?.ok) {
-      toast(str(d.message) || `${current.verb ?? opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo" }) } : {});
+      toast(str(d.message) || `${current.verb ?? opts.label ?? "Done"}: done`, d.undo && str(d.undo.action) ? { undo: () => runAction(tool, d.undo, { label: "Undo", mini: opts.mini }) } : {});
       afterAction(tool, opts);
     } else if (r.status !== 401) toast(str(d?.error) || "The action failed.", { tone: "err" });
     return d;
@@ -703,9 +703,9 @@ function showConfirm(tool, d, note, opts) {
   return new Promise((resolve) => {
     confirmResolve = resolve;
     const dlg = confirmEl;
-    // A confirmation for an action started in Mini opens in Mini's window; everything else opens in the console.
+    // opts.mini (set by Mini and carried into its Undo) opens the confirmation in Mini's window; otherwise in the console.
     // Reparent only when the window changes, closing first: moving an open modal drops it from the top layer.
-    const home = pip && miniAction ? pip.document.body : document.body;
+    const home = pip && opts.mini ? pip.document.body : document.body;
     if (dlg.parentNode !== home) { if (dlg.open) dlg.close(); home.append(dlg); }
     const verb = str(d.verb) || opts.label || "Confirm";
     const deadline = Date.now() + (d.validMs ?? 60000);
@@ -896,7 +896,7 @@ function showKeys() {
 const PET_ID = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const POSE_TEXT = { waiting: "waiting on your decision", failed: "a tool needs attention", review: "something is ready for review", idle: "all clear" };
 const miniView = $("view-mini");
-let pip = null, miniAction = false;
+let pip = null;
 function petChoice() {
   const choice = store("acon.pet");
   return choice === "off" ? null : state.pets.find((p) => p.id === choice) ?? state.pets[0] ?? null;
@@ -966,7 +966,7 @@ function renderMini(force = false) {
       return h("li", { class: "mini-item" },
         h("span", { class: "row-text" }, h("span", { class: "row-title", text: item.title }), h("span", { class: "row-sub", text: [toolById(item.tool)?.title ?? item.tool, ago(item.at)].join(" · ") })),
         h("span", { class: "mini-verbs" },
-          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, onclick: () => { miniAction = true; runVerb(item, verb).finally(() => { miniAction = false; }); }, text: verb.label }) : null,
+          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, onclick: () => runVerb(item, verb, undefined, { mini: true }), text: verb.label }) : null,
           h("button", { type: "button", class: "btn", "data-fid": `o:${item.key}`, "aria-label": `Open ${item.title}`, onclick: () => openInConsole(item), text: "Open" })));
     })) : null,
     items.length > shown.length ? h("p", { class: "sub", text: `${items.length - shown.length} more in the inbox.` }) : null,
