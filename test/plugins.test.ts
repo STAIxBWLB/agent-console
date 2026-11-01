@@ -148,6 +148,20 @@ describe("plugin discovery", () => {
     expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("outside the plugin package") }));
   });
 
+  test("a #! line ended by CR, LS or PS does not hide the import after it", () => {
+    for (const end of ["\r", " ", " "]) {
+      const base = mkdtempSync(join(tmpdir(), "acon-hashbang-"));
+      const pkg = join(base, "pkg");
+      mkdirSync(pkg);
+      writeFileSync(join(pkg, "package.json"), "{}");
+      writeFileSync(join(base, "helper.ts"), "export const x = 1;\n");
+      const mod = join(pkg, "plugin.ts");
+      writeFileSync(mod, `#!/usr/bin/env bun${end}import { x } from "../helper.ts";\nexport default { x };\n`);
+      const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+      expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("outside the plugin package") }));
+    }
+  });
+
   test("imports inside the package and of installed dependencies pass", () => {
     const pkg = mkdtempSync(join(tmpdir(), "acon-ok-"));
     writeFileSync(join(pkg, "package.json"), "{}");
@@ -159,6 +173,18 @@ describe("plugin discovery", () => {
     writeFileSync(mod, 'import { x } from "./helper.ts";\nimport { y } from "dep";\nimport "node:fs";\nexport default { x, y };\n');
     const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
     expect(scanPlugins(dir).entries[0]?.status).toBe("verified");
+  });
+
+  test("a CLI file with a #! line in the import graph passes; an unparsable file is named", () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-shebang-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    writeFileSync(join(pkg, "cli.ts"), "#!/usr/bin/env bun\nimport \"node:fs\";\nexport const run = () => 1;\n");
+    const mod = join(pkg, "plugin.ts");
+    writeFileSync(mod, 'import { run } from "./cli.ts";\nexport default { run };\n');
+    const dir = home({ "aa.json": { api: 1, tool: "aa", module: mod, sha256: sha(mod) } });
+    expect(scanPlugins(dir).entries[0]?.status).toBe("verified");
+    writeFileSync(join(pkg, "cli.ts"), "export const = ;\n");
+    expect(scanPlugins(dir).entries[0]).toEqual(expect.objectContaining({ status: "invalid", reason: expect.stringContaining("cli.ts could not be scanned for imports") }));
   });
 
   test("a data: import is refused", () => {
