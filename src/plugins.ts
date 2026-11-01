@@ -100,7 +100,8 @@ function importEscapes(entry: string, root: string, verified: Set<string>): stri
     if (seen.size > TREE_MAX) return `${root} imports more than ${TREE_MAX} files`;
     if (!CODE.test(file)) continue;
     // A leading #! line is valid in a Bun module (CLI entry files have one), but Bun's import scanner throws on it.
-    const source = readFileSync(file, "utf8").replace(/^#![^\n]*/, "");
+    // Stop at any JS line terminator (LF, CR, LS, PS): Bun runs what follows, so the scanner must see it too.
+    const source = readFileSync(file, "utf8").replace(/^#![^\n\r\u2028\u2029]*/, "");
     let imports: { path: string }[];
     try { imports = new Bun.Transpiler({ loader: LOADER(file) }).scanImports(source); }
     catch { return `${file} could not be scanned for imports`; }

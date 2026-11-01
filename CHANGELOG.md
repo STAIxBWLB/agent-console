@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- Plugin discovery scans files that start with a `#!` line (CLI entry files) instead of marking the plugin "cannot be read"; a file that cannot be scanned is now named in the reason.
+- Plugin discovery scans files that start with a `#!` line (CLI entry files) instead of marking the plugin "cannot be read"; a file that cannot be scanned is now named in the reason. The stripped line ends at any JavaScript line terminator (LF, CR, U+2028, U+2029), so an import after a CR-terminated `#!` is still checked.
 
 ### Added
 
