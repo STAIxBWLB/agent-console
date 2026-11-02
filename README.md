@@ -203,6 +203,7 @@ Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/c
 | `frame({asset, title})` | A same-origin frame of this plugin's asset, for PDF or text. |
 | `link({asset} \| {panel, params?}, text)` | A link to this plugin's asset (opens in a new tab) or to one of its panels. |
 | `review({doc, threads, onComment, onPlacement?})` | A line-numbered review of a `text`, `prose` or `diff` document. Select a range (pointer, or a gutter with Shift+Up/Down, then Enter), write a comment and the kit calls `onComment({anchor, body})`; send it to your tool with `host.action()` and throw (or reject) when the result is not `ok`, so the kit keeps the draft and says the comment was not sent. Existing threads show as gutter marks or, when they cannot be placed, in a strip above the view. |
+| `visual(payload)` | A `mermaid` diagram in a sandboxed frame, `comparison` cards, a `table` (through `table`) or a `beforeAfter` pair (text, or an asset through `img`). See "Visuals". |
 
 Table and charts are built by the shell from attributes and CSS classes, so they need no CSP change. Each chart has the caption as its accessible name and a text equivalent: bars show each value (and target) as text, and spark carries a visually hidden list of values. Inputs are bounded: 500 rows and 12 columns per table, 50 bar items and the last 365 spark points. Larger input is cut and a `ui-notice` states how much is shown. `tableColumnProblems(columns)` from `@staix/agent-console/conformance` checks a column list.
 
@@ -255,6 +256,17 @@ A plugin without `asset` behaves as before. Pass `assets: [ids]` to `registerCon
 - Bounds: 1 to 4 selectors per anchor, body up to 4000 characters, 200 threads per view. `reviewProblems(threads)`, `reviewThreadProblems` and `reviewAnchorProblems` from `@staix/agent-console/conformance` check them.
 - Shared cases: `test/fixtures/review/cases.json` ships with the package so other tools (agent-hub) can run the same valid and invalid anchors, threads and hash cases; `expandReviewCase` and `reviewCaseValue` expand its compact `<N x c>` and `repeat` forms.
 
+### Visuals
+
+`ui.visual(payload)` takes a `VisualPayload` from `@staix/agent-console/contract`:
+
+- `{kind: "mermaid", source, title?}`: the diagram renders only inside an `<iframe sandbox="allow-scripts">` served at `/visual/frame`. The frame has an opaque origin (no cookies, no storage, no access to the console) and its own CSP, `default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'`, which has no `connect-src`, so it cannot fetch anything. The console sends `{source, theme}` by `postMessage` and accepts only `{ok, height}` back from its own frame; the height is clamped to 80-2000 px. Mermaid runs with `securityLevel: "strict"`. The frame loads when the visual scrolls into view and is reused per panel. An empty or invalid source, a source over 20 KB, or a render over 5 s shows the source as text with a notice.
+- `{kind: "comparison", title?, options}`: 2 to 6 options, each `{title, summary?, pros?, cons?, recommended?}` with at most 10 pros and 10 cons. The recommended option is marked by text and a double border, not color alone.
+- `{kind: "table", caption?, columns, rows}`: the same as `ui.table`.
+- `{kind: "beforeAfter", caption?, before, after}`: each side is `{text}` or `{asset, alt}` (a plugin asset, see "Plugin assets"); sides stack below 768 px.
+
+The only CSP addition for visuals is the console's `frame-src 'self'`, shared with plugin assets. Mermaid is vendored from `@mermaid-js/tiny` 12.2.0 (2,811,424 bytes, MIT) into `shell/vendor/mermaid/` with a sha256 manifest; `bun scripts/vendor-mermaid.ts` regenerates it from the pinned devDependency and `bun scripts/vendor-mermaid.ts --check` verifies it.
+
 ### Public styling contract
 
 Panels may use these classes. Modifiers apply only with their base class:
@@ -266,6 +278,7 @@ Panels may use these classes. Modifiers apply only with their base class:
 - Tables and charts: `ui-table-block`, `ui-table-wrap`, `ui-table`, `ui-sort`, `ui-chart`, `ui-bars`, `ui-bar`, `ui-bar-label`, `ui-bar-value`, `ui-bar-track`, `ui-bar-fill`, `ui-bar-target`, `ui-spark`, `ui-spark-summary`, `ui-spark-line`, `ui-sr` (visually hidden).
 - Assets and links: `ui-img`, `ui-frame`, `ui-link`.
 - Review: `ui-review`, `ui-review-doc`, `ui-review-text`/`prose`/`diff`, `ui-review-unit`, `ui-review-gutter`, `ui-review-src`, `ui-review-add`, `ui-review-del`, `ui-review-hunk`, `ui-review-meta`, `ui-review-selected`, `ui-review-has-thread`, `ui-review-mark`, `ui-review-strip`, `ui-review-unplaced`, `ui-review-quote`, `ui-review-thread`, `ui-review-thread-body`, `ui-review-status`, `ui-review-box`, `ui-review-target`, `ui-review-input`.
+- Visuals: `ui-visual`, `ui-visual-mermaid`, `ui-visual-frame`, `ui-visual-source`, `ui-visual-comparison`, `ui-visual-options`, `ui-visual-option` with `recommended`, `ui-visual-recommended`, `ui-visual-points` with `pros` or `cons`, `ui-visual-before-after`, `ui-visual-pair`, `ui-visual-side`, `ui-visual-text`.
 
 The public CSS tokens are:
 

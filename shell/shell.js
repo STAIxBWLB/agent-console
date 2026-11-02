@@ -559,14 +559,152 @@ function reviewView(o, openSheet, onError) {
     notes.map((n) => consoleUi.notice(n, "warn")), strip, docEl, status, box);
 }
 // ---------- end review surface ----------
+// ---------- visuals (ui.visual) ----------
+// Mermaid renders only in a sandbox="allow-scripts" frame (opaque origin, no network by its CSP). The parent sends
+// {source, theme}, accepts replies only from its own frame and clamps the height. Failures show the source text.
+const VISUAL = Object.freeze({ source: 20 * 1024, timeoutMs: 5000, minHeight: 80, maxHeight: 2000, options: [2, 6], points: 10 });
+/** Per-panel frame pool: a frame whose visual left the DOM is reused by the next diagram in that panel. */
+function visualFrames() {
+  const pool = [];
+  const pending = new Map();
+  let seq = 0;
+  if (typeof window !== "undefined") window.addEventListener("message", (event) => {
+    const frame = pool.find((f) => f.el.contentWindow === event.source);
+    if (!frame) return;
+    const data = event.data;
+    if (!data || typeof data !== "object" || data.acon !== "visual") return;
+    if (data.ready) { frame.ready = Boolean(data.ok); frame.failed = !data.ok; const queued = frame.queued; frame.queued = null; queued?.(); return; }
+    const job = pending.get(data.id);
+    if (!job || job.frame !== frame) return;
+    pending.delete(data.id);
+    job.done(data);
+  });
+  function take() {
+    let frame = pool.find((f) => !f.el.isConnected && !f.busy);
+    if (!frame) {
+      const el = h("iframe", { class: "ui-visual-frame", src: "/visual/frame", sandbox: "allow-scripts", title: "Diagram", height: "160", referrerpolicy: "no-referrer" });
+      frame = { el, ready: false, failed: false, queued: null, busy: false, used: false };
+      pool.push(frame);
+    }
+    // Reattaching a detached iframe reloads its document: wait for that document's ready handshake again.
+    if (frame.used) { frame.ready = false; frame.failed = false; frame.queued = null; }
+    frame.used = true;
+    frame.busy = true;
+    return frame;
+  }
+  function render(frame, msg, done) {
+    const id = ++seq;
+    const timer = setTimeout(() => { if (pending.delete(id)) done({ ok: false, error: "timeout" }); }, VISUAL.timeoutMs);
+    pending.set(id, { frame, done: (data) => { clearTimeout(timer); done(data); } });
+    const send = () => {
+      if (frame.failed) { pending.delete(id); clearTimeout(timer); done({ ok: false, error: "renderer unavailable" }); return; }
+      frame.el.contentWindow?.postMessage({ acon: "visual-render", id, ...msg }, "*");
+    };
+    if (frame.ready || frame.failed) send(); else frame.queued = send;
+  }
+  // Diagrams on screen, so a theme change can redraw them in their current frames.
+  const live = new Set();
+  return { take, render, release: (frame) => { frame.busy = false; }, live };
+}
+function visualView(payload, kit, frames, theme) {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const fig = (cls, title, ...kids) => h("figure", { class: `ui-visual ${cls}`, ...(title ? { "aria-label": String(title) } : {}) }, title ? h("figcaption", { text: String(title) }) : null, ...kids);
+  if (p.kind === "comparison") {
+    const all = Array.isArray(p.options) ? p.options : [];
+    const options = all.slice(0, VISUAL.options[1]);
+    const list = (items, label, cls) => {
+      const shown = Array.isArray(items) ? items.slice(0, VISUAL.points) : [];
+      return shown.length ? h("div", { class: `ui-visual-points ${cls}` }, h("strong", { text: label }), h("ul", {}, shown.map((t) => h("li", { text: String(t) })))) : null;
+    };
+    return fig("ui-visual-comparison", p.title,
+      all.length < VISUAL.options[0] ? consoleUi.notice("A comparison needs at least two options.", "warn") : null,
+      all.length > options.length ? consoleUi.notice(`Showing the first ${options.length} of ${all.length} options.`, "warn") : null,
+      h("ul", { class: "ui-visual-options" }, options.map((o) => h("li", { class: `ui-visual-option${o?.recommended ? " recommended" : ""}` },
+        h("div", { class: "ui-visual-option-head" }, h("h3", { text: String(o?.title ?? "") }), o?.recommended ? h("span", { class: "chip ok ui-visual-recommended", text: "★ Recommended" }) : null),
+        o?.summary ? h("p", { text: String(o.summary) }) : null,
+        list(o?.pros, "Pros", "pros"), list(o?.cons, "Cons", "cons")))));
+  }
+  if (p.kind === "table") return fig("ui-visual-table", null, consoleUi.table({ columns: p.columns, rows: p.rows, caption: p.caption }));
+  if (p.kind === "beforeAfter") {
+    const side = (s, label) => {
+      let body;
+      if (s && typeof s === "object" && "asset" in s) body = kit.img({ asset: s.asset, alt: String(s.alt ?? "") });
+      else body = h("pre", { class: "ui-visual-text", text: String(s?.text ?? "") });
+      return h("section", { class: "ui-visual-side", "aria-label": label }, h("h3", { text: label }), body);
+    };
+    return fig("ui-visual-before-after", p.caption, h("div", { class: "ui-visual-pair" }, side(p.before, "Before"), side(p.after, "After")));
+  }
+  if (p.kind !== "mermaid") throw new TypeError("ui.visual kind must be mermaid, comparison, table or beforeAfter");
+  const source = String(p.source ?? "");
+  const status = h("p", { class: "ui-visual-status", role: "status", text: "Loading diagram…" });
+  const holder = h("div", { class: "ui-visual-holder" });
+  const slot = h("div", { class: "ui-visual-notice" }, status);
+  const root = fig("ui-visual-mermaid", p.title, slot, holder);
+  const fallback = (why) => {
+    slot.replaceChildren(consoleUi.notice(why, "warn"));
+    holder.replaceChildren(h("pre", { class: "ui-visual-source", text: source }));
+  };
+  if (!source.trim()) { fallback("The diagram is empty."); return root; }
+  if (source.length > VISUAL.source) { fallback(`The diagram source is over ${VISUAL.source / 1024} KB, so it is shown as text.`); return root; }
+  let started = false;
+  let shownTheme = null;
+  let frame = null;
+  const draw = (mode) => {
+    frames.render(frame, { source, theme: mode, title: p.title ? String(p.title) : "" }, (data) => {
+      frames.release(frame);
+      if (!data.ok) {
+        frames.live.delete(entry);
+        frame.el.remove();
+        fallback(data.error === "timeout" ? "The diagram took longer than 5 seconds, so it is shown as text." : "The diagram could not be drawn, so it is shown as text.");
+        return;
+      }
+      shownTheme = mode;
+      const height = Math.max(VISUAL.minHeight, Math.min(VISUAL.maxHeight, Math.round(Number(data.height) || 0)));
+      frame.el.setAttribute("height", String(height));
+      frame.el.classList.remove("ui-visual-loading");
+      status.textContent = "";
+      status.hidden = true;
+    });
+  };
+  // Redraw in the frame it already has when the console theme changes; a detached diagram drops out.
+  const entry = {
+    retheme(mode) {
+      if (!frame || !frame.el.isConnected) { frames.live.delete(entry); return; }
+      if (mode === shownTheme || frame.busy) return;
+      frame.busy = true;
+      draw(mode);
+    },
+  };
+  const start = () => {
+    if (started) return;
+    started = true;
+    frame = frames.take();
+    frame.el.setAttribute("title", p.title ? String(p.title) : "Diagram");
+    frame.el.classList.add("ui-visual-loading");
+    holder.replaceChildren(frame.el);
+    frames.live.add(entry);
+    draw(theme());
+  };
+  // Load only when the visual scrolls into view.
+  if (typeof IntersectionObserver === "function") {
+    const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) { io.disconnect(); start(); } }, { rootMargin: "200px" });
+    queueMicrotask(() => io.observe(root));
+  } else start();
+  return root;
+}
+// ---------- end visuals ----------
 // `route` maps a plugin path to the load this page uses (#26), so assets come from the same version as the panel.
-// `o` holds shell hooks for kit parts that need them (review: openSheet, onError).
+// `o` holds shell hooks for kit parts that need them (review: openSheet, onError; visual: theme, onTheme).
 function kitFor(tool, hash, route = (path) => path, o = {}) {
-  const { openSheet, onError } = o;
+  const { openSheet, onError, theme = () => "light", onTheme = () => {} } = o;
   const assetUrl = (id) => `${route(`/p/${tool}/asset`)}?id=${encodeURIComponent(id)}`;
-  return Object.freeze({
+  let frames = null;
+  // One theme subscription per kit: diagrams on screen redraw in the new theme.
+  onTheme(() => { if (frames) for (const entry of [...frames.live]) entry.retheme(theme()); });
+  const kit = Object.freeze({
     ...consoleUi,
     review: (o) => reviewView(o, openSheet, onError),
+    visual: (payload) => visualView(payload, kit, frames ??= visualFrames(), theme),
     img(o) {
       const id = assetId(o);
       return h("img", { class: "ui-img", src: assetUrl(id), alt: String(o.alt ?? ""), loading: "lazy", decoding: "async" });
@@ -587,6 +725,7 @@ function kitFor(tool, hash, route = (path) => path, o = {}) {
       return h("a", { class: "ui-link", href: hash(tool, to.panel, params), text: String(text) });
     },
   });
+  return kit;
 }
 // ---------- end public panel kit ----------
 function icon(name, cls = "ic") {
@@ -1290,7 +1429,7 @@ function hostFor(tool, p) {
     tool: tool.tool,
     node: NODE,
     mount: p.body,
-    ui: kitFor(tool.tool, hashFor, pluginPath, { openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error) }),
+    ui: kitFor(tool.tool, hashFor, pluginPath, { openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error), theme: () => currentTheme().mode, onTheme: (cb) => { p.themeListeners.push(cb); } }),
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),

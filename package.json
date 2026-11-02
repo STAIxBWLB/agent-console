@@ -12,9 +12,10 @@
     "bun": ">=1.4.2"
   },
   "devDependencies": {
+    "@mermaid-js/tiny": "12.2.0",
     "@types/bun": "^1.3.0",
-    "typescript": "^5.8.0",
-    "three": "0.187.0"
+    "three": "0.187.0",
+    "typescript": "^5.8.0"
   },
   "exports": {
     ".": "./src/contract.ts",
