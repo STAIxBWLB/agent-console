@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { registerConsoleConformance, stableAtProblems } from "../src/conformance.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
-registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }] });
+registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png"] });
 
 const inbox = async (provider: { snapshot(input: { after: number; panel: string }): Promise<Record<string, unknown>> }) =>
   (await provider.snapshot({ after: 0, panel: "inbox" })).items as unknown[];
@@ -47,4 +47,20 @@ test("tableColumnProblems accepts the demo metrics columns and names each bad co
   ]);
   expect(tableColumnProblems(Array.from({ length: 13 }, (_, i) => ({ key: `k${i}`, label: "L" })))).toEqual(["columns: 13 exceeds 12; ui.table shows the first 12"]);
   expect(tableColumnProblems("x")).toEqual(["columns must be an array"]);
+});
+
+// A plugin without asset passes the same suite.
+registerConsoleConformance((() => {
+  const plain = createDemoPlugin("plain");
+  const open = plain.open.bind(plain);
+  plain.open = async (ctx) => { const p = await open(ctx); delete p.asset; return p; };
+  return plain;
+})(), { destructive: [{ action: "delete", id: "n1" }] });
+
+test("asset answers are checked for shape, and unknown ids answer null", async () => {
+  const { assetResultProblems } = await import("../src/plugins.ts");
+  const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
+  expect(await provider.asset!({ id: "missing" })).toBeNull();
+  expect(assetResultProblems(await provider.asset!({ id: "figure.png" }))).toEqual([]);
+  expect(assetResultProblems({ bytes: "x", mime: "", name: 1 })).toEqual(["asset.bytes must be a Uint8Array", "asset.mime must be a non-empty string", "asset.name must be a non-empty string"]);
 });

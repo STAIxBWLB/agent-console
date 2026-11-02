@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem, TableColumn } from "../../src/contract.ts";
 
 /** Test fixture: an in-memory tool with an inbox, search, a reversible verb and a destructive verb. */
@@ -21,6 +22,14 @@ const demoPanel = (host: ConsoleHost) => {
         ui.bars({ caption: "Current versus target weight (%)", items: m.bars, max: 100 }),
         ui.spark({ caption: "Daily usage", values: m.spark }),
       ] : [ui.empty("No metrics")]));
+      return;
+    }
+    if (panel === "files") {
+      list.replaceChildren(
+        ui.h("p", {}, ui.link({ asset: "report.pdf" }, "Open the report"), " ", ui.link({ panel: "notes", params: { id: "n1" } }, "Back to the first note")),
+        ui.img({ asset: "figure.png", alt: "Fixture figure" }),
+        ui.frame({ asset: "report.pdf", title: "Fixture report" }),
+      );
       return;
     }
     const notes = (snap.notes ?? []) as Note[];
@@ -56,6 +65,38 @@ const METRICS = {
   spark: [3, 5, 4, 8, 6, 9, 12, 10, 14, 13],
 };
 
+// One-page PDF with a text line, built by hand so the fixture needs no files.
+function pdf(text: string): Uint8Array {
+  const stream = `BT /F1 24 Tf 72 720 Td (${text}) Tj ET`;
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"];
+  let out = "%PDF-1.4\n";
+  const offsets = objects.map((body, i) => { const at = out.length; out += `${i + 1} 0 obj\n${body}\nendobj\n`; return at; });
+  const xref = out.length;
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
+  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+// 8x8 teal PNG (RGBA, unfiltered rows) with zlib from node:zlib.
+function png(): Uint8Array {
+  const crcTable = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  const crc = (b: Buffer) => { let c = 0xffffffff; for (const x of b) c = crcTable[(c ^ x) & 0xff]! ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  const chunk = (type: string, data: Buffer) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(8, 0); ihdr.writeUInt32BE(8, 4); ihdr[8] = 8; ihdr[9] = 6;
+  const raw = Buffer.alloc(8 * 33); for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) raw.set([32, 160, 160, 255], y * 33 + 1 + x * 4);
+  return new Uint8Array(Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
+}
+const ASSETS: Record<string, { bytes: Uint8Array; mime: string; name: string }> = {
+  "report.pdf": { bytes: pdf("Fixture report"), mime: "application/pdf", name: "report.pdf" },
+  "figure.png": { bytes: png(), mime: "image/png", name: "figure.png" },
+  "logo.svg": { bytes: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), mime: "image/svg+xml", name: "logo.svg" },
+  "notes.txt": { bytes: new TextEncoder().encode("plain text"), mime: "text/plain", name: "notes \"x\".txt" },
+  "emoji.txt": { bytes: new TextEncoder().encode("emoji name"), mime: "text/plain", name: `${"a".repeat(119)}\u{1F600}.txt` },
+  "lone.txt": { bytes: new TextEncoder().encode("lone surrogate"), mime: "text/plain", name: "bad\uD800name.txt" },
+  "page.html": { bytes: new TextEncoder().encode("<script>alert(1)</script>"), mime: "text/html", name: "page.html" },
+};
+
 export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];
   const notes: Note[] = [
@@ -88,7 +129,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
       version: "0.0.1",
       title: "Demo",
       icon: "vault",
-      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }],
+      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }, { id: "files", title: "Files", order: 4 }],
       pollMs: 5000,
       commands: [
         { id: "reopen-n1", title: "Reopen the first note", hint: "restore n1", action: "restore", input: { id: "n1" } },
@@ -99,6 +140,10 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
     async open() {
       return {
         assets: { js: PANEL_JS },
+        async asset({ id }) {
+          const file = ASSETS[id];
+          return file ? { ...file, bytes: new Uint8Array(file.bytes) } : null;
+        },
         async snapshot(input) {
           if (input.panel === "space") {
             const cards = notes.map((n) => ({ id: n.id, title: n.title, zone: n.status !== "open" ? "done" : n.id === "n1" ? "work" : n.id === "n2" ? "review" : "queue", owner: n.id === "n1" ? "claude" : n.id === "n2" ? "codex" : "local", link: { panel: "notes", params: { id: n.id } } }));

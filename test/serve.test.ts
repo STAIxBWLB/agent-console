@@ -167,6 +167,17 @@ describe("bearer mode (AC2)", () => {
     expect((await call(server, "/tools", { body: {}, bearer: "t".repeat(40) })).status).toBe(200);
   });
 
+  test("the plugin asset route keeps the serve auth", async () => {
+    const c = serveConfig({ host: "0.0.0.0", origins: [ORIGIN] }, { ACON_TOKEN_FILE: tokenFile(0o600) });
+    if (typeof c === "string") throw new Error(c);
+    const server = await boot(c);
+    expect((await call(server, "/p/demo/asset?id=figure.png")).status).toBe(401);
+    expect((await call(server, "/p/demo/asset?id=figure.png", { bearer: "x".repeat(40) })).status).toBe(401);
+    const ok = await call(server, "/p/demo/asset?id=figure.png", { bearer: "t".repeat(40) });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("content-type")).toBe("image/png");
+  });
+
   test("comparison is constant time over hashed values, and a group- or world-readable file is refused", () => {
     expect(bearerVerifier(tokenFile(0o640))).toContain("must not be readable by group or others");
     expect(bearerVerifier(tokenFile(0o604))).toContain("must not be readable by group or others");

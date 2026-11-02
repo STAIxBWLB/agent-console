@@ -221,6 +221,21 @@ export function providerProblems(provider: unknown): string[] {
   if (p.assets?.css !== undefined && typeof p.assets.css !== "string") out.push("provider.assets.css must be a string");
   if (typeof p.snapshot !== "function") out.push("provider.snapshot must be a function");
   if (typeof p.action !== "function") out.push("provider.action must be a function");
+  if (p.asset !== undefined && typeof p.asset !== "function") out.push("provider.asset must be a function when present");
+  return out;
+}
+
+/** Plugin asset types the console serves; SVG is only ever an attachment so its scripts never run in the console origin. */
+export const ASSET_TYPES: ReadonlySet<string> = new Set(["application/pdf", "image/png", "image/jpeg", "image/svg+xml", "text/plain", "text/csv"]);
+
+/** Problems in one provider.asset() answer that is not null. */
+export function assetResultProblems(result: unknown): string[] {
+  const r = result as { bytes?: unknown; mime?: unknown; name?: unknown } | null;
+  if (!r || typeof r !== "object") return ["asset must answer {bytes, mime, name} or null"];
+  const out: string[] = [];
+  if (!(r.bytes instanceof Uint8Array)) out.push("asset.bytes must be a Uint8Array");
+  if (typeof r.mime !== "string" || !r.mime) out.push("asset.mime must be a non-empty string");
+  if (typeof r.name !== "string" || !r.name) out.push("asset.name must be a non-empty string");
   return out;
 }
 

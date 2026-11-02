@@ -246,4 +246,37 @@ describe("public panel kit", () => {
     expect(s.some((n) => n.attributes.has("style"))).toBe(false);
     expect(walk(node(ui.spark({ caption: "Empty", values: [] }))).some((n) => n.textContent === "No data")).toBe(true);
   });
+
+  test("img, frame and link build same-origin asset URLs or console hashes and refuse anything else", () => {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+    const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", (t, p, q) => "#/local/" + t + "/" + p + "?" + new URLSearchParams(q))`, {
+      Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+    }) as ConsoleUi;
+    const img = node(ui.img({ asset: "a b/../c.png", alt: "Figure <b>" }));
+    expect(img.tagName).toBe("IMG");
+    expect(img.attributes.get("src")).toBe("/p/demo/asset?id=a%20b%2F..%2Fc.png");
+    expect(img.attributes.get("alt")).toBe("Figure <b>");
+    const frame = node(ui.frame({ asset: "report.pdf", title: "Report" }));
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.attributes.get("src")).toBe("/p/demo/asset?id=report.pdf");
+    expect(frame.attributes.has("sandbox")).toBe(false);
+    const file = node(ui.link({ asset: "report.pdf" }, "<i>Open</i>"));
+    expect(file.attributes.get("href")).toBe("/p/demo/asset?id=report.pdf");
+    expect(file.attributes.get("rel")).toBe("noopener noreferrer");
+    expect(file.textContent).toBe("<i>Open</i>");
+    expect(node(ui.link({ panel: "notes", params: { id: "n1" } }, "Note")).attributes.get("href")).toBe("#/local/demo/notes?id=n1");
+    for (const bad of [
+      () => ui.img({ asset: "", alt: "x" }),
+      () => ui.img({ src: "https://evil.example/x.png", alt: "x" } as never),
+      () => ui.frame({ asset: 7, title: "x" } as never),
+      () => ui.link({ href: "javascript:alert(1)" } as never, "x"),
+      () => ui.link({ asset: "a", href: "https://evil.example" } as never, "x"),
+      () => ui.link({ panel: "../evil" }, "x"),
+      () => ui.link({ panel: "notes", params: { id: 1 } } as never, "x"),
+      () => ui.link("https://evil.example" as never, "x"),
+    ]) expect(bad).toThrow(TypeError);
+    expect(() => ui.h("a", { href: "/p/demo/asset?id=x" })).toThrow();
+    expect(() => ui.h("img", { src: "/x" })).toThrow();
+  });
 });

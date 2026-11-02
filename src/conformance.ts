@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConsolePlugin, ConsoleProvider } from "./contract.ts";
-import { manifestProblems, providerProblems, withTimeout } from "./plugins.ts";
+import { ASSET_TYPES, assetResultProblems, manifestProblems, providerProblems, withTimeout } from "./plugins.ts";
 import { spaceSceneProblems } from "./space.ts";
 
 export { spaceSceneProblems } from "./space.ts";
@@ -13,6 +13,8 @@ export interface ConformanceOptions {
   home?: string;
   /** Actions that must answer needsConfirm when sent without confirmation. */
   destructive?: ({ action: string } & Record<string, unknown>)[];
+  /** Asset ids that must answer a served type (provider.asset). */
+  assets?: string[];
 }
 
 const GROUPS = ["decision", "review", "candidate", "alert"];
@@ -104,6 +106,17 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
     if (plugin.manifest.capabilities?.space) test("space answers a public scene within 5 s", async () => {
       const result = await withTimeout(provider.snapshot({ after: 0, panel: "space" }), 5_000, "space snapshot");
       expect(spaceSceneProblems(result.scene)).toEqual([]);
+    });
+    test("asset, when present, answers null for an unknown id within 5 s", async () => {
+      if (typeof provider.asset !== "function") return;
+      const result = await withTimeout(provider.asset({ id: "acon-conformance-unknown" }), 5_000, "asset");
+      expect(result).toBeNull();
+    });
+    for (const id of options.assets ?? []) test(`asset ${id} is a served type with bytes and a name`, async () => {
+      expect(typeof provider.asset).toBe("function");
+      const result = await withTimeout(provider.asset!({ id }), 5_000, `asset ${id}`);
+      expect(assetResultProblems(result)).toEqual([]);
+      expect(ASSET_TYPES.has(result!.mime)).toBe(true);
     });
     test("an unknown action answers ok: false", async () => {
       const result = await provider.action({ action: "acon-conformance-unknown" });

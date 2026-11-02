@@ -237,3 +237,90 @@ describe("idle exit", () => {
     expect(idled).toBe(true);
   });
 });
+
+describe("plugin assets", () => {
+  const get = (server: Server, path: string, cookie?: string, extra: Record<string, string> = {}) =>
+    fetch(`${server.origin}${path}`, { headers: { ...(cookie ? { Cookie: cookie } : {}), ...extra } });
+
+  test("serves allowed types inline with nosniff, a filename and a framing policy of self", async () => {
+    const { server } = await boot();
+    const cookie = await login(server);
+    const pdf = await get(server, "/p/demo/asset?id=report.pdf", cookie, { "Sec-Fetch-Site": "same-origin" });
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers.get("content-type")).toBe("application/pdf");
+    expect(pdf.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(pdf.headers.get("content-disposition")).toStartWith('inline; filename="report.pdf"');
+    expect(pdf.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+    expect(pdf.headers.get("content-security-policy")).toBe("default-src 'none'; frame-ancestors 'self'");
+    expect(new TextDecoder().decode(await pdf.arrayBuffer())).toStartWith("%PDF-1.4");
+    const png = await get(server, "/p/demo/asset?id=figure.png", cookie);
+    expect(png.headers.get("content-type")).toBe("image/png");
+    const text = await get(server, "/p/demo/asset?id=notes.txt", cookie);
+    expect(text.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(text.headers.get("content-disposition")).toContain('filename="notes _x_.txt"');
+  });
+
+  test("a name cut at 120 inside a surrogate pair, or with a lone surrogate, still gets a valid header", async () => {
+    const { server } = await boot();
+    const cookie = await login(server);
+    const emoji = await get(server, "/p/demo/asset?id=emoji.txt", cookie);
+    expect(emoji.status).toBe(200);
+    const header = emoji.headers.get("content-disposition")!;
+    expect(header).toContain(`filename="${"a".repeat(119)}_"`);
+    expect(header).toContain(`filename*=UTF-8''${"a".repeat(119)}%F0%9F%98%80`);
+    const lone = await get(server, "/p/demo/asset?id=lone.txt", cookie);
+    expect(lone.status).toBe(200);
+    expect(lone.headers.get("content-disposition")).toContain("filename*=UTF-8''bad%EF%BF%BDname.txt");
+  });
+
+  test("SVG is an attachment only and disallowed types are refused", async () => {
+    const { server } = await boot();
+    const cookie = await login(server);
+    const svg = await get(server, "/p/demo/asset?id=logo.svg", cookie);
+    expect(svg.status).toBe(200);
+    expect(svg.headers.get("content-disposition")).toStartWith("attachment;");
+    expect((await get(server, "/p/demo/asset?id=page.html", cookie)).status).toBe(415);
+    const tools = await (await post(server, "/tools", {}, cookie)).json() as { errors: { where: string; message: string }[] };
+    expect(tools.errors[0]).toEqual(expect.objectContaining({ where: "asset", message: "type text/html is not allowed" }));
+  });
+
+  test("no session, a foreign origin, a cross-site fetch, an unknown id or tool get 401, 403 or 404", async () => {
+    const { server } = await boot();
+    const cookie = await login(server);
+    expect((await get(server, "/p/demo/asset?id=report.pdf")).status).toBe(401);
+    expect((await get(server, "/p/demo/asset?id=report.pdf", cookie, { Origin: "https://evil.example" })).status).toBe(403);
+    expect((await get(server, "/p/demo/asset?id=report.pdf", cookie, { "Sec-Fetch-Site": "cross-site" })).status).toBe(403);
+    expect((await get(server, "/p/demo/asset?id=missing", cookie)).status).toBe(404);
+    expect((await get(server, "/p/nope/asset?id=report.pdf", cookie)).status).toBe(404);
+    expect((await get(server, "/p/demo/asset", cookie)).status).toBe(400);
+    expect((await get(server, `/p/demo/asset?id=${"x".repeat(513)}`, cookie)).status).toBe(400);
+  });
+
+  test("an oversize asset is refused at the configured cap", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    const server = startServer({ plugins: [{ tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider }], version: "t", pluginsDir: "/tmp", log: () => {}, assetMaxBytes: 100 });
+    running.push(server);
+    const cookie = await login(server);
+    expect((await get(server, "/p/demo/asset?id=figure.png", cookie)).status).toBe(200);
+    expect((await get(server, "/p/demo/asset?id=report.pdf", cookie)).status).toBe(413);
+  });
+
+  test("a plugin without asset answers 404 and its other routes are unchanged", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    delete provider.asset;
+    const server = startServer({ plugins: [{ tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider }], version: "t", pluginsDir: "/tmp", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    expect((await get(server, "/p/demo/asset?id=report.pdf", cookie)).status).toBe(404);
+    expect((await post(server, "/p/demo/snapshot", { panel: "notes" }, cookie)).status).toBe(200);
+  });
+
+  test("the shell CSP allows same-origin frames only", async () => {
+    const { server } = await boot();
+    const csp = (await fetch(`${server.origin}/`)).headers.get("content-security-policy")!;
+    expect(csp).toContain("frame-src 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+  });
+});

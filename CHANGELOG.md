@@ -8,6 +8,7 @@
 
 ### Added
 
+- Plugin assets (api 1, additive): optional `provider.asset({id})`, served at a session-gated `GET /p/<tool>/asset?id=` with a type allowlist (SVG as attachment only), nosniff, a 32 MB default cap and same-origin framing; shell CSP gains `frame-src 'self'`; `host.ui.img`, `host.ui.frame` and `host.ui.link` accept only this plugin's asset ids or panels; conformance checks `asset` answers (#24).
 - `host.ui.table`, `host.ui.bars` and `host.ui.spark` (api 1, additive): a sortable text table with an exported `TableColumn` type, horizontal bars with target markers and a small line, built as shell SVG with token colors, text equivalents and bounded input (500 rows, 12 columns, 50 bars, 365 points); `tableColumnProblems` in conformance (#23).
 - `acon serve` (H1): resident console with `--host`, `--port` and `--origin`, authenticated by Cloudflare Access JWT (RS256 against the team JWKS) or a bearer token file. It refuses a non-loopback bind without auth, binds confirm tokens to the verified identity, answers 204 on `/healthz` and has no idle exit. A Dockerfile runs it as non-root with a `/data` volume and a health check (#20).
 - `acon install <name|https URL|dir>`, `--list` and `--force`: pet and asset packages downloaded separately, verified against the sha256 index at assets.entelecheia.ai (`ACON_ASSETS_INDEX` overrides), https only, streaming size caps, staged and installed with one rename (#17).

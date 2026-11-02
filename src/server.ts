@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionResult } from "./contract.ts";
-import { TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
+import { ASSET_TYPES, assetResultProblems, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import type { PetPackage } from "./pets.ts";
 import { readValidatedImage, readValidatedModel, type AssetPack } from "./assets.ts";
 import { sanitizeSpaceScene } from "./space.ts";
@@ -24,6 +24,8 @@ export interface ServerOptions {
   callMs?: number;
   onIdle?: () => void;
   log?: (line: string) => void;
+  /** Largest plugin asset served on GET /p/<tool>/asset; 32 MB by default. */
+  assetMaxBytes?: number;
   /** H1 (`acon serve`): fixed bind, allowed hosts and origins, per-request authentication, no ticket and no idle exit. */
   serve?: ServeOptions;
 }
@@ -42,7 +44,14 @@ const RESERVED = ["confirmed", "fingerprint"];
 const secret = () => randomBytes(32).toString("hex");
 const asset = (name: string) => readFileSync(new URL(`../shell/${name}`, import.meta.url), "utf8");
 
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'";
+const ASSET_INLINE = new Set(["application/pdf", "image/png", "image/jpeg", "text/plain", "text/csv"]);
+// Assets may be framed by the shell (PDF viewer), never by another origin, and load nothing themselves.
+const ASSET_CSP = "default-src 'none'; frame-ancestors 'self'";
+const ASSET_ID_MAX = 512;
+// Cut by code points, never inside a surrogate pair, so encodeURIComponent cannot throw on the result.
+const codePoints = (name: string, max: number) => Array.from(name).slice(0, max).join("");
+const fileName = (name: string) => codePoints(name.replace(/[^A-Za-z0-9._ -]/gu, "_"), 120) || "asset";
 const HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -74,6 +83,7 @@ export function startServer(options: ServerOptions) {
   let lastSeen = now();
   const pets = options.pets ?? [];
   const assetPacks = options.assetPacks ?? [];
+  const assetMaxBytes = options.assetMaxBytes ?? 32 * 1024 * 1024;
 
   const record = (tool: string, where: string, error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
@@ -119,6 +129,30 @@ export function startServer(options: ServerOptions) {
       record(entry.tool, `snapshot ${panel}`, error);
       return reject(502, `${entry.tool} could not refresh; details are in System`);
     }
+  }
+
+  /** GET /p/<tool>/asset?id=: provider bytes behind the session, type allowlist and size cap. */
+  async function pluginAsset(entry: PluginEntry, id: string | null) {
+    const provider = entry.provider!;
+    if (typeof provider.asset !== "function") return reject(404, "this plugin has no assets");
+    if (!id || id.length > ASSET_ID_MAX) return reject(400, "asset id required");
+    let result: Awaited<ReturnType<NonNullable<typeof provider.asset>>>;
+    try {
+      result = await call(entry.tool, "asset", () => Promise.resolve().then(() => provider.asset!({ id })));
+    } catch (error) {
+      record(entry.tool, "asset", error);
+      return reject(502, `${entry.tool} could not read the asset; details are in System`);
+    }
+    if (result === null || result === undefined) return reject(404, "unknown asset");
+    const problem = assetResultProblems(result)[0];
+    if (problem) { record(entry.tool, "asset", new Error(problem)); return reject(502, `${entry.tool} sent an invalid asset; details are in System`); }
+    const mime = result.mime;
+    if (!ASSET_TYPES.has(mime)) { record(entry.tool, "asset", new Error(`type ${mime.slice(0, 60)} is not allowed`)); return reject(415, `${entry.tool} sent a type the console does not serve`); }
+    if (result.bytes.byteLength > assetMaxBytes) { record(entry.tool, "asset", new Error(`${result.bytes.byteLength} bytes is over the ${assetMaxBytes} byte limit`)); return reject(413, "asset is larger than the console serves"); }
+    const name = fileName(result.name);
+    const disposition = `${ASSET_INLINE.has(mime) ? "inline" : "attachment"}; filename="${name}"; filename*=UTF-8''${encodeURIComponent(codePoints(result.name, 120).toWellFormed())}`;
+    const type = mime.startsWith("text/") ? `${mime}; charset=utf-8` : mime;
+    return new Response(new Uint8Array(result.bytes), { headers: { ...HEADERS, "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": ASSET_CSP, "Content-Type": type, "Content-Disposition": disposition, "Content-Length": String(result.bytes.byteLength) } });
   }
 
   async function action(entry: PluginEntry, session: string, input: Record<string, unknown>) {
@@ -174,7 +208,8 @@ export function startServer(options: ServerOptions) {
     maxRequestBodySize: 32 * 1024,
     idleTimeout: 60,
     async fetch(req): Promise<Response> {
-      const path = new URL(req.url).pathname;
+      const url = new URL(req.url);
+      const path = url.pathname;
       // H1 health probe: no auth, no body, before every other check so container and tunnel probes work.
       if (serve && path === "/healthz" && (req.method === "GET" || req.method === "HEAD")) return new Response(null, { status: 204, headers: HEADERS });
       lastSeen = now();
@@ -193,7 +228,7 @@ export function startServer(options: ServerOptions) {
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
       const packedImage = /^\/assets\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
       const packedModel = /^\/models\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
-      const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action)$/.exec(path);
+      const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action|asset)$/.exec(path);
       if (req.method === "GET") {
         const file = files[path];
         if (file) return new Response(file.body, { headers: { ...HEADERS, "Content-Type": file.type } });
@@ -203,6 +238,15 @@ export function startServer(options: ServerOptions) {
           if (!entry) return reject(404, "unknown tool");
           const js = plugin[2] === "panel.js";
           return new Response(js ? entry.provider!.assets.js : entry.provider!.assets.css ?? "", { headers: { ...HEADERS, "Content-Type": js ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8" } });
+        }
+        if (plugin && plugin[2] === "asset") {
+          if (!live) return reject(401, "session expired or missing; run acon ui");
+          // Same-origin fetches and frames only; the SameSite=Strict cookie already keeps cross-site requests out.
+          const site = req.headers.get("sec-fetch-site");
+          if (site !== null && site !== "same-origin" && site !== "none") return reject(403, "cross-site asset request");
+          const entry = tools.get(plugin[1]!);
+          if (!entry) return reject(404, "unknown tool");
+          return pluginAsset(entry, url.searchParams.get("id"));
         }
         if (pet) {
           if (!live) return reject(401, "session expired or missing; run acon ui");
