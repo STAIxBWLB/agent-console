@@ -343,5 +343,35 @@ describe("api range and versioned registrations (#26)", () => {
     expect(again.find((e) => e.tool === "other")).toEqual(expect.objectContaining({ status: "failed", reason: "manifest.tool is demo, expected other" }));
     expect(again.filter((e) => e.status === "ready").map((e) => e.tool)).toEqual(["demo"]);
   });
+
+  test("a file first imported as another entry's dependency is not hot-loaded as a new entry after it changed", async () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const impl = join(pkg, "impl.ts"), entry = join(pkg, "plugin.ts");
+    const source = (v: string) => readFileSync(fixture, "utf8").replace('version: "0.0.1"', `version: "${v}"`).replace('"../../src/contract.ts"', JSON.stringify(join(import.meta.dir, "..", "src", "contract.ts")));
+    writeFileSync(impl, source("1.0.0"));
+    writeFileSync(entry, 'export { default } from "./impl.ts";\n');
+    const dir = home({ "demo.json": { api: 1, tool: "demo", module: entry, sha256: sha(entry) } });
+    const first = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(first[0]?.manifest?.version).toBe("1.0.0");
+    writeFileSync(impl, source("2.0.0"));
+    writeFileSync(join(pluginDir(dir), "demo@2.0.0.json"), JSON.stringify({ api: 1, tool: "demo", module: impl, sha256: sha(impl) }), { mode: 0o600 });
+    const again = await loadPlugins(scanPlugins(dir), ctx(dir), first);
+    expect(again.find((e) => e.version === "2.0.0")).toEqual(expect.objectContaining({ status: "stale", reason: expect.stringContaining("restart acon") }));
+    expect(again.filter((e) => e.status === "ready").map((e) => e.manifest?.version)).toEqual(["1.0.0"]);
+  });
+
+  test("two tools from one package load together at start", async () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const make = (tool: string) => {
+      const f = join(pkg, `${tool}.ts`);
+      writeFileSync(f, readFileSync(fixture, "utf8").replace('"../../src/contract.ts"', JSON.stringify(join(import.meta.dir, "..", "src", "contract.ts"))).replace("export default createDemoPlugin();", `export default createDemoPlugin(${JSON.stringify(tool)});`));
+      return f;
+    };
+    const a = make("ta"), b = make("tb");
+    const dir = home({ "ta.json": { api: 1, tool: "ta", module: a, sha256: sha(a) }, "tb.json": { api: 1, tool: "tb", module: b, sha256: sha(b) } });
+    expect((await loadPlugins(scanPlugins(dir), ctx(dir))).map((e) => e.status)).toEqual(["ready", "ready"]);
+  });
 });
 

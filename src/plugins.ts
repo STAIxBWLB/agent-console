@@ -51,9 +51,7 @@ export function replaceableBy(path: string): string | undefined {
   const problem = (where: string, info: { uid: number; mode: number }, stickyOk: boolean) =>
     info.uid !== me && info.uid !== 0 ? `${where} is owned by another user`
       : writableByOthers(info.mode) && !(stickyOk && info.mode & 0o1000) ? `${where} is writable by others` : undefined;
-  let root = dirname(entry);
-  while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
-  if (!existsSync(join(root, "package.json"))) root = dirname(entry);
+  const root = packageRoot(entry);
   for (let dir = dirname(root), prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
     const bad = problem(dir, statSync(dir), true);
     if (bad) return bad;
@@ -79,6 +77,13 @@ export function replaceableBy(path: string): string | undefined {
     if (info.isDirectory()) for (const name of readdirSync(current)) if (name !== ".git" && name !== "node_modules") stack.push(join(current, name));
   }
   return importEscapes(entry, root, verified);
+}
+
+/** The nearest directory above a resolved file that holds a package.json, else the file's own directory. */
+export function packageRoot(file: string): string {
+  let root = dirname(file);
+  while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
+  return existsSync(join(root, "package.json")) ? root : dirname(file);
 }
 
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -281,6 +286,8 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): P
  * the life of the process, whether or not open() then succeeded, so this is what a later load at that path would get.
  */
 const imported = new Map<string, string>();
+/** Package roots this process has imported from: their files, entries or dependencies, are cached by Bun as first read. */
+const importedRoots = new Set<string>();
 
 /** Newest first: versioned registrations by semantic version, then the unversioned slot. */
 const newestFirst = (a: PluginEntry, b: PluginEntry) =>
@@ -294,6 +301,8 @@ const newestFirst = (a: PluginEntry, b: PluginEntry) =>
  */
 export async function loadPlugins(scan: Scan, ctx: ConsoleContext, previous: PluginEntry[] = []): Promise<PluginEntry[]> {
   const out: PluginEntry[] = [];
+  // Roots imported before this pass; a first pass (console start) may load several entries from one package.
+  const before = new Set(importedRoots);
   const candidates = new Map<string, PluginEntry[]>();
   for (const entry of scan.entries) {
     if (entry.status !== "verified" || !entry.module) { out.push(entry); continue; }
@@ -307,9 +316,11 @@ export async function loadPlugins(scan: Scan, ctx: ConsoleContext, previous: Plu
       const same = previous.find((p) => p.status === "ready" && p.tool === entry.tool && p.module === entry.module && p.sha256 === entry.sha256);
       // Bun caches a module by path for the life of the process: changed code at a path already loaded would come back
       // as the old module (and its imports). Only a new path loads without a restart, as a versioned install provides.
-      const inPlace = !same && imported.has(entry.module!) && imported.get(entry.module!) !== entry.sha256;
+      // The same holds for any file of a package already imported from (an entry's dependency, say): only bytes this
+      // process verified at that exact path may load again.
+      const inPlace = !same && before.has(packageRoot(entry.module!)) && imported.get(entry.module!) !== entry.sha256;
       const loaded = same ?? (inPlace
-        ? { ...entry, status: "stale" as const, reason: "the module changed at a path this console already loaded; restart acon to use it, or install the new version at its own path" }
+        ? { ...entry, status: "stale" as const, reason: "this module is in a package the console already loaded, so the runtime would serve its cached code; restart acon to use it, or install the new version at its own path" }
         : await loadOne(entry, ctx));
       out.push(loaded);
       if (loaded.status === "ready") chosen = loaded;
@@ -323,6 +334,7 @@ async function loadOne(entry: PluginEntry, ctx: ConsoleContext): Promise<PluginE
     // ponytail: the verified bytes are re-read by import(); only you or root can swap them (replaceableBy), and the module's own imports are not hashed.
     // A path is imported once per process (see loadPlugins), so what import() returns is what was verified at first load.
     if (!imported.has(entry.module!)) imported.set(entry.module!, entry.sha256!);
+    importedRoots.add(packageRoot(entry.module!));
     const mod = await withTimeout(import(entry.module!), IMPORT_MS, "import") as { default?: ConsolePlugin; plugin?: ConsolePlugin };
     const plugin = mod.default ?? mod.plugin;
     if (!plugin || typeof plugin.open !== "function") return { ...entry, status: "failed", reason: "module exports no console plugin" };
