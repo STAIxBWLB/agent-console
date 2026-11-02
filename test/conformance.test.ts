@@ -84,6 +84,7 @@ test("inbox items with forms and seen receipts pass; out-of-bounds forms and a b
 test("AC5: the ask fixture sends no form or result to a console that did not advertise them", async () => {
   const provider = await createAskPlugin().open({ home: "/tmp", log: () => {} });
   expect(((await provider.snapshot({ after: 0, panel: "inbox" })).items as unknown[])).toEqual([]);
+});
 
 describe("review anchors: shared cases (test/fixtures/review/cases.json)", () => {
   const cases = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "review", "cases.json"), "utf8"));
