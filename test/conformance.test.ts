@@ -1,6 +1,9 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { inboxItemProblems, registerConsoleConformance, stableAtProblems, verbFormProblems } from "../src/conformance.ts";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { inboxItemProblems, registerConsoleConformance, reviewAnchorProblems, reviewCaseValue, reviewProblems, reviewThreadProblems, stableAtProblems, verbFormProblems } from "../src/conformance.ts";
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
@@ -82,4 +85,58 @@ test("inbox items with forms and seen receipts pass; out-of-bounds forms and a b
 test("AC5: the ask fixture sends no form or result to a console that did not advertise them", async () => {
   const provider = await createAskPlugin().open({ home: "/tmp", log: () => {} });
   expect(((await provider.snapshot({ after: 0, panel: "inbox" })).items as unknown[])).toEqual([]);
+});
+
+describe("review anchors: shared cases (test/fixtures/review/cases.json)", () => {
+  const cases = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "review", "cases.json"), "utf8"));
+  type Case = { name: string; field?: string; value?: unknown; repeat?: { count: number; of: unknown; idPrefix: string } };
+  for (const c of cases.anchors.valid as Case[]) test(`valid anchor: ${c.name}`, () => expect(reviewAnchorProblems(reviewCaseValue(c))).toEqual([]));
+  for (const c of cases.anchors.invalid as Case[]) test(`invalid anchor: ${c.name}`, () => {
+    const problems = reviewAnchorProblems(reviewCaseValue(c));
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.some((p) => p.includes(c.field!))).toBe(true);
+  });
+  for (const c of cases.threads.valid as Case[]) test(`valid thread: ${c.name}`, () => expect(reviewThreadProblems(reviewCaseValue(c))).toEqual([]));
+  for (const c of cases.threads.invalid as Case[]) test(`invalid thread: ${c.name}`, () => {
+    const problems = reviewThreadProblems(reviewCaseValue(c));
+    expect(problems.some((p) => p.includes(c.field!))).toBe(true);
+  });
+  for (const c of cases.threads.lists.invalid as Case[]) test(`invalid thread list: ${c.name}`, () => {
+    expect(reviewProblems(reviewCaseValue(c)).some((p) => p.includes(c.field!))).toBe(true);
+  });
+  for (const c of cases.contentHash as { name: string; text?: string; projected?: string; raw?: string; sha256: string; rawSha256?: string }[]) test(`contentHash: ${c.name}`, () => {
+    const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+    expect(sha(c.projected ?? c.text!)).toBe(c.sha256);
+    if (c.raw) expect(sha(c.raw)).toBe(c.rawSha256!);
+    if (c.raw) expect(c.rawSha256).not.toBe(c.sha256);
+  });
+  test("the fixture ships in the package", () => {
+    const pkg = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { files: string[] };
+    expect(pkg.files).toContain("test/fixtures/review/");
+  });
+});
+
+test("the demo review threads pass reviewProblems", async () => {
+  const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
+  const snap = await provider.snapshot({ after: 0, panel: "review" }) as { review: { threads: unknown } };
+  expect(reviewProblems(snap.review.threads)).toEqual([]);
+});
+
+test("the demo review panel rejects onComment when the action fails, so the draft is kept", async () => {
+  const plugin = createDemoPlugin();
+  const provider = await plugin.open({ home: "/tmp", log: () => {} });
+  const file = join(mkdtempSync(join(tmpdir(), "acon-panel-")), "panel.mjs");
+  writeFileSync(file, provider.assets.js);
+  const panel = (await import(file)).default;
+  let review: { onComment(c: { anchor: unknown; body: string }): Promise<unknown> } | undefined;
+  let listener: ((snap: Record<string, unknown>) => void) | undefined;
+  let answer: Record<string, unknown> = { ok: false, error: "offline" };
+  const node = () => ({ dataset: {}, append() {}, replaceChildren() {}, remove() {} });
+  const ui = { h: node, empty: node, link: node, review: (o: typeof review) => { review = o; return node(); } };
+  const instance = panel({ tool: "demo", mount: node(), ui, onSnapshot: (cb: typeof listener) => { listener = cb; }, action: async () => answer, navigate() {} });
+  instance.show("review", {});
+  listener!(await provider.snapshot({ after: 0, panel: "review" }));
+  await expect(review!.onComment({ anchor: {}, body: "x" })).rejects.toThrow("offline");
+  answer = { ok: true };
+  await expect(review!.onComment({ anchor: {}, body: "x" })).resolves.toBeUndefined();
 });

@@ -14,6 +14,7 @@
 
 ### Added
 
+- `host.ui.review` (api 1, additive): text, prose and diff review with range selection by pointer or keyboard, anchors with `lineRange`, `textQuote` and (diffs) `diffHunk`/`side`, placement by hash then unique quote, an unplaced strip and chunked rendering up to 20,000 lines. Contract types `ReviewSelector`, `ReviewAnchor`, `ReviewThread`, `ReviewDoc`; conformance `reviewProblems`; shared cases in `test/fixtures/review/` ship with the package (#28).
 - Inbox choice answers and results (#27): `ctx.features` (`inbox.form`, `inbox.result`, `action.meta`); verb `form` with 1-4 choice questions, an "Other" text, a review step and drafts kept across a refused answer; a `result` group with `seen` receipts after the body end was in view for 1 s in a focused window, and "Mark all read"; `action(input, meta)` with the verified identity; `verbFormProblems` and feature checks in conformance.
 
 - Staged plugin upgrades (#26): `apiMin`/`apiMax` ranges, versioned registrations `plugins/<tool>@<version>.json` (newest loadable wins), a re-scan at most every 5 s that serves a new registration to pages opened after it while open pages keep their load until restart, and `scripts/install-release.ts` for immutable `console/releases/<version>-<commit>/` installs with `current` and `previous` links.

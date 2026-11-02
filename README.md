@@ -202,6 +202,7 @@ Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/c
 | `img({asset, alt})` | An image of this plugin's asset (PNG or JPEG). |
 | `frame({asset, title})` | A same-origin frame of this plugin's asset, for PDF or text. |
 | `link({asset} \| {panel, params?}, text)` | A link to this plugin's asset (opens in a new tab) or to one of its panels. |
+| `review({doc, threads, onComment, onPlacement?})` | A line-numbered review of a `text`, `prose` or `diff` document. Select a range (pointer, or a gutter with Shift+Up/Down, then Enter), write a comment and the kit calls `onComment({anchor, body})`; send it to your tool with `host.action()` and throw (or reject) when the result is not `ok`, so the kit keeps the draft and says the comment was not sent. Existing threads show as gutter marks or, when they cannot be placed, in a strip above the view. |
 
 Table and charts are built by the shell from attributes and CSS classes, so they need no CSP change. Each chart has the caption as its accessible name and a text equivalent: bars show each value (and target) as text, and spark carries a visually hidden list of values. Inputs are bounded: 500 rows and 12 columns per table, 50 bar items and the last 365 spark points. Larger input is cut and a `ui-notice` states how much is shown. `tableColumnProblems(columns)` from `@staix/agent-console/conformance` checks a column list.
 
@@ -242,6 +243,18 @@ A provider may implement `asset({id})` and answer `{bytes: Uint8Array, mime, nam
 
 A plugin without `asset` behaves as before. Pass `assets: [ids]` to `registerConsoleConformance` to check that those ids answer a served type.
 
+### Review anchors
+
+`ui.review` builds and places `ReviewAnchor` values from `@staix/agent-console/contract`; acon never stores an anchor or writes a file. The owning tool stores anchors unchanged and stays the authority.
+
+- Documents: `{kind: "text" | "prose", path, text, contentHash, projection?}` or `{kind: "diff", path, unified, contentHash}`. Prose splits paragraphs on blank lines and shows Markdown as its source. All text renders as text. Up to 512 KB or 20,000 lines; more is cut with a notice.
+- `contentHash` is the lowercase hex sha256 of the text the anchor was made against: the projected text when `projection` is set, else the raw file bytes.
+- A new anchor has `lineRange` and `textQuote` (`exact` up to 2000 characters, `prefix`/`suffix` up to 64); a diff selection adds `diffHunk` and `side`. The kit displays but does not create `structural` and `region`.
+- Placement: with the same `contentHash`, by `lineRange`; otherwise by a single `textQuote` match, with `prefix`/`suffix` breaking ties; otherwise unplaced. An ambiguous quote, a different projection, another path or an unknown selector kind is unplaced, never guessed. `onPlacement` reports `{threadId, placed, via: "hash" | "quote" | null}` per thread.
+- Keyboard: Tab to the gutter, Up/Down/Home/End to move, Shift+Up/Down to extend, Enter to comment, Escape to clear.
+- Bounds: 1 to 4 selectors per anchor, body up to 4000 characters, 200 threads per view. `reviewProblems(threads)`, `reviewThreadProblems` and `reviewAnchorProblems` from `@staix/agent-console/conformance` check them.
+- Shared cases: `test/fixtures/review/cases.json` ships with the package so other tools (agent-hub) can run the same valid and invalid anchors, threads and hash cases; `expandReviewCase` and `reviewCaseValue` expand its compact `<N x c>` and `repeat` forms.
+
 ### Public styling contract
 
 Panels may use these classes. Modifiers apply only with their base class:
@@ -252,6 +265,7 @@ Panels may use these classes. Modifiers apply only with their base class:
 - Details: `ui-detail`, `ui-detail-head`, `ui-detail-kind`, `ui-detail-move`, `ui-detail-actions`, `ui-detail-summary`, `ui-provenance`, `ui-detail-section`, `ui-detail-body`, `ui-detail-footer`.
 - Tables and charts: `ui-table-block`, `ui-table-wrap`, `ui-table`, `ui-sort`, `ui-chart`, `ui-bars`, `ui-bar`, `ui-bar-label`, `ui-bar-value`, `ui-bar-track`, `ui-bar-fill`, `ui-bar-target`, `ui-spark`, `ui-spark-summary`, `ui-spark-line`, `ui-sr` (visually hidden).
 - Assets and links: `ui-img`, `ui-frame`, `ui-link`.
+- Review: `ui-review`, `ui-review-doc`, `ui-review-text`/`prose`/`diff`, `ui-review-unit`, `ui-review-gutter`, `ui-review-src`, `ui-review-add`, `ui-review-del`, `ui-review-hunk`, `ui-review-meta`, `ui-review-selected`, `ui-review-has-thread`, `ui-review-mark`, `ui-review-strip`, `ui-review-unplaced`, `ui-review-quote`, `ui-review-thread`, `ui-review-thread-body`, `ui-review-status`, `ui-review-box`, `ui-review-target`, `ui-review-input`.
 
 The public CSS tokens are:
 

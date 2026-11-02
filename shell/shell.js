@@ -214,11 +214,359 @@ function assetId(to) {
   if (!to || typeof to !== "object" || typeof to.asset !== "string" || !to.asset || to.asset.length > ASSET_ID_MAX) throw new TypeError("Panel kit assets take {asset: id}, never a URL");
   return to.asset;
 }
+// ---------- review surface (ui.review) ----------
+// Bounds from #28; larger input is cut with a notice. Anchors are built here, never written anywhere by acon.
+const REVIEW = Object.freeze({ matches: 10000, bytes: 512 * 1024, lines: 20000, threads: 200, exact: 2000, context: 64, body: 4000, chunk: 500, eager: 1000 });
+/** Rows of a review doc: text/prose lines, or parsed unified-diff rows with old/new numbers and their hunk. */
+function reviewRows(doc) {
+  const source = String(doc.kind === "diff" ? doc.unified ?? "" : doc.text ?? "");
+  let text = source;
+  const notes = [];
+  if (text.length > REVIEW.bytes) { text = text.slice(0, REVIEW.bytes); notes.push(`Showing the first ${REVIEW.bytes / 1024} KB of ${Math.ceil(source.length / 1024)} KB.`); }
+  let lines = text.split("\n");
+  if (lines.length > 1 && lines.at(-1) === "" && text.endsWith("\n") && doc.kind === "diff") lines.pop();
+  if (lines.length > REVIEW.lines) { notes.push(`Showing the first ${REVIEW.lines} of ${lines.length} lines.`); lines = lines.slice(0, REVIEW.lines); }
+  if (doc.kind !== "diff") return { rows: lines.map((t, i) => ({ kind: "line", text: t, no: i + 1 })), notes };
+  const rows = [];
+  let hunk = null, oldNo = 0, newNo = 0;
+  for (const raw of lines) {
+    const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (m) { hunk = raw; oldNo = Number(m[1]); newNo = Number(m[2]); rows.push({ kind: "hunk", text: raw, hunk }); continue; }
+    if (!hunk || raw.startsWith("diff --git ")) { hunk = raw.startsWith("diff --git ") ? null : hunk; rows.push({ kind: "meta", text: raw }); continue; }
+    const sign = raw[0];
+    if (sign === "+") rows.push({ kind: "add", text: raw.slice(1), newNo: newNo++, hunk });
+    else if (sign === "-") rows.push({ kind: "del", text: raw.slice(1), oldNo: oldNo++, hunk });
+    else if (sign === " " || raw === "") rows.push({ kind: "ctx", text: raw.slice(1), oldNo: oldNo++, newNo: newNo++, hunk });
+    else rows.push({ kind: "meta", text: raw, hunk });
+  }
+  return { rows, notes };
+}
+const reviewSides = (row) => (row.kind === "line" ? ["doc"] : row.kind === "ctx" ? ["base", "head"] : row.kind === "add" ? ["head"] : row.kind === "del" ? ["base"] : []);
+const reviewNo = (row, side) => (side === "doc" ? row.no : side === "head" ? row.newNo : row.oldNo);
+/** Per side: the row indexes on that side, the joined text and each row's start offset in it. */
+// Between rows that are not adjacent on a side (another hunk, or a jump in line numbers) the side text gets a
+// separator no quote can span, so a quote never matches across a gap in a diff.
+const REVIEW_GAP = "\n\uFFFF\n";
+function reviewIndex(rows) {
+  const sides = {};
+  rows.forEach((row, i) => {
+    for (const key of reviewSides(row)) {
+      const side = sides[key] ??= { rows: [], starts: [], text: "", at: new Map(), lastHunk: undefined, lastNo: undefined };
+      const no = reviewNo(row, key);
+      if (side.rows.length) side.text += row.hunk !== side.lastHunk || no !== side.lastNo + 1 ? REVIEW_GAP : "\n";
+      side.at.set(i, side.rows.length);
+      side.rows.push(i); side.starts.push(side.text.length); side.text += row.text;
+      side.lastHunk = row.hunk; side.lastNo = no;
+    }
+  });
+  return sides;
+}
+function reviewRowAt(side, offset) {
+  let lo = 0, hi = side.starts.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (side.starts[mid] <= offset) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+const sameProjection = (a, b) => (!a && !b) || (Boolean(a) && Boolean(b) && a.name === b.name && a.version === b.version);
+/** Placement order: hash match by lineRange, else one textQuote match (prefix/suffix break ties), else unplaced. */
+function reviewPlace(doc, rows, sides, thread, truncated = false) {
+  const anchor = thread?.anchor;
+  const none = { placed: false, via: null, rows: [] };
+  if (!anchor || typeof anchor !== "object" || !Array.isArray(anchor.selectors) || anchor.path !== doc.path) return none;
+  if (!sameProjection(anchor.projection, doc.projection)) return none;
+  const sideKey = doc.kind === "diff" ? (anchor.side === "base" ? "base" : "head") : "doc";
+  const side = sides[sideKey];
+  if (!side) return none;
+  const range = anchor.selectors.find((s) => s?.kind === "lineRange");
+  if (range && anchor.contentHash && anchor.contentHash === doc.contentHash && Number.isInteger(range.startLine) && Number.isInteger(range.endLine) && range.startLine <= range.endLine) {
+    const hit = side.rows.filter((i) => { const n = reviewNo(rows[i], sideKey); return n >= range.startLine && n <= range.endLine; });
+    if (hit.length && reviewNo(rows[hit[0]], sideKey) === range.startLine && reviewNo(rows[hit.at(-1)], sideKey) === range.endLine) return { placed: true, via: "hash", rows: hit };
+  }
+  // A cut document cannot prove a quote unique (it may repeat in the part not shown), so quotes do not place.
+  if (truncated) return none;
+  const quote = anchor.selectors.find((s) => s?.kind === "textQuote");
+  if (!quote || typeof quote.exact !== "string" || !quote.exact || quote.exact.includes("\uFFFF")) return none;
+  // Every occurrence counts: a quote with more than REVIEW.matches occurrences is ambiguous, never guessed.
+  const found = [];
+  for (let at = side.text.indexOf(quote.exact); at >= 0; at = side.text.indexOf(quote.exact, at + 1)) {
+    if (found.length === REVIEW.matches) return none;
+    found.push(at);
+  }
+  const prefix = typeof quote.prefix === "string" ? quote.prefix : "";
+  const suffix = typeof quote.suffix === "string" ? quote.suffix : "";
+  const pick = found.length === 1 ? found : found.filter((at) => side.text.slice(Math.max(0, at - prefix.length), at) === prefix && side.text.slice(at + quote.exact.length, at + quote.exact.length + suffix.length) === suffix);
+  if (pick.length !== 1) return none;
+  const first = reviewRowAt(side, pick[0]);
+  const last = reviewRowAt(side, pick[0] + quote.exact.length - (quote.exact.length ? 1 : 0));
+  return { placed: true, via: "quote", rows: side.rows.slice(first, last + 1) };
+}
+/** Anchor for rows [a, b] (row indexes), with optional character offsets in the first and last row. */
+function reviewAnchor(doc, rows, sides, a, b, startChar, endChar) {
+  let picked = [];
+  let sideKey = "doc";
+  if (doc.kind === "diff") {
+    const hunk = rows[a].hunk;
+    const span = rows.slice(a, b + 1).map((row, k) => [row, a + k]).filter(([row]) => row.hunk === hunk && reviewSides(row).length);
+    // No added lines: anchor on base, so deleted lines stay in the quote; any addition anchors on head.
+    sideKey = span.some(([row]) => row.kind === "add") ? "head" : "base";
+    picked = span.filter(([row]) => reviewSides(row).includes(sideKey)).map(([, i]) => i);
+    if (!picked.length) return null;
+  } else picked = rows.slice(a, b + 1).map((_, k) => a + k);
+  const side = sides[sideKey];
+  const first = picked[0], last = picked.at(-1);
+  const startAt = side.starts[side.at.get(first)] + (first === a && startChar !== undefined ? Math.min(startChar, rows[first].text.length) : 0);
+  const endAt = side.starts[side.at.get(last)] + (last === b && endChar !== undefined ? Math.min(endChar, rows[last].text.length) : rows[last].text.length);
+  // A selection that spans a gap keeps only its first contiguous part as the quote.
+  let exact = side.text.slice(startAt, Math.max(startAt, endAt)).slice(0, REVIEW.exact);
+  if (exact.includes("\uFFFF")) exact = exact.slice(0, exact.indexOf("\uFFFF") - 1);
+  const selectors = [{ kind: "lineRange", startLine: reviewNo(rows[first], sideKey), endLine: reviewNo(rows[last], sideKey) }];
+  // A blank selection has no quote to keep (an empty exact is not a valid textQuote); the line range alone anchors it.
+  // Context stops at a gap, so prefix/suffix never carry text from another hunk or the separator itself.
+  const before = side.text.slice(Math.max(0, startAt - REVIEW.context), startAt);
+  const after = side.text.slice(startAt + exact.length, startAt + exact.length + REVIEW.context);
+  const prefix = before.includes("\uFFFF") ? before.slice(before.lastIndexOf("\uFFFF") + 2) : before;
+  const suffix = after.includes("\uFFFF") ? after.slice(0, after.indexOf("\uFFFF") - 1) : after;
+  if (exact) selectors.push({ kind: "textQuote", exact, prefix, suffix });
+  if (doc.kind === "diff") selectors.push({ kind: "diffHunk", hunkHeader: rows[first].hunk });
+  return {
+    path: doc.path, ...(doc.kind === "diff" ? { side: sideKey } : {}), contentHash: doc.contentHash,
+    ...(doc.kind !== "diff" && doc.projection ? { projection: { name: doc.projection.name, version: doc.projection.version } } : {}),
+    selectors,
+  };
+}
+function reviewView(o, openSheet, onError) {
+  const doc = o?.doc ?? {};
+  if (!["text", "prose", "diff"].includes(doc.kind)) throw new TypeError("ui.review doc.kind must be text, prose or diff");
+  const { rows, notes } = reviewRows(doc);
+  const cut = notes.length > 0;
+  const sides = reviewIndex(rows);
+  const allThreads = Array.isArray(o.threads) ? o.threads : [];
+  const threads = allThreads.slice(0, REVIEW.threads);
+  if (allThreads.length > threads.length) notes.push(`Showing the first ${threads.length} of ${allThreads.length} comment threads.`);
+  // Units are what the gutter selects: a line, a diff row, or a prose paragraph.
+  const units = [];
+  if (doc.kind === "prose") {
+    let start = -1;
+    rows.forEach((row, i) => {
+      if (row.text.trim()) { if (start < 0) start = i; }
+      else if (start >= 0) { units.push({ a: start, b: i - 1 }); start = -1; }
+    });
+    if (start >= 0) units.push({ a: start, b: rows.length - 1 });
+  } else rows.forEach((row, i) => { if (reviewSides(row).length) units.push({ a: i, b: i }); });
+  const unitOf = new Map();
+  units.forEach((u, k) => { for (let i = u.a; i <= u.b; i++) unitOf.set(i, k); });
+  // Placement first, so marks are known before any chunk renders.
+  const marks = new Map();
+  const placed = [];
+  const unplaced = [];
+  const results = threads.map((thread) => {
+    const r = reviewPlace(doc, rows, sides, thread, cut);
+    const id = String(thread?.id ?? "");
+    // Prose units skip blank lines: a range that lands only on blank lines marks the next paragraph (else the
+    // previous one); with no paragraph at all it goes to the strip, so every thread is shown somewhere.
+    let ks = r.placed ? [...new Set(r.rows.map((i) => unitOf.get(i)).filter((k) => k !== undefined))] : [];
+    if (r.placed && !ks.length && units.length) {
+      const at = r.rows[0] ?? 0;
+      const next = units.findIndex((u) => u.a > at);
+      ks = [next >= 0 ? next : units.length - 1];
+    }
+    const shown = r.placed && ks.length > 0;
+    if (shown) {
+      placed.push(thread);
+      for (const k of ks) (marks.get(k) ?? marks.set(k, []).get(k)).push(thread);
+    } else unplaced.push(thread);
+    return { threadId: id, placed: shown, via: shown ? r.via : null };
+  });
+  const status = h("p", { class: "ui-review-status", role: "status", "aria-live": "polite" });
+  const textarea = h("textarea", { class: "ui-review-input", name: "comment", rows: "3", maxlength: String(REVIEW.body), required: true, "aria-label": "Comment" });
+  const target = h("p", { class: "ui-review-target" });
+  const sendBtn = h("button", { type: "submit", class: "btn primary", text: "Comment" });
+  const box = h("form", { class: "ui-review-box", hidden: true, "aria-label": "Comment on the selection" },
+    target, textarea, h("div", { class: "ui-review-box-actions" }, sendBtn, h("button", { type: "button", class: "btn", text: "Cancel", onclick: () => clear(true) })));
+  const docEl = h("div", { class: `ui-review-doc ui-review-${doc.kind}`, role: "group", "aria-label": `Review of ${String(doc.path ?? "")}` });
+  const unitEls = new Array(units.length);
+  let focusAt = 0, anchorAt = null, selection = null, rendered = 0;
+  const painted = new Set();
+  const describe = (s) => {
+    const sel = s.anchor.selectors[0];
+    const where = sel.startLine === sel.endLine ? `line ${sel.startLine}` : `lines ${sel.startLine} to ${sel.endLine}`;
+    return `${doc.kind === "diff" ? `${s.anchor.side} ` : ""}${where}`;
+  };
+  function unitLabel(u) {
+    const r = rows[u.a];
+    if (doc.kind === "prose") return u.a === u.b ? `Line ${u.a + 1}` : `Lines ${u.a + 1} to ${u.b + 1}`;
+    if (doc.kind === "diff") return r.kind === "add" ? `Added line ${r.newNo}` : r.kind === "del" ? `Removed line ${r.oldNo}` : `Line ${r.newNo}`;
+    return `Line ${r.no}`;
+  }
+  function threadsButton(k) {
+    const list = marks.get(k);
+    if (!list) return null;
+    return h("button", { type: "button", class: "ui-review-mark", text: list.length === 1 ? "1 comment" : `${list.length} comments`, onclick: () => showThreads(list) });
+  }
+  function showThreads(list) {
+    const body = openSheet?.(list.length === 1 ? "Comment" : `${list.length} comments`);
+    if (!body) return;
+    body.replaceChildren(...list.map((t) => h("article", { class: "ui-review-thread" },
+      h("header", {}, h("strong", { text: String(t.author ?? "") }), " ", h("time", { datetime: String(t.at ?? ""), text: String(t.at ?? "") }), t.state ? consoleUi.chip(String(t.state), t.state === "resolved" ? "ok" : "neutral") : null),
+      h("p", { class: "ui-review-thread-body", text: String(t.body ?? "") }))));
+  }
+  function renderUnit(k) {
+    const u = units[k];
+    const lines = [];
+    for (let i = u.a; i <= u.b; i++) lines.push(h("span", { class: "ui-review-src", "data-i": String(i), text: rows[i].text }));
+    const r = rows[u.a];
+    const nums = doc.kind === "diff" ? `${r.oldNo ?? ""} ${r.newNo ?? ""}`.trim() : String(doc.kind === "prose" ? u.a + 1 : r.no);
+    const gutter = h("button", { type: "button", class: "ui-review-gutter", tabindex: k === focusAt ? "0" : "-1", "data-u": String(k), "aria-label": unitLabel(u), text: nums });
+    const el = h("div", { class: `ui-review-unit${doc.kind === "diff" ? ` ui-review-${r.kind}` : ""}${marks.has(k) ? " ui-review-has-thread" : ""}`, "data-u": String(k) },
+      gutter, h("div", { class: "ui-review-text" }, lines), threadsButton(k));
+    unitEls[k] = el;
+    return el;
+  }
+  // Rows that are not selectable (diff file and hunk headers) render between units, in source order.
+  const order = [];
+  { let k = 0; rows.forEach((row, i) => { if (doc.kind === "diff" && !reviewSides(row).length) order.push({ row: i }); else if (k < units.length && units[k].a === i) order.push({ unit: k++ }); }); }
+  const orderOf = new Map(order.map((item, at) => [item.unit, at]));
+  function renderUntil(limit) {
+    let chunk = null;
+    while (rendered < order.length && rendered < limit) {
+      if (!chunk || chunk.childNodes.length >= REVIEW.chunk) { chunk = h("div", { class: "ui-review-chunk" }); docEl.append(chunk); }
+      const item = order[rendered++];
+      chunk.append(item.unit !== undefined ? renderUnit(item.unit)
+        : h("div", { class: `ui-review-unit ui-review-${rows[item.row].kind}` }, h("span", { class: "ui-review-gutter-pad", "aria-hidden": "true" }), h("div", { class: "ui-review-text" }, h("span", { class: "ui-review-src", text: rows[item.row].text }))));
+    }
+  }
+  function ensureUnit(k) {
+    if (unitEls[k]) return;
+    const at = orderOf.get(k);
+    if (at !== undefined) renderUntil(at + 1);
+  }
+  function paint() {
+    const [lo, hi] = selection ? [selection.ua, selection.ub] : [-1, -2];
+    for (const k of painted) if (k < lo || k > hi) unitEls[k]?.classList?.remove("ui-review-selected");
+    painted.clear();
+    for (let k = Math.max(0, lo); k <= hi; k++) { ensureUnit(k); unitEls[k]?.classList?.add("ui-review-selected"); painted.add(k); }
+  }
+  function select(ua, ub, startChar, endChar) {
+    const [lo, hi] = ua <= ub ? [ua, ub] : [ub, ua];
+    const anchor = reviewAnchor(doc, rows, sides, units[lo].a, units[hi].b, lo === ua ? startChar : endChar, hi === ub ? endChar : startChar);
+    if (!anchor) return null;
+    selection = { ua: lo, ub: hi, anchor };
+    paint();
+    target.textContent = `Comment on ${describe(selection)}`;
+    box.hidden = false;
+    status.textContent = `${describe(selection)} selected`;
+    return selection;
+  }
+  function clear(refocus) {
+    selection = null; anchorAt = null;
+    box.hidden = true; textarea.value = "";
+    paint();
+    if (refocus) unitEls[focusAt]?.querySelector?.(".ui-review-gutter")?.focus();
+  }
+  function focusUnit(k) {
+    k = Math.max(0, Math.min(units.length - 1, k));
+    ensureUnit(k);
+    unitEls[focusAt]?.querySelector?.(".ui-review-gutter")?.setAttribute("tabindex", "-1");
+    focusAt = k;
+    const g = unitEls[k]?.querySelector?.(".ui-review-gutter");
+    g?.setAttribute("tabindex", "0");
+    g?.focus();
+  }
+  docEl.addEventListener("keydown", (e) => {
+    const k = Number(e.target?.getAttribute?.("data-u"));
+    if (!units.length || !Number.isInteger(k) || !String(e.target?.className ?? "").includes("ui-review-gutter")) return;
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (step) {
+      e.preventDefault();
+      if (e.shiftKey) { if (anchorAt === null) anchorAt = k; focusUnit(k + step); select(anchorAt, focusAt); }
+      else { anchorAt = null; focusUnit(k + step); }
+      return;
+    }
+    if (e.key === "Home" || e.key === "End") { e.preventDefault(); anchorAt = null; focusUnit(e.key === "Home" ? 0 : units.length - 1); return; }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!selection || k < selection.ua || k > selection.ub) select(k, k);
+      textarea.focus();
+      return;
+    }
+    if (e.key === "Escape" && selection) { e.preventDefault(); clear(true); }
+  });
+  docEl.addEventListener("click", (e) => {
+    const k = Number(e.target?.getAttribute?.("data-u"));
+    if (!String(e.target?.className ?? "").includes("ui-review-gutter") || !Number.isInteger(k)) return;
+    anchorAt = null; focusUnit(k);
+    if (e.shiftKey && selection) select(selection.ua, k); else select(k, k);
+  });
+  // Pointer selection: map the DOM range ends to kit-built rows and character offsets; anything else is ignored.
+  const rowOf = (node) => {
+    for (let n = node; n && n !== docEl; n = n.parentNode) {
+      const v = n.getAttribute?.("data-i");
+      if (v !== null && v !== undefined) return Number(v);
+    }
+    return null;
+  };
+  const inDoc = (node) => { for (let n = node; n; n = n.parentNode) if (n === docEl) return true; return false; };
+  const charAt = (node, offset, i) => (node?.nodeType === 3 ? offset : offset === 0 ? 0 : rows[i].text.length);
+  docEl.addEventListener("mouseup", () => {
+    const sel = typeof document.getSelection === "function" ? document.getSelection() : null;
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if (!inDoc(range.startContainer) || !inDoc(range.endContainer)) return;
+    const a = rowOf(range.startContainer), b = rowOf(range.endContainer);
+    if (a === null || b === null || !unitOf.has(a) || !unitOf.has(b)) return;
+    const ua = unitOf.get(a), ub = unitOf.get(b);
+    // Offsets are relative to each row; select() keeps whole units but the quote uses the exact characters.
+    const anchor = reviewAnchor(doc, rows, sides, a, b, charAt(range.startContainer, range.startOffset, a), charAt(range.endContainer, range.endOffset, b));
+    if (!anchor) return;
+    selection = { ua, ub, anchor };
+    paint();
+    target.textContent = `Comment on ${describe(selection)}`;
+    box.hidden = false;
+    status.textContent = `${describe(selection)} selected`;
+  });
+  box.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = textarea.value.trim();
+    if (!selection || !body) { status.textContent = "Write a comment first."; textarea.focus(); return; }
+    // Capture what is sent: the person may select or type again while onComment is pending.
+    const sent = selection;
+    const sentBody = textarea.value;
+    sendBtn.disabled = true;
+    try {
+      await o.onComment({ anchor: sent.anchor, body: body.slice(0, REVIEW.body) });
+      status.textContent = `Comment sent on ${describe(sent)}.`;
+      // Clear only if nothing changed while the send was pending; a newer selection or draft is kept.
+      if (selection === sent && textarea.value === sentBody) clear(true);
+    } catch (error) {
+      // Exception text goes to System only; the panel shows a fixed summary.
+      if (typeof onError === "function") onError(error);
+      status.textContent = "The comment was not sent. Your text is kept; try again, and check System for details.";
+    } finally { sendBtn.disabled = false; }
+  });
+  const strip = unplaced.length ? h("section", { class: "ui-review-strip", "aria-label": "Comments that could not be placed" },
+    h("h3", { text: unplaced.length === 1 ? "1 comment could not be placed in this version" : `${unplaced.length} comments could not be placed in this version` }),
+    h("ul", {}, unplaced.map((t) => {
+      const quote = Array.isArray(t?.anchor?.selectors) ? t.anchor.selectors.find((s) => s?.kind === "textQuote") : null;
+      return h("li", { class: "ui-review-unplaced" },
+        h("span", { class: "ui-review-who" }, h("strong", { text: String(t?.author ?? "") }), " ", h("time", { datetime: String(t?.at ?? ""), text: String(t?.at ?? "") })),
+        quote?.exact ? h("blockquote", { class: "ui-review-quote", text: String(quote.exact) }) : null,
+        h("p", { class: "ui-review-thread-body", text: String(t?.body ?? "") }));
+    }))) : null;
+  renderUntil(REVIEW.eager);
+  const later = () => { if (rendered < order.length) { renderUntil(rendered + REVIEW.chunk); setTimeout(later, 0); } };
+  if (rendered < order.length) { if (typeof setTimeout === "function") setTimeout(later, 0); else renderUntil(order.length); }
+  if (typeof o.onPlacement === "function") o.onPlacement(results);
+  return h("section", { class: "ui-review", "data-placed": String(placed.length), "data-unplaced": String(unplaced.length) },
+    notes.map((n) => consoleUi.notice(n, "warn")), strip, docEl, status, box);
+}
+// ---------- end review surface ----------
 // `route` maps a plugin path to the load this page uses (#26), so assets come from the same version as the panel.
-function kitFor(tool, hash, route = (path) => path) {
+// `o` holds shell hooks for kit parts that need them (review: openSheet, onError).
+function kitFor(tool, hash, route = (path) => path, o = {}) {
+  const { openSheet, onError } = o;
   const assetUrl = (id) => `${route(`/p/${tool}/asset`)}?id=${encodeURIComponent(id)}`;
   return Object.freeze({
     ...consoleUi,
+    review: (o) => reviewView(o, openSheet, onError),
     img(o) {
       const id = assetId(o);
       return h("img", { class: "ui-img", src: assetUrl(id), alt: String(o.alt ?? ""), loading: "lazy", decoding: "async" });
@@ -942,7 +1290,7 @@ function hostFor(tool, p) {
     tool: tool.tool,
     node: NODE,
     mount: p.body,
-    ui: kitFor(tool.tool, hashFor, pluginPath),
+    ui: kitFor(tool.tool, hashFor, pluginPath, { openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error) }),
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),
