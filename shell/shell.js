@@ -67,6 +67,25 @@ function uiH(tag, props = {}, ...kids) {
   }
   return h(tag, props, ...kids);
 }
+// Input bounds for table and charts; over-limit input is cut and a notice says so.
+const UI_LIMITS = Object.freeze({ rows: 500, columns: 12, bars: 50, points: 365 });
+const SVG_NS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs = {}) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  return el;
+}
+const finite = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const fmtNum = (v) => finite(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+function fmtCell(v, format) {
+  if (v === undefined || v === null) return "";
+  if (typeof v === "number" && format === "number") return fmtNum(v);
+  if (typeof v === "number" && format === "percent") return `${fmtNum(v)}%`;
+  return String(v);
+}
+function cutNotice(what, shown, total) {
+  return total > shown ? consoleUi.notice(`Showing the first ${shown} of ${total} ${what}.`, "warn") : null;
+}
 const consoleUi = {
   h: uiH,
   rows(items, render) {
@@ -113,6 +132,79 @@ const consoleUi = {
       o.provenance?.length ? h("dl", { class: "ui-provenance" }, o.provenance.flatMap((p) => [h("dt", { text: p.label }), h("dd", {}, h("span", { text: p.value }), p.at ? h("time", { datetime: p.at, text: p.at }) : null)])) : null,
       ...(o.sections ?? []).map((s) => h("details", { class: "ui-detail-section", open: s.open }, h("summary", { text: s.title }), h("div", { class: "ui-detail-body" }, s.body))),
       o.footer?.length ? h("footer", { class: "ui-detail-footer mono" }, o.footer.map((text) => h("div", { text }))) : null);
+  },
+  table(o) {
+    const allColumns = Array.isArray(o.columns) ? o.columns : [];
+    const allRows = Array.isArray(o.rows) ? o.rows : [];
+    const columns = allColumns.slice(0, UI_LIMITS.columns);
+    const rows = allRows.slice(0, UI_LIMITS.rows);
+    const sortable = o.sortable !== false;
+    let sort = null;
+    const tbody = h("tbody");
+    const heads = columns.map((c) => {
+      const label = String(c.label);
+      const th = h("th", { scope: "col", class: c.align === "end" ? "end" : null });
+      if (!sortable) { th.append(label); return th; }
+      th.append(h("button", { type: "button", class: "ui-sort", onclick: () => {
+        sort = sort?.key === c.key && sort.dir === "ascending" ? { key: c.key, dir: "descending" } : { key: c.key, dir: "ascending" };
+        render();
+      } }, label, h("span", { class: "ui-sort-mark", "aria-hidden": "true" })));
+      return th;
+    });
+    const compare = (a, b) => (typeof a === "number" && typeof b === "number" ? a - b : String(a ?? "").localeCompare(String(b ?? ""), "en", { numeric: true }));
+    function render() {
+      const order = sort ? [...rows].sort((a, b) => (sort.dir === "ascending" ? 1 : -1) * compare(a?.[sort.key], b?.[sort.key])) : rows;
+      columns.forEach((c, i) => {
+        const th = heads[i];
+        if (sort?.key === c.key) th.setAttribute("aria-sort", sort.dir); else th.removeAttribute?.("aria-sort");
+        const mark = th.querySelector?.(".ui-sort-mark");
+        if (mark) mark.textContent = sort?.key === c.key ? (sort.dir === "ascending" ? " \u2191" : " \u2193") : "";
+      });
+      tbody.replaceChildren(...order.map((row) => h("tr", {}, columns.map((c, i) => h(i === 0 ? "th" : "td", {
+        ...(i === 0 ? { scope: "row" } : {}), class: c.align === "end" ? "end" : null, text: fmtCell(row?.[c.key], c.format),
+      })))));
+    }
+    render();
+    const table = h("table", { class: "ui-table" }, o.caption ? h("caption", { text: o.caption }) : null, h("thead", {}, h("tr", {}, heads)), tbody);
+    return h("div", { class: "ui-table-block" },
+      cutNotice("columns", columns.length, allColumns.length), cutNotice("rows", rows.length, allRows.length),
+      h("div", { class: "ui-table-wrap", tabindex: "0", role: "region", "aria-label": o.caption || "Table" }, table));
+  },
+  bars(o) {
+    const all = Array.isArray(o.items) ? o.items : [];
+    const items = all.slice(0, UI_LIMITS.bars);
+    const max = finite(o.max) > 0 ? finite(o.max) : Math.max(1e-9, ...items.flatMap((i) => [finite(i.value), finite(i.target)]));
+    const pct = (v) => Math.max(0, Math.min(100, (finite(v) / max) * 100));
+    const list = h("ul", { class: "ui-bars" }, items.map((item) => {
+      const svg = svgEl("svg", { viewBox: "0 0 100 10", preserveAspectRatio: "none", class: "ui-bar-svg", "aria-hidden": "true", focusable: "false" });
+      svg.append(svgEl("rect", { class: "ui-bar-track", x: 0, y: 0, width: 100, height: 10 }), svgEl("rect", { class: "ui-bar-fill", x: 0, y: 0, width: pct(item.value), height: 10 }));
+      const hasTarget = typeof item.target === "number" && Number.isFinite(item.target);
+      if (hasTarget) svg.append(svgEl("line", { class: "ui-bar-target", x1: pct(item.target), x2: pct(item.target), y1: 0, y2: 10, "vector-effect": "non-scaling-stroke" }));
+      return h("li", { class: "ui-bar" },
+        h("span", { class: "ui-bar-label", text: String(item.label) }), svg,
+        h("span", { class: "ui-bar-value", text: hasTarget ? `${fmtNum(item.value)} (target ${fmtNum(item.target)})` : fmtNum(item.value) }));
+    }));
+    return h("figure", { class: "ui-chart ui-bars-chart", role: "figure", "aria-label": o.caption },
+      h("figcaption", { text: o.caption }), cutNotice("items", items.length, all.length), list);
+  },
+  spark(o) {
+    const all = (Array.isArray(o.values) ? o.values : []).map(finite);
+    const values = all.slice(-UI_LIMITS.points);
+    const lo = values.length ? Math.min(...values) : 0;
+    const hi = values.length ? Math.max(...values) : 0;
+    const span = hi - lo || 1;
+    const svg = svgEl("svg", { viewBox: "0 0 100 30", preserveAspectRatio: "none", class: "ui-spark-svg", "aria-hidden": "true", focusable: "false" });
+    if (values.length) {
+      const step = values.length > 1 ? 100 / (values.length - 1) : 0;
+      const points = values.map((v, i) => `${(i * step).toFixed(2)},${(28 - ((v - lo) / span) * 26).toFixed(2)}`);
+      if (values.length === 1) points.push(`100,${points[0].split(",")[1]}`);
+      svg.append(svgEl("polyline", { class: "ui-spark-line", points: points.join(" "), "vector-effect": "non-scaling-stroke" }));
+    }
+    const summary = values.length ? `${values.length} points, low ${fmtNum(lo)}, high ${fmtNum(hi)}, last ${fmtNum(values.at(-1))}` : "No data";
+    const cut = all.length > values.length ? consoleUi.notice(`Showing the last ${values.length} of ${all.length} points.`, "warn") : null;
+    return h("figure", { class: "ui-chart ui-spark", role: "figure", "aria-label": o.caption },
+      h("figcaption", {}, h("span", { text: o.caption }), h("span", { class: "ui-spark-summary", text: summary })), cut, svg,
+      h("ol", { class: "ui-sr" }, values.map((v) => h("li", { text: fmtNum(v) }))));
   },
 };
 // ---------- end public panel kit ----------
