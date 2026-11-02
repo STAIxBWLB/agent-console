@@ -92,6 +92,8 @@ const ASSETS: Record<string, { bytes: Uint8Array; mime: string; name: string }> 
   "figure.png": { bytes: png(), mime: "image/png", name: "figure.png" },
   "logo.svg": { bytes: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), mime: "image/svg+xml", name: "logo.svg" },
   "notes.txt": { bytes: new TextEncoder().encode("plain text"), mime: "text/plain", name: "notes \"x\".txt" },
+  "emoji.txt": { bytes: new TextEncoder().encode("emoji name"), mime: "text/plain", name: `${"a".repeat(119)}\u{1F600}.txt` },
+  "lone.txt": { bytes: new TextEncoder().encode("lone surrogate"), mime: "text/plain", name: "bad\uD800name.txt" },
   "page.html": { bytes: new TextEncoder().encode("<script>alert(1)</script>"), mime: "text/html", name: "page.html" },
 };
 

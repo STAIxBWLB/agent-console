@@ -260,6 +260,19 @@ describe("plugin assets", () => {
     expect(text.headers.get("content-disposition")).toContain('filename="notes _x_.txt"');
   });
 
+  test("a name cut at 120 inside a surrogate pair, or with a lone surrogate, still gets a valid header", async () => {
+    const { server } = await boot();
+    const cookie = await login(server);
+    const emoji = await get(server, "/p/demo/asset?id=emoji.txt", cookie);
+    expect(emoji.status).toBe(200);
+    const header = emoji.headers.get("content-disposition")!;
+    expect(header).toContain(`filename="${"a".repeat(119)}_"`);
+    expect(header).toContain(`filename*=UTF-8''${"a".repeat(119)}%F0%9F%98%80`);
+    const lone = await get(server, "/p/demo/asset?id=lone.txt", cookie);
+    expect(lone.status).toBe(200);
+    expect(lone.headers.get("content-disposition")).toContain("filename*=UTF-8''bad%EF%BF%BDname.txt");
+  });
+
   test("SVG is an attachment only and disallowed types are refused", async () => {
     const { server } = await boot();
     const cookie = await login(server);

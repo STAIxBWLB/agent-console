@@ -49,7 +49,9 @@ const ASSET_INLINE = new Set(["application/pdf", "image/png", "image/jpeg", "tex
 // Assets may be framed by the shell (PDF viewer), never by another origin, and load nothing themselves.
 const ASSET_CSP = "default-src 'none'; frame-ancestors 'self'";
 const ASSET_ID_MAX = 512;
-const fileName = (name: string) => name.replace(/[^A-Za-z0-9._ -]/g, "_").slice(0, 120) || "asset";
+// Cut by code points, never inside a surrogate pair, so encodeURIComponent cannot throw on the result.
+const codePoints = (name: string, max: number) => Array.from(name).slice(0, max).join("");
+const fileName = (name: string) => codePoints(name.replace(/[^A-Za-z0-9._ -]/gu, "_"), 120) || "asset";
 const HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -148,7 +150,7 @@ export function startServer(options: ServerOptions) {
     if (!ASSET_TYPES.has(mime)) { record(entry.tool, "asset", new Error(`type ${mime.slice(0, 60)} is not allowed`)); return reject(415, `${entry.tool} sent a type the console does not serve`); }
     if (result.bytes.byteLength > assetMaxBytes) { record(entry.tool, "asset", new Error(`${result.bytes.byteLength} bytes is over the ${assetMaxBytes} byte limit`)); return reject(413, "asset is larger than the console serves"); }
     const name = fileName(result.name);
-    const disposition = `${ASSET_INLINE.has(mime) ? "inline" : "attachment"}; filename="${name}"; filename*=UTF-8''${encodeURIComponent(result.name.slice(0, 120))}`;
+    const disposition = `${ASSET_INLINE.has(mime) ? "inline" : "attachment"}; filename="${name}"; filename*=UTF-8''${encodeURIComponent(codePoints(result.name, 120).toWellFormed())}`;
     const type = mime.startsWith("text/") ? `${mime}; charset=utf-8` : mime;
     return new Response(new Uint8Array(result.bytes), { headers: { ...HEADERS, "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": ASSET_CSP, "Content-Type": type, "Content-Disposition": disposition, "Content-Length": String(result.bytes.byteLength) } });
   }
