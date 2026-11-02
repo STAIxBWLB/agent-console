@@ -183,6 +183,11 @@ Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/c
 | `notice(text, tone?)` | A status notice. |
 | `form(fields, submit, onSubmit)` | A labeled form; fields are `{name, label, required?, value?}`, submit is `{label, primary?}`, and the callback receives string values by field name. |
 | `detail(options)` | The shared detail template: kind/title/state header, whose move, actions, summary, provenance, collapsible sections and mono footer. |
+| `table({columns, rows, caption?, sortable?})` | A table with text cells. A column is a `TableColumn`: `{key, label, align?: "start" \| "end", format?: "text" \| "number" \| "percent"}`. Header buttons sort stably (ascending, then descending) and set `aria-sort`; `sortable: false` turns this off. |
+| `bars({items, max?, caption})` | Horizontal SVG bars; items are `{label, value, target?}` and `target` draws a marker. `max` defaults to the largest value or target. |
+| `spark({values, caption})` | A small SVG line with a low/high/last summary. |
+
+Table and charts are built by the shell from attributes and CSS classes, so they need no CSP change. Each chart has the caption as its accessible name and a text equivalent: bars show each value (and target) as text, and spark carries a visually hidden list of values. Inputs are bounded: 500 rows and 12 columns per table, 50 bar items and the last 365 spark points. Larger input is cut and a `ui-notice` states how much is shown. `tableColumnProblems(columns)` from `@staix/agent-console/conformance` checks a column list.
 
 `h` accepts these tags: `div`, `span`, `p`, `strong`, `em`, `small`, `code`, `pre`, `section`, `article`, `header`, `footer`, `h1`, `h2`, `h3`, `h4`, `ul`, `ol`, `li`, `dl`, `dt`, `dd`, `button`, `input`, `textarea`, `select`, `option`, `form`, `label`, `fieldset`, `legend`, `details`, `summary`, `time`, `hr`, `br`.
 
@@ -219,6 +224,7 @@ Panels may use these classes. Modifiers apply only with their base class:
 - Controls and status: `btn` with `primary` or `danger`; `chip` with `ok`, `warn`, `err` or `accent`; `notice`; `ui-notice` with `ok`, `warn` or `err`.
 - Containers and text: `empty`, `card`, `mono`, `ui-form`, `ui-field`.
 - Details: `ui-detail`, `ui-detail-head`, `ui-detail-kind`, `ui-detail-move`, `ui-detail-actions`, `ui-detail-summary`, `ui-provenance`, `ui-detail-section`, `ui-detail-body`, `ui-detail-footer`.
+- Tables and charts: `ui-table-block`, `ui-table-wrap`, `ui-table`, `ui-sort`, `ui-chart`, `ui-bars`, `ui-bar`, `ui-bar-label`, `ui-bar-value`, `ui-bar-track`, `ui-bar-fill`, `ui-bar-target`, `ui-spark`, `ui-spark-summary`, `ui-spark-line`, `ui-sr` (visually hidden).
 
 The public CSS tokens are:
 

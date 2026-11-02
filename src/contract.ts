@@ -124,6 +124,9 @@ export interface SpaceScene {
   links?: { kind: "message" | "overlap" | "conflict" | "cohort"; from: string; to: string; label?: string; at?: string }[];
 }
 
+/** A ui.table column. Cells render as text; `number` and `percent` format numeric cells. */
+export interface TableColumn { key: string; label: string; align?: "start" | "end"; format?: "text" | "number" | "percent" }
+
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
 export interface ConsoleUi {
   h(tag: string, props?: Record<string, unknown>, ...kids: (Node | string | null | false)[]): HTMLElement;
@@ -138,6 +141,12 @@ export interface ConsoleUi {
     actions?: HTMLElement[]; summary?: string; provenance?: { label: string; value: string; at?: string }[];
     sections?: { title: string; body: Node | string; open?: boolean }[]; footer?: string[];
   }): HTMLElement;
+  /** At most 500 rows and 12 columns; extra input is cut with a notice. Sortable unless `sortable: false`. */
+  table(o: { columns: TableColumn[]; rows: Record<string, string | number>[]; caption?: string; sortable?: boolean }): HTMLElement;
+  /** Horizontal bars with an optional target marker per item; at most 50 items. */
+  bars(o: { items: { label: string; value: number; target?: number }[]; max?: number; caption: string }): HTMLElement;
+  /** A small line of the last 365 values at most. */
+  spark(o: { values: number[]; caption: string }): HTMLElement;
 }
 
 /** Browser-side host each panel module receives. Declared for panel authors; the shell implements it. */

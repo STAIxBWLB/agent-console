@@ -74,7 +74,12 @@ function fixturePanel(host) {
     status.dataset.uiCheck = "status-only";
     const form = ui.form([{ name: "reason", label: "Reason for this proposed update", required: true }], { label: "Save review reason", primary: true }, () => host.toast("Fixture reason saved"));
     form.dataset.uiCheck = "form";
-    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form);
+    const metrics = ui.h("section", { "data-ui-check": "metrics" },
+      ui.table({ caption: "Weights by holding with drift from target", columns: [{ key: "name", label: "Holding" }, { key: "current", label: "Current", align: "end", format: "percent" }, { key: "target", label: "Target", align: "end", format: "percent" }, { key: "drift", label: "Drift", align: "end", format: "number" }],
+        rows: [{ name: "Long-duration government bonds", current: 38.5, target: 40, drift: -1.5 }, { name: "Equities", current: 51.2, target: 50, drift: 1.2 }, { name: "Cash", current: 10.3, target: 10, drift: 0.3 }] }),
+      ui.bars({ caption: "Current versus target weight (%)", max: 100, items: [{ label: "Long-duration government bonds", value: 38.5, target: 40 }, { label: "Equities", value: 51.2, target: 50 }, { label: "Cash", value: 10.3, target: 10 }] }),
+      ui.spark({ caption: "Daily usage", values: [3, 5, 4, 8, 6, 9, 12, 10, 14, 13] }));
+    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics);
   });
   return { show(id, params) { panel = id; selected = params?.id; }, hide() {}, destroy() { mount.remove(); } };
 }
@@ -502,6 +507,7 @@ async function runScenario(ticket, scenario, fallback = false) {
     await page.keyboard.type("jk");
     const typingFinding = await input.evaluate((el) => el.value === "jk" && document.activeElement === el ? [] : [{ kind: "typing-shortcut", detail: "Panel row shortcuts intercepted form typing" }]);
     await capture(page, scenario, "panel-form", typingFinding);
+    await capture(page, scenario, "panel-metrics", await checkMetrics(page));
     await page.evaluate(() => { location.hash = "#/local/demo/archive"; });
     await page.locator("#tabs .tab:last-child[aria-selected='true']").waitFor();
     await settle(page);
@@ -514,6 +520,39 @@ async function runScenario(ticket, scenario, fallback = false) {
     report.findings.push(...errors.map((error) => ({ capture: `${scenario.width}-${scenario.theme}-${scenario.textPercent}`, ...error })));
     await context.close();
   }
+}
+
+/** Table and chart kit checks: keyboard sort, accessible names, text equivalents, token colors and no overflow. */
+async function checkMetrics(page) {
+  const section = page.locator("[data-ui-check='metrics']");
+  await section.scrollIntoViewIfNeeded();
+  const sort = section.locator(".ui-table thead th").nth(1).locator("button");
+  await sort.focus();
+  await page.keyboard.press("Enter");
+  await settle(page);
+  return section.evaluate((root) => {
+    const findings = [];
+    const add = (kind, detail) => findings.push({ kind, detail });
+    const th = root.querySelectorAll(".ui-table thead th")[1];
+    if (th?.getAttribute("aria-sort") !== "ascending") add("table-sort", "Enter on a header button did not sort ascending");
+    const first = root.querySelector(".ui-table tbody tr th")?.textContent;
+    if (first !== "Cash") add("table-sort", `First row after sort is ${first}`);
+    for (const fig of root.querySelectorAll(".ui-chart")) {
+      if (!fig.getAttribute("aria-label")) add("chart-name", "Chart has no accessible name");
+      for (const svg of fig.querySelectorAll("svg")) if (svg.getAttribute("aria-hidden") !== "true") add("chart-svg", "Chart SVG is not hidden from assistive tech");
+    }
+    const values = [...root.querySelectorAll(".ui-bar-value")].map((n) => n.textContent);
+    if (values.length !== 3 || !values[0]?.includes("target")) add("bars-text", `Bar text equivalents: ${values.join(" | ")}`);
+    if (root.querySelectorAll(".ui-spark .ui-sr li").length !== 10) add("spark-text", "Spark has no hidden value list");
+    const fill = getComputedStyle(root.querySelector(".ui-bar-fill")).fill;
+    const stroke = getComputedStyle(root.querySelector(".ui-spark-line")).stroke;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--acon-accent").trim();
+    if (!fill || fill === "none" || fill === "rgb(0, 0, 0)" || stroke === "none") add("chart-color", `Chart colors not from tokens (fill ${fill}, stroke ${stroke}, accent ${accent})`);
+    if (root.querySelector("[style]")) add("inline-style", "Kit output carries a style attribute");
+    const width = root.getBoundingClientRect().width;
+    for (const el of root.querySelectorAll(".ui-bars, .ui-spark-svg, .ui-table-wrap")) if (el.getBoundingClientRect().width > width + 1) add("chart-overflow", `${el.className} wider than its panel`);
+    return findings;
+  });
 }
 
 /** One real-motion context; only public fixture facts in intercepted snapshot responses change. */

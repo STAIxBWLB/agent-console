@@ -36,3 +36,15 @@ test("the registered suite fails a plugin that re-stamps reused item objects", (
   expect(output).toMatch(/\(fail\)[^\n]*inbox at is stable across snapshots/);
   expect(output).toContain(" 1 fail");
 }, 30_000);
+
+test("tableColumnProblems accepts the demo metrics columns and names each bad column", async () => {
+  const { tableColumnProblems } = await import("../src/conformance.ts");
+  const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
+  const metrics = (await provider.snapshot({ after: 0, panel: "metrics" })).metrics as { table: { columns: unknown } };
+  expect(tableColumnProblems(metrics.table.columns)).toEqual([]);
+  expect(tableColumnProblems([{ key: "a", label: "A", align: "middle" }, { key: "a", label: "", format: "money" }])).toEqual([
+    "columns[0].align must be start or end", "columns[1].key a repeats", "columns[1].label must be a non-empty string", "columns[1].format must be text, number or percent",
+  ]);
+  expect(tableColumnProblems(Array.from({ length: 13 }, (_, i) => ({ key: `k${i}`, label: "L" })))).toEqual(["columns: 13 exceeds 12; ui.table shows the first 12"]);
+  expect(tableColumnProblems("x")).toEqual(["columns must be an array"]);
+});

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem } from "../../src/contract.ts";
+import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem, TableColumn } from "../../src/contract.ts";
 
 /** Test fixture: an in-memory tool with an inbox, search, a reversible verb and a destructive verb. */
 interface Note { id: string; title: string; status: "open" | "accepted" | "rejected"; waited: number }
@@ -14,6 +14,15 @@ const demoPanel = (host: ConsoleHost) => {
   let selected: string | undefined;
   host.onSnapshot((snap) => {
     list.dataset.snaps = String(++snaps);
+    if (panel === "metrics") {
+      const m = snap.metrics as { table: { columns: TableColumn[]; rows: Record<string, string | number>[] }; bars: { label: string; value: number; target?: number }[]; spark: number[] } | undefined;
+      list.replaceChildren(...(m ? [
+        ui.table({ caption: "Weights by holding", columns: m.table.columns, rows: m.table.rows }),
+        ui.bars({ caption: "Current versus target weight (%)", items: m.bars, max: 100 }),
+        ui.spark({ caption: "Daily usage", values: m.spark }),
+      ] : [ui.empty("No metrics")]));
+      return;
+    }
     const notes = (snap.notes ?? []) as Note[];
     const note = notes.find((n) => n.id === selected);
     const remove = (n: Note) => ui.h("button", { type: "button", class: "btn danger", text: "Delete...", onclick: () => host.action({ action: "delete", id: n.id }) });
@@ -30,6 +39,22 @@ const demoPanel = (host: ConsoleHost) => {
   return { show(id: string, params?: Record<string, string>) { panel = id; selected = params?.id; list.dataset.panel = panel; }, hide() {}, destroy() { list.remove(); } };
 };
 const PANEL_JS = `export default ${demoPanel.toString()};`;
+
+const METRICS = {
+  table: {
+    columns: [
+      { key: "name", label: "Holding" }, { key: "current", label: "Current", align: "end", format: "percent" },
+      { key: "target", label: "Target", align: "end", format: "percent" }, { key: "drift", label: "Drift", align: "end", format: "number" },
+    ] satisfies TableColumn[],
+    rows: [
+      { name: "Bonds <b>", current: 38.5, target: 40, drift: -1.5 },
+      { name: "Equities", current: 51.2, target: 50, drift: 1.2 },
+      { name: "Cash", current: 10.3, target: 10, drift: 0.3 },
+    ],
+  },
+  bars: [{ label: "Bonds", value: 38.5, target: 40 }, { label: "Equities", value: 51.2, target: 50 }, { label: "Cash", value: 10.3, target: 10 }],
+  spark: [3, 5, 4, 8, 6, 9, 12, 10, 14, 13],
+};
 
 export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];
@@ -63,7 +88,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
       version: "0.0.1",
       title: "Demo",
       icon: "vault",
-      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }],
+      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }],
       pollMs: 5000,
       commands: [
         { id: "reopen-n1", title: "Reopen the first note", hint: "restore n1", action: "restore", input: { id: "n1" } },
@@ -87,6 +112,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
               cards, links: [{ kind: "message", from: "claude", to: "codex", label: "Review handoff", at: new Date(opened).toISOString() }],
             }, cursor: 1 };
           }
+          if (input.panel === "metrics") return { metrics: METRICS, cursor: 1 };
           if (input.panel === "inbox") return { items: notes.filter((n) => n.status === "open").map(item) };
           if (input.panel === "search") {
             const q = String(input.q ?? "").toLowerCase();

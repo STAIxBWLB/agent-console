@@ -44,6 +44,24 @@ export function stableAtProblems(first: unknown[], second: unknown[]): string[] 
   return out;
 }
 
+/** Problems in a ui.table column list; panels and #29-style payloads can assert this is empty. */
+export function tableColumnProblems(columns: unknown): string[] {
+  if (!Array.isArray(columns)) return ["columns must be an array"];
+  const out: string[] = [];
+  if (columns.length > 12) out.push(`columns: ${columns.length} exceeds 12; ui.table shows the first 12`);
+  const keys = new Set<unknown>();
+  columns.forEach((c, i) => {
+    const col = (c ?? {}) as Record<string, unknown>;
+    if (!isText(col.key)) out.push(`columns[${i}].key must be a non-empty string`);
+    else if (keys.has(col.key)) out.push(`columns[${i}].key ${String(col.key)} repeats`);
+    keys.add(col.key);
+    if (!isText(col.label)) out.push(`columns[${i}].label must be a non-empty string`);
+    if (col.align !== undefined && col.align !== "start" && col.align !== "end") out.push(`columns[${i}].align must be start or end`);
+    if (col.format !== undefined && !["text", "number", "percent"].includes(col.format as string)) out.push(`columns[${i}].format must be text, number or percent`);
+  });
+  return out;
+}
+
 /** Registers the api 1 conformance suite for a plugin under bun:test. */
 export function registerConsoleConformance(plugin: ConsolePlugin, options: ConformanceOptions = {}): void {
   const tool = plugin.manifest?.tool ?? "plugin";
