@@ -125,6 +125,10 @@ acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.co
 - The verified identity (the Access `sub`, or `bearer`) takes the place of the ticket session. Confirm tokens for destructive actions are bound to it, so a preview confirmed by another identity is refused. The page skips the ticket step because `/session` answers `{ok: true, mode: "serve"}`.
 - CSP, headers, plugins, the confirm path and the 32 KB body limit are the same as under `acon ui`.
 
+### Versioned install
+
+From a checkout, `bun scripts/install-release.ts [--home DIR] [--json]` copies the committed package files (not uncommitted changes) into `$AGENTHUB_HOME/console/releases/<version>-<commit>/`, then points `console/current` at it by atomic rename and keeps `console/previous`. An existing release is reused, never changed. Start the resident console from `console/current/bin/acon.js`: an install leaves a running process on the release it started from, and a restart switches it. Roll back by pointing `current` at `previous` and restarting.
+
 ### Docker
 
 The `Dockerfile` builds a pinned `oven/bun` image that runs `acon serve --host 0.0.0.0` as the non-root `bun` user. `AGENTHUB_HOME=/data` is a volume holding plugins, pets and asset packs, and a `HEALTHCHECK` probes `/healthz`. The image holds no credentials:
@@ -157,7 +161,12 @@ A tool registers by writing `$AGENTHUB_HOME/console/plugins/<tool>.json` (defaul
 { "api": 1, "tool": "vmem", "module": "/abs/path/to/src/ui/plugin.ts", "sha256": "<sha256 of that file>" }
 ```
 
-The module's default export is a `ConsolePlugin` (`@staix/agent-console/contract`): a manifest with panels and capabilities, and `open()` returning a provider with `assets.js` (an ES module), optional `assets.css`, `snapshot()` and `action()`. The console refuses a module whose hash changed until the tool's setup runs again.
+The module's default export is a `ConsolePlugin` (`@staix/agent-console/contract`): a manifest with panels and capabilities, and `open()` returning a provider with `assets.js` (an ES module), optional `assets.css`, `snapshot()` and `action()`. The console refuses a module whose hash changed until the tool's setup runs again. The hash covers the entry file only; files it imports are not hashed, but the import scan refuses an import outside the plugin's package.
+
+Versions and upgrades (#26):
+- API range: `"apiMin"` and `"apiMax"` (in the registration file and in the manifest) declare the console apis a plugin works with; `"api"` alone means that one api. This console speaks api 1. A plugin whose range does not overlap is listed as invalid with the ranges named.
+- Versioned registrations: a tool may write `plugins/<tool>@<version>.json` (semantic version) beside `plugins/<tool>.json`. Per tool the newest one that verifies and loads is used; if it fails to load, the next one is tried; the others are listed as `superseded`.
+- No restart needed for a new path: the console re-scans the directory at most every 5 s while a page is open. A module at a path not loaded before (a versioned install such as `releases/<version>/`) serves pages opened after it; an open page keeps the load it started with (System says when a newer one is registered), and every load stays in memory until the console restarts. A module from a package the console already imported from (changed in place, or a file first loaded as a dependency) is not hot-loaded, because the runtime keeps one module per path: the current load keeps serving and System says to restart. If a registration turns stale or disappears, the current load keeps serving and System records the problem once.
 
 - Inbox: declare `capabilities.inbox` and answer `snapshot({panel: "inbox"})` with `{items: InboxItem[]}`. Verbs run through `action({action: verb.id, id})`. Keep each item's `at` the same across snapshots: snooze and oldest-first order key on it, and conformance checks it.
 - Reasons: a verb with `reason: "optional"` or `"required"` makes the console ask for a reason inline and send it as `reason` in the action input; a required reason cannot be sent empty.

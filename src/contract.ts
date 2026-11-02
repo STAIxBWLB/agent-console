@@ -5,12 +5,18 @@
  */
 
 export const CONSOLE_API = 1 as const;
+/** The api range this console speaks (#26). A plugin loads when its [apiMin, apiMax] overlaps it. */
+export const CONSOLE_API_MIN = 1;
+export const CONSOLE_API_MAX = 1;
 export const TOOL_ID = /^[a-z][a-z0-9-]{1,15}$/;
 export const PANEL_ID = /^[a-z][a-z0-9-]{0,31}$/;
 export const ACTION_ID = /^[a-z][a-z0-9_.:-]{0,63}$/;
 
 export interface ConsolePanelManifest {
   api: 1;
+  /** The api range the plugin works with; each defaults to `api` (#26). */
+  apiMin?: number;
+  apiMax?: number;
   tool: string;
   version: string;
   title: string;

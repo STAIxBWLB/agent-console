@@ -10,6 +10,11 @@ import type { ServeOptions } from "./serve.ts";
 
 export interface ServerOptions {
   plugins: PluginEntry[];
+  /**
+   * Re-scans the plugin directory (#26), reusing the given ready entries. `/tools` calls it at most every 5 s; a newly
+   * registered version serves pages loaded after it, while open pages keep the ref they started with.
+   */
+  reload?: (previous: PluginEntry[]) => Promise<PluginEntry[]>;
   version: string;
   pluginsDir: string;
   pluginsError?: string;
@@ -38,6 +43,7 @@ const CONFIRM_MS = 60_000;
 // The process exits within 5 minutes of the last request: 4 min 55 s idle plus at most 5 s of provider close().
 const IDLE_MS = 5 * 60_000 - 5_000;
 const CALL_MS = 30_000;
+const RESCAN_MS = 5_000;
 const LIMIT = 64;
 const ERRORS = 50;
 const RESERVED = ["confirmed", "fingerprint"];
@@ -75,7 +81,38 @@ export function startServer(options: ServerOptions) {
   const files = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
   // Fixed vendored module allowlist, never a request-derived filesystem path.
   for (const name of ["three.module.js", "three.core.js", "GLTFLoader.js", "BufferGeometryUtils.js", "SkeletonUtils.js"]) files[`/vendor/${name}`] = { body: asset(`vendor/${name}`), type: "text/javascript; charset=utf-8" };
-  const tools = new Map(options.plugins.filter((p) => p.status === "ready").map((p) => [p.tool, p]));
+  // tools: the current load per tool, for new pages. refs: every load since start, so an open page keeps its version.
+  // A tool whose registration later goes stale or disappears keeps its current load until the console restarts.
+  const tools = new Map<string, PluginEntry>();
+  const refs = new Map<string, PluginEntry>();
+  let entries: PluginEntry[] = [];
+  const adopt = (list: PluginEntry[]) => {
+    for (const p of list) if (p.status === "ready") { refs.set(p.ref ?? p.tool, p); tools.set(p.tool, p); }
+    entries = list;
+  };
+  adopt(options.plugins);
+  const reported = new Set<string>();
+  let scannedAt = now();
+  let scanning: Promise<void> | undefined;
+  const refresh = () => {
+    if (!options.reload || scanning || now() - scannedAt < RESCAN_MS) return scanning;
+    scannedAt = now();
+    return scanning = options.reload([...refs.values()]).then((list) => {
+      for (const p of list) {
+        // A tool that still serves an earlier load would hide this problem in the tool list; say it in System once.
+        if (p.status === "ready" || p.status === "superseded" || !tools.has(p.tool)) continue;
+        const key = `${p.file}\n${p.reason}`;
+        if (!reported.has(key)) { reported.add(key); record(p.tool, "plugin re-scan", new Error(`${p.status}: ${p.reason}; the current load keeps serving`)); }
+      }
+      // A deleted registration: the load keeps serving this process, but it will not load after a restart.
+      for (const tool of tools.keys()) {
+        const key = `${tool}\nremoved`;
+        if (list.some((p) => p.tool === tool)) reported.delete(key);
+        else if (!reported.has(key)) { reported.add(key); record(tool, "plugin re-scan", new Error(`no registration is left in ${options.pluginsDir}; the current load keeps serving until acon restarts and will not load after that; run \`${tool} setup\` to register it again`)); }
+      }
+      adopt(list);
+    }, (error) => record("acon", "plugin re-scan", error)).finally(() => { scanning = undefined; });
+  };
   const tickets = new Map<string, { expires: number }>();
   const sessions = new Map<string, { expires: number }>();
   const confirms = new Map<string, { expires: number; session: string; tool: string; input: string; fingerprint: string }>();
@@ -101,8 +138,10 @@ export function startServer(options: ServerOptions) {
   const cookieOf = (req: Request) => req.headers.get("cookie")?.split(";").map((v) => v.trim()).find((v) => v.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
   const call = <T>(tool: string, where: string, run: () => Promise<T>) => withTimeout(run(), callMs, `${tool} ${where}`);
 
-  const toolList = () => options.plugins.map((p) => p.status === "ready" && p.manifest
-    ? { tool: p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, commands: p.manifest.commands ?? [], capabilities: p.manifest.capabilities ?? {} }
+  const toolList = () => [...new Set([...entries.map((p) => p.tool), ...tools.keys()])]
+    .map((name) => tools.get(name) ?? entries.find((p) => p.tool === name && p.status !== "superseded") ?? entries.find((p) => p.tool === name)!)
+    .map((p) => p.status === "ready" && p.manifest
+    ? { tool: p.tool, ref: p.ref ?? p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, commands: p.manifest.commands ?? [], capabilities: p.manifest.capabilities ?? {} }
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
   async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {
@@ -167,7 +206,7 @@ export function startServer(options: ServerOptions) {
       prune(confirms);
       const bound = typeof confirmToken === "string" ? confirms.get(confirmToken) : undefined;
       if (typeof confirmToken === "string") confirms.delete(confirmToken);
-      if (!bound || bound.session !== session || bound.tool !== entry.tool || bound.input !== canonical(rest)) {
+      if (!bound || bound.session !== session || bound.tool !== (entry.ref ?? entry.tool) || bound.input !== canonical(rest)) {
         return reject(409, "this preview expired or was already used; review it again", { stale: true });
       }
       request = { ...rest, confirmed: true, fingerprint: bound.fingerprint };
@@ -196,7 +235,7 @@ export function startServer(options: ServerOptions) {
       prune(confirms);
       cap(confirms);
       const token = secret();
-      confirms.set(token, { expires: now() + CONFIRM_MS, session, tool: entry.tool, input: canonical(rest), fingerprint: result.fingerprint });
+      confirms.set(token, { expires: now() + CONFIRM_MS, session, tool: entry.ref ?? entry.tool, input: canonical(rest), fingerprint: result.fingerprint });
       return json({ ...result, confirmToken: token, validMs: CONFIRM_MS, ...(confirmToken !== undefined ? { changed: true } : {}) });
     }
     return json(result);
@@ -228,14 +267,19 @@ export function startServer(options: ServerOptions) {
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
       const packedImage = /^\/assets\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
       const packedModel = /^\/models\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
-      const plugin = /^\/p\/([a-z][a-z0-9-]{1,15})\/(panel\.js|panel\.css|snapshot|action|asset)$/.exec(path);
+      const plugin = /^\/p\/([a-z][a-z0-9-]{1,15}(?:@[0-9a-f]{12})?)\/(panel\.js|panel\.css|snapshot|action|asset)$/.exec(path);
+      // `<tool>` means the current load; `<tool>@<hash>` the load a page started with, kept until restart.
+      const pluginEntry = () => plugin![1]!.includes("@") ? refs.get(plugin![1]!) : tools.get(plugin![1]!);
+      const unknownTool = () => plugin![1]!.includes("@") && tools.has(plugin![1]!.split("@")[0]!)
+        ? reject(409, "this page uses a plugin version the console no longer has; reload the page", { reload: true })
+        : reject(404, "unknown tool");
       if (req.method === "GET") {
         const file = files[path];
         if (file) return new Response(file.body, { headers: { ...HEADERS, "Content-Type": file.type } });
         if (plugin && (plugin[2] === "panel.js" || plugin[2] === "panel.css")) {
           if (!live) return reject(401, "session expired or missing; run acon ui");
-          const entry = tools.get(plugin[1]!);
-          if (!entry) return reject(404, "unknown tool");
+          const entry = pluginEntry();
+          if (!entry) return unknownTool();
           const js = plugin[2] === "panel.js";
           return new Response(js ? entry.provider!.assets.js : entry.provider!.assets.css ?? "", { headers: { ...HEADERS, "Content-Type": js ? "text/javascript; charset=utf-8" : "text/css; charset=utf-8" } });
         }
@@ -244,8 +288,8 @@ export function startServer(options: ServerOptions) {
           // Same-origin fetches and frames only; the SameSite=Strict cookie already keeps cross-site requests out.
           const site = req.headers.get("sec-fetch-site");
           if (site !== null && site !== "same-origin" && site !== "none") return reject(403, "cross-site asset request");
-          const entry = tools.get(plugin[1]!);
-          if (!entry) return reject(404, "unknown tool");
+          const entry = pluginEntry();
+          if (!entry) return unknownTool();
           return pluginAsset(entry, url.searchParams.get("id"));
         }
         if (pet) {
@@ -304,10 +348,11 @@ export function startServer(options: ServerOptions) {
       }
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
+        await refresh();
         return json({ ok: true, node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images, models }) => ({ id, name, version, tile, images: Object.keys(images), ...(models ? { models: Object.keys(models) } : {}) })), errors });
       }
-      const entry = tools.get(plugin![1]!);
-      if (!entry) return reject(404, "unknown tool");
+      const entry = pluginEntry();
+      if (!entry) return unknownTool();
       return plugin![2] === "snapshot" ? snapshot(entry, input) : action(entry, cookie!, input);
     },
     error(error) {
@@ -336,7 +381,7 @@ export function startServer(options: ServerOptions) {
     confirms.clear();
     server.stop(true);
     // Each provider gets 5 s to close; a hanging one never keeps the process alive.
-    await Promise.all([...tools.values()].map((entry) => withTimeout(Promise.resolve().then(() => entry.provider!.close?.()), 5_000, `${entry.tool} close`)
+    await Promise.all([...refs.values()].map((entry) => withTimeout(Promise.resolve().then(() => entry.provider!.close?.()), 5_000, `${entry.tool} close`)
       .catch((error) => log(`${entry.tool} close failed: ${error instanceof Error ? error.message : String(error)}`))));
   };
   /** True when no request arrived for idleMs; then the server stops and onIdle runs. */

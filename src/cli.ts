@@ -54,7 +54,7 @@ function parse(argv: string[]): { command: string; flags: Set<string>; args: str
   return { command, flags, args, values };
 }
 
-const summary = (p: PluginEntry) => ({ tool: p.tool, status: p.status, ...(p.reason ? { reason: p.reason } : {}), file: p.file });
+const summary = (p: PluginEntry) => ({ tool: p.tool, ...(p.version ? { version: p.version } : {}), status: p.status, ...(p.reason ? { reason: p.reason } : {}), file: p.file });
 
 function openBrowser(url: string): void {
   const argv = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
@@ -109,7 +109,7 @@ export async function main(argv: string[]): Promise<number> {
     else {
       if (scan.error) console.error(`acon: ${scan.error}`);
       if (!scan.entries.length) console.log(`No plugins registered in ${scan.dir}.`);
-      for (const p of scan.entries) console.log(`${p.tool.padEnd(16)} ${p.status.padEnd(9)} ${p.reason ?? p.module ?? ""}`);
+      for (const p of scan.entries) console.log(`${`${p.tool}${p.version ? `@${p.version}` : ""}`.padEnd(24)} ${p.status.padEnd(9)} ${p.reason ?? p.module ?? ""}`);
     }
     return scan.error || scan.entries.some((p) => p.status !== "verified") ? 1 : 0;
   }
@@ -119,6 +119,7 @@ export async function main(argv: string[]): Promise<number> {
   const { packs: assetPacks, problems: assetProblems } = loadAssetPacks([join(home, "console", "assets")]);
   const server = startServer({
     plugins,
+    reload: (previous) => loadPlugins(scanPlugins(home), { home, log }, previous),
     pets,
     petProblems,
     assetPacks,

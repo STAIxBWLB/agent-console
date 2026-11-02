@@ -324,3 +324,80 @@ describe("plugin assets", () => {
     expect(csp).toContain("frame-ancestors 'none'");
   });
 });
+
+describe("staged plugin activation (#26)", () => {
+  async function versions() {
+    const make = async (version: string, ref: string) => {
+      const plugin = createDemoPlugin();
+      const provider = await plugin.open({ home: "/tmp", log: () => {} });
+      return { tool: "demo", file: `demo@${version}.json`, version, status: "ready", ref, manifest: { ...plugin.manifest, version }, provider } as PluginEntry;
+    };
+    return { v1: await make("1.0.0", "demo@aaaaaaaaaaaa"), v2: await make("2.0.0", "demo@bbbbbbbbbbbb") };
+  }
+
+  test("a version registered while running serves new pages; an open page keeps its ref until restart", async () => {
+    const { v1, v2 } = await versions();
+    let clock = 1_000_000;
+    let next: PluginEntry[] = [v1];
+    const server = startServer({ plugins: [v1], reload: async () => next, now: () => clock, version: "t", pluginsDir: "/tmp/plugins", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    const refOf = async () => ((await (await post(server, "/tools", {}, cookie)).json()) as { tools: { ref: string; version: string }[] }).tools[0]!;
+    expect(await refOf()).toEqual(expect.objectContaining({ ref: v1.ref, version: "1.0.0" }));
+    next = [v2, { ...v1, status: "superseded", provider: undefined }];
+    expect((await refOf()).ref).toBe(v1.ref!); // re-scan waits 5 s
+    clock += 5_000;
+    expect(await refOf()).toEqual(expect.objectContaining({ ref: v2.ref, version: "2.0.0" }));
+    // Both loads answer: the old page by its ref, a new page by the tool or the new ref.
+    for (const id of [v1.ref!, v2.ref!, "demo"]) expect((await post(server, `/p/${id}/snapshot`, { panel: "notes" }, cookie)).status).toBe(200);
+    expect((await fetch(`${server.origin}/p/${v1.ref}/panel.js`, { headers: { Cookie: cookie } })).status).toBe(200);
+    // Assets follow the page's load too.
+    expect((await fetch(`${server.origin}/p/${v1.ref}/asset?id=figure.png`, { headers: { Cookie: cookie } })).status).toBe(200);
+    // A ref this process never loaded (a page from before a restart) is told to reload.
+    const gone = await post(server, "/p/demo@cccccccccccc/snapshot", { panel: "notes" }, cookie);
+    expect(gone.status).toBe(409);
+    expect(await gone.json()).toEqual(expect.objectContaining({ reload: true }));
+  });
+
+  test("a registration that goes stale keeps the earlier load serving and is reported once", async () => {
+    const { v1 } = await versions();
+    let clock = 1_000_000;
+    const server = startServer({ plugins: [v1], reload: async () => [{ tool: "demo", file: "demo@1.0.0.json", status: "stale", reason: "module changed since setup" }], now: () => clock, version: "t", pluginsDir: "/tmp/plugins", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    for (let i = 0; i < 2; i++) { clock += 5_000; await post(server, "/tools", {}, cookie); }
+    const body = (await (await post(server, "/tools", {}, cookie)).json()) as { tools: { status: string }[]; errors: { where: string }[] };
+    expect(body.tools.map((t) => t.status)).toEqual(["ready"]);
+    expect(body.errors.filter((e) => e.where === "plugin re-scan")).toHaveLength(1);
+  });
+
+  test("a confirm token made against one version cannot be redeemed against another", async () => {
+    const { v1, v2 } = await versions();
+    let clock = 1_000_000;
+    const server = startServer({ plugins: [v1], reload: async () => [v2], now: () => clock, version: "t", pluginsDir: "/tmp/plugins", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    clock += 5_000;
+    await post(server, "/tools", {}, cookie);
+    const preview = await (await post(server, `/p/${v1.ref}/action`, { action: "delete", id: "n1" }, cookie)).json() as { confirmToken?: string };
+    expect(typeof preview.confirmToken).toBe("string");
+    const moved = await post(server, `/p/${v2.ref}/action`, { action: "delete", id: "n1", confirmToken: preview.confirmToken }, cookie);
+    expect(moved.status).toBe(409);
+    expect(await moved.json()).toEqual(expect.objectContaining({ stale: true }));
+  });
+
+  test("a registration deleted while running is reported once; the load keeps serving", async () => {
+    const { v1 } = await versions();
+    let clock = 1_000_000;
+    const server = startServer({ plugins: [v1], reload: async () => [], now: () => clock, version: "t", pluginsDir: "/tmp/plugins", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    for (let i = 0; i < 3; i++) { clock += 5_000; await post(server, "/tools", {}, cookie); }
+    const body = (await (await post(server, "/tools", {}, cookie)).json()) as { tools: { status: string }[]; errors: { where: string; message: string }[] };
+    expect(body.tools.map((t) => t.status)).toEqual(["ready"]);
+    const removed = body.errors.filter((e) => e.where === "plugin re-scan");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]!.message).toContain("will not load after that");
+  });
+});
+

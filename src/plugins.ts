@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { ACTION_ID, CONSOLE_API, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
+import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
 export const pluginDir = (home: string): string => join(home, "console", "plugins");
@@ -12,12 +12,18 @@ const MANIFEST_MAX = 64 * 1024;
 const OPEN_MS = 5_000;
 const IMPORT_MS = 5_000;
 
-export type PluginStatus = "verified" | "ready" | "stale" | "invalid" | "failed";
+export type PluginStatus = "verified" | "ready" | "stale" | "invalid" | "failed" | "superseded";
 export interface PluginEntry {
   tool: string;
   file: string;
   status: PluginStatus;
   reason?: string;
+  /** From a versioned registration file, `<tool>@<version>.json` (#26). */
+  version?: string;
+  /** The verified module hash; with the tool it names this load (`ref`), so a page keeps the code it started with. */
+  sha256?: string;
+  /** `<tool>@<12 hex of sha256(module path, module hash)>`, set when ready; plugin routes accept it in place of the tool. */
+  ref?: string;
   module?: string;
   manifest?: ConsolePanelManifest;
   provider?: ConsoleProvider;
@@ -45,9 +51,7 @@ export function replaceableBy(path: string): string | undefined {
   const problem = (where: string, info: { uid: number; mode: number }, stickyOk: boolean) =>
     info.uid !== me && info.uid !== 0 ? `${where} is owned by another user`
       : writableByOthers(info.mode) && !(stickyOk && info.mode & 0o1000) ? `${where} is writable by others` : undefined;
-  let root = dirname(entry);
-  while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
-  if (!existsSync(join(root, "package.json"))) root = dirname(entry);
+  const root = packageRoot(entry);
   for (let dir = dirname(root), prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
     const bad = problem(dir, statSync(dir), true);
     if (bad) return bad;
@@ -73,6 +77,13 @@ export function replaceableBy(path: string): string | undefined {
     if (info.isDirectory()) for (const name of readdirSync(current)) if (name !== ".git" && name !== "node_modules") stack.push(join(current, name));
   }
   return importEscapes(entry, root, verified);
+}
+
+/** The nearest directory above a resolved file that holds a package.json, else the file's own directory. */
+export function packageRoot(file: string): string {
+  let root = dirname(file);
+  while (!existsSync(join(root, "package.json")) && dirname(root) !== root) root = dirname(root);
+  return existsSync(join(root, "package.json")) ? root : dirname(file);
 }
 
 const CODE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -121,6 +132,24 @@ function importEscapes(entry: string, root: string, verified: Set<string>): stri
   return undefined;
 }
 
+const VERSION = /^\d{1,9}\.\d{1,9}\.\d{1,9}(?:[-+][0-9A-Za-z.+-]{1,40})?$/;
+const FILE = /^([a-z][a-z0-9-]{1,15})(?:@([^/]{1,64}))?\.json$/;
+
+/**
+ * Why an api declaration does not overlap the console's range, or undefined when it does (#26). `api` alone means
+ * apiMin = apiMax = api; a range lets one plugin version load in consoles that speak different apis.
+ */
+export function apiRangeProblem(m: { api?: unknown; apiMin?: unknown; apiMax?: unknown }, range = { min: CONSOLE_API_MIN, max: CONSOLE_API_MAX }): string | undefined {
+  const int = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
+  for (const key of ["api", "apiMin", "apiMax"] as const) if (m[key] !== undefined && !int(m[key])) return `${key} must be a positive integer`;
+  const min = (m.apiMin ?? m.api) as number | undefined;
+  const max = (m.apiMax ?? m.api ?? m.apiMin) as number | undefined;
+  if (min === undefined || max === undefined) return "api is required";
+  if (min > max) return `apiMin ${min} is above apiMax ${max}`;
+  if (max < range.min || min > range.max) return `unsupported api ${min === max ? min : `${min}-${max}`}; this console speaks api ${range.min === range.max ? range.min : `${range.min}-${range.max}`}`;
+  return undefined;
+}
+
 /** Reads every manifest and verifies the module hash. Nothing is imported here. */
 export function scanPlugins(home: string): Scan {
   const dir = pluginDir(home);
@@ -140,9 +169,12 @@ export function scanPlugins(home: string): Scan {
 }
 
 function readEntry(file: string): PluginEntry {
-  const tool = basename(file, ".json");
+  const named = FILE.exec(basename(file));
+  const tool = named?.[1] ?? basename(file, ".json");
+  const version = named?.[2];
   const bad = (reason: string): PluginEntry => ({ tool, file, status: "invalid", reason });
-  if (!TOOL_ID.test(tool)) return bad("file name is not a tool id");
+  if (!named || !TOOL_ID.test(tool)) return bad("file name is not <tool>.json or <tool>@<version>.json");
+  if (version !== undefined && !VERSION.test(version)) return bad("the version in the file name is not a semantic version");
   const info = lstatSync(file);
   if (!info.isFile()) return bad("manifest is not a regular file");
   if (writableByOthers(info.mode) || foreignOwner(info.uid)) return bad("manifest is writable by others");
@@ -151,9 +183,10 @@ function readEntry(file: string): PluginEntry {
   try { value = JSON.parse(readFileSync(file, "utf8")); } catch { return bad("manifest is not valid JSON"); }
   if (!value || typeof value !== "object" || Array.isArray(value)) return bad("manifest must be a JSON object");
   const m = value as Record<string, unknown>;
-  const extra = Object.keys(m).filter((k) => !["api", "tool", "module", "sha256"].includes(k));
+  const extra = Object.keys(m).filter((k) => !["api", "apiMin", "apiMax", "tool", "module", "sha256"].includes(k));
   if (extra.length) return bad(`unknown manifest key: ${extra[0]}`);
-  if (m.api !== CONSOLE_API) return bad(`unsupported api ${String(m.api)}; this console speaks api ${CONSOLE_API}`);
+  const api = apiRangeProblem(m);
+  if (api) return bad(api);
   if (m.tool !== tool) return bad("manifest tool does not match its file name");
   if (typeof m.module !== "string" || !isAbsolute(m.module) || !/\.(ts|js|mjs)$/.test(m.module)) return bad("module must be an absolute .ts, .js or .mjs path");
   if (typeof m.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(m.sha256)) return bad("sha256 must be 64 lowercase hex characters");
@@ -164,8 +197,8 @@ function readEntry(file: string): PluginEntry {
   // Hash and import the resolved path that was checked, so a symlink on the way cannot be swapped afterwards.
   const real = realpathSync(module);
   const actual = createHash("sha256").update(readFileSync(real)).digest("hex");
-  if (actual !== m.sha256) return { tool, file, module: real, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\`` };
-  return { tool, file, module: real, status: "verified" };
+  if (actual !== m.sha256) return { tool, file, version, module: real, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\`` };
+  return { tool, file, version, module: real, sha256: actual, status: "verified" };
 }
 
 /** Problems with a plugin manifest, empty when valid. Shared with the conformance suite. */
@@ -173,7 +206,8 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
   if (!manifest || typeof manifest !== "object") return ["manifest is missing"];
   const m = manifest as Partial<ConsolePanelManifest>;
   const out: string[] = [];
-  if (m.api !== CONSOLE_API) out.push("manifest.api must be 1");
+  const api = apiRangeProblem(m);
+  if (api) out.push(`manifest: ${api}`);
   if (typeof m.tool !== "string" || !TOOL_ID.test(m.tool)) out.push("manifest.tool must match ^[a-z][a-z0-9-]{1,15}$");
   else if (tool && m.tool !== tool) out.push(`manifest.tool is ${m.tool}, expected ${tool}`);
   if (typeof m.version !== "string" || !m.version) out.push("manifest.version is required");
@@ -247,30 +281,77 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, what: string): P
     .finally(() => clearTimeout(timer));
 }
 
-/** Imports verified modules and opens their providers. A failure marks that plugin failed; the others still load. */
-export async function loadPlugins(scan: Scan, ctx: ConsoleContext): Promise<PluginEntry[]> {
+/**
+ * Module paths this process has imported, with the hash verified at that import. Bun keeps one module per path for
+ * the life of the process, whether or not open() then succeeded, so this is what a later load at that path would get.
+ */
+const imported = new Map<string, string>();
+/** Package roots this process has imported from: their files, entries or dependencies, are cached by Bun as first read. */
+const importedRoots = new Set<string>();
+
+/** Newest first: versioned registrations by semantic version, then the unversioned slot. */
+const newestFirst = (a: PluginEntry, b: PluginEntry) =>
+  a.version === undefined ? (b.version === undefined ? 0 : 1) : b.version === undefined ? -1 : Bun.semver.order(b.version, a.version);
+
+/**
+ * Imports verified modules and opens their providers. Per tool the newest verified registration loads; if it fails,
+ * the next one is tried, and the rest are `superseded`. A failure marks that plugin failed; the others still load.
+ * `previous` holds earlier loads: a registration with the same file and hash reuses its provider instead of importing
+ * again, so a re-scan (#26) only imports what is new.
+ */
+export async function loadPlugins(scan: Scan, ctx: ConsoleContext, previous: PluginEntry[] = []): Promise<PluginEntry[]> {
   const out: PluginEntry[] = [];
+  // Roots imported before this pass; a first pass (console start) may load several entries from one package.
+  const before = new Set(importedRoots);
+  const candidates = new Map<string, PluginEntry[]>();
   for (const entry of scan.entries) {
     if (entry.status !== "verified" || !entry.module) { out.push(entry); continue; }
-    try {
-      // ponytail: the verified bytes are re-read by import(); only you or root can swap them (replaceableBy), and the module's own imports are not hashed.
-      const mod = await withTimeout(import(entry.module), IMPORT_MS, "import") as { default?: ConsolePlugin; plugin?: ConsolePlugin };
-      const plugin = mod.default ?? mod.plugin;
-      if (!plugin || typeof plugin.open !== "function") { out.push({ ...entry, status: "failed", reason: "module exports no console plugin" }); continue; }
-      const problems = manifestProblems(plugin.manifest, entry.tool);
-      if (problems.length) { out.push({ ...entry, status: "failed", reason: problems[0] }); continue; }
-      const provider = await withTimeout(plugin.open(ctx), OPEN_MS, "open()");
-      const pp = providerProblems(provider);
-      if (pp.length) { out.push({ ...entry, status: "failed", reason: pp[0] }); continue; }
-      // The manifest goes to the browser as JSON; a value that cannot (BigInt, cycles) fails this plugin only.
-      let manifest: ConsolePanelManifest;
-      try { manifest = JSON.parse(JSON.stringify(plugin.manifest)) as ConsolePanelManifest; }
-      catch { out.push({ ...entry, status: "failed", reason: "manifest is not JSON-serializable" }); continue; }
-      out.push({ ...entry, status: "ready", manifest, provider });
-    } catch (error) {
-      ctx.log(`${entry.tool}: load failed: ${error instanceof Error ? error.message : String(error)}`);
-      out.push({ ...entry, status: "failed", reason: "plugin failed to load; see the terminal" });
+    candidates.set(entry.tool, [...(candidates.get(entry.tool) ?? []), entry]);
+  }
+  for (const list of candidates.values()) {
+    let chosen: PluginEntry | undefined;
+    for (const entry of list.sort(newestFirst)) {
+      if (chosen) { out.push({ ...entry, status: "superseded", reason: `${chosen.version ?? "the unversioned registration"} is newer` }); continue; }
+      // Reuse only the same tool's load: a registration copied with another tool's module must fail by name, not hide.
+      const same = previous.find((p) => p.status === "ready" && p.tool === entry.tool && p.module === entry.module && p.sha256 === entry.sha256);
+      // Bun caches a module by path for the life of the process: changed code at a path already loaded would come back
+      // as the old module (and its imports). Only a new path loads without a restart, as a versioned install provides.
+      // The same holds for any file of a package already imported from (an entry's dependency, say): only bytes this
+      // process verified at that exact path may load again.
+      const inPlace = !same && before.has(packageRoot(entry.module!)) && imported.get(entry.module!) !== entry.sha256;
+      const loaded = same ?? (inPlace
+        ? { ...entry, status: "stale" as const, reason: "this module is in a package the console already loaded, so the runtime would serve its cached code; restart acon to use it, or install the new version at its own path" }
+        : await loadOne(entry, ctx));
+      out.push(loaded);
+      if (loaded.status === "ready") chosen = loaded;
     }
   }
   return out;
+}
+
+async function loadOne(entry: PluginEntry, ctx: ConsoleContext): Promise<PluginEntry> {
+  try {
+    // ponytail: the verified bytes are re-read by import(); only you or root can swap them (replaceableBy), and the module's own imports are not hashed.
+    // A path is imported once per process (see loadPlugins), so what import() returns is what was verified at first load.
+    if (!imported.has(entry.module!)) imported.set(entry.module!, entry.sha256!);
+    importedRoots.add(packageRoot(entry.module!));
+    const mod = await withTimeout(import(entry.module!), IMPORT_MS, "import") as { default?: ConsolePlugin; plugin?: ConsolePlugin };
+    const plugin = mod.default ?? mod.plugin;
+    if (!plugin || typeof plugin.open !== "function") return { ...entry, status: "failed", reason: "module exports no console plugin" };
+    const problems = manifestProblems(plugin.manifest, entry.tool);
+    if (problems.length) return { ...entry, status: "failed", reason: problems[0] };
+    const provider = await withTimeout(plugin.open(ctx), OPEN_MS, "open()");
+    const pp = providerProblems(provider);
+    if (pp.length) return { ...entry, status: "failed", reason: pp[0] };
+    // The manifest goes to the browser as JSON; a value that cannot (BigInt, cycles) fails this plugin only.
+    let manifest: ConsolePanelManifest;
+    try { manifest = JSON.parse(JSON.stringify(plugin.manifest)) as ConsolePanelManifest; }
+    catch { return { ...entry, status: "failed", reason: "manifest is not JSON-serializable" }; }
+    // A load is its module path and bytes: two packages with the same entry file but different imports get distinct refs.
+    const ref = `${entry.tool}@${createHash("sha256").update(`${entry.module}\n${entry.sha256}`).digest("hex").slice(0, 12)}`;
+    return { ...entry, status: "ready", manifest, provider, ref };
+  } catch (error) {
+    ctx.log(`${entry.tool}: load failed: ${error instanceof Error ? error.message : String(error)}`);
+    return { ...entry, status: "failed", reason: "plugin failed to load; see the terminal" };
+  }
 }
