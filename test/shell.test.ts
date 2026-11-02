@@ -908,6 +908,13 @@ describe("ui.visual Codex fixes", () => {
     expect(frameJs).not.toContain("innerHTML");
     expect(frameJs).not.toContain("outerHTML");
     expect(frameJs).not.toContain("insertAdjacentHTML");
+    // No inline styles from our code: sizing is width/height attributes plus /visual/frame.css.
+    expect(frameJs).not.toContain(".style");
+    expect(frameJs).not.toContain('setAttribute("style"');
+    expect(frameJs).toContain("img.width = Math.round(dims.w)");
+    const css = shell("visual-frame.css");
+    expect(css).toContain("html.dark");
+    expect(css).toContain("max-width: 100%");
     expect(frameJs).toContain('`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`');
     expect(frameJs).toContain("root.replaceChildren(img)");
   });

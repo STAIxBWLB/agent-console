@@ -59,10 +59,13 @@ const ASSET_ID_MAX = 512;
 const codePoints = (name: string, max: number) => Array.from(name).slice(0, max).join("");
 const fileName = (name: string) => codePoints(name.replace(/[^A-Za-z0-9._ -]/gu, "_"), 120) || "asset";
 /**
- * CSP for the sandboxed Mermaid frame (#29): its own scripts only, inline styles for Mermaid's SVG, data: images,
- * no connect-src (so no fetch or XHR), and only the console may frame it.
+ * CSP for the sandboxed Mermaid frame (#29): its own scripts and /visual/frame.css only, data: images, no connect-src
+ * (so no fetch or XHR), and only the console may frame it. style-src keeps 'unsafe-inline' for Mermaid alone: during
+ * render() it styles its own temporary measuring element and the SVG's <style>, and under style-src 'self' those
+ * are blocked, so text is measured in the wrong font and labels are laid out too narrow (checked in Chromium:
+ * 901 vs 918 px for the demo flowchart). The frame's own code sets no inline styles (test/shell.test.ts asserts it).
  */
-export const FRAME_CSP = "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+export const FRAME_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -86,6 +89,7 @@ export function startServer(options: ServerOptions) {
   const files: Record<string, { body: string; type: string; frame?: true }> = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
   // Sandboxed visual frame: fixed files only, served with FRAME_CSP and framable by the console itself.
   files["/visual/frame"] = { body: asset("visual-frame.html"), type: "text/html; charset=utf-8", frame: true };
+  files["/visual/frame.css"] = { body: asset("visual-frame.css"), type: "text/css; charset=utf-8", frame: true };
   files["/visual/frame.js"] = { body: asset("visual-frame.js"), type: "text/javascript; charset=utf-8", frame: true };
   files["/visual/mermaid.js"] = { body: readFileSync(new URL("../shell/vendor/mermaid/mermaid.js", import.meta.url), "utf8"), type: "text/javascript; charset=utf-8", frame: true };
   // Fixed vendored module allowlist, never a request-derived filesystem path.

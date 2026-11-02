@@ -23,12 +23,8 @@
     if (!source || source.length > MAX_SOURCE) return reply({ id, ok: false, error: "source is empty or over 20 KB" });
     const dark = data.theme === "dark";
     try {
+      // Colors, margins and image sizing come from /visual/frame.css by this class; the frame sets no inline styles.
       document.documentElement.className = dark ? "dark" : "light";
-      // Inline styles are allowed only in this frame (style-src 'unsafe-inline'); the parent shell has none.
-      document.documentElement.style.colorScheme = dark ? "dark" : "light";
-      document.body.style.margin = "0";
-      document.body.style.padding = "8px";
-      document.body.style.background = dark ? "#16181d" : "#ffffff";
       mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default", darkMode: dark,
         // Edge labels sit on a box that matches the canvas, so they stay readable in dark mode.
         themeVariables: dark ? { edgeLabelBackground: "#16181d", textColor: "#e6e8ee" } : { edgeLabelBackground: "#ffffff" }, htmlLabels: false, flowchart: { htmlLabels: false }, fontFamily: "system-ui, sans-serif" });
@@ -39,10 +35,6 @@
       img.alt = typeof data.title === "string" && data.title ? data.title : "Diagram";
       const dims = size(svg);
       if (dims) { img.width = Math.round(dims.w); img.height = Math.round(dims.h); }
-      img.style.display = "block";
-      img.style.maxWidth = "100%";
-      img.style.height = "auto";
-      img.style.margin = "0 auto";
       await new Promise((done) => { img.onload = done; img.onerror = done; img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; });
       root.replaceChildren(img);
       root.setAttribute("aria-label", img.alt);
