@@ -597,6 +597,50 @@ describe("ui.visual", () => {
     expect(k.posted).toHaveLength(2);
   });
 
+  test("a frame handed to a new diagram is not redrawn by the old one on a theme change", () => {
+    let mode = "light";
+    let onTheme: (() => void) | undefined;
+    const k = visualKit({ io: true, theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
+    const a = node(k.ui.visual({ kind: "mermaid", source: "flowchart LR\n A-->B" }));
+    k.ioCallbacks[0]!([{ isIntersecting: true }]);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 120 });
+    // A leaves the page; B takes the same pooled frame and renders.
+    (walk(a).find((n) => n.tagName === "IFRAME")! as KitNode & { remove(): void }).remove();
+    const b = node(k.ui.visual({ kind: "mermaid", source: "flowchart LR\n C-->D" }));
+    k.ioCallbacks[1]!([{ isIntersecting: true }]);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 140 });
+    expect(k.frames).toHaveLength(1);
+    mode = "dark";
+    onTheme!();
+    // Exactly one redraw, and it is B's source.
+    expect(k.posted).toHaveLength(3);
+    expect(k.posted[2]!.msg).toMatchObject({ source: "flowchart LR\n C-->D", theme: "dark" });
+    void b;
+  });
+
+  test("a theme change during a render is applied when that render finishes", () => {
+    let mode = "light";
+    let onTheme: (() => void) | undefined;
+    const k = visualKit({ theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
+    k.ui.visual({ kind: "mermaid", source: "flowchart LR\n A-->B" });
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    expect(k.posted[0]!.msg.theme).toBe("light");
+    // Still rendering the light version when the theme flips.
+    mode = "dark";
+    onTheme!();
+    expect(k.posted).toHaveLength(1);
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 120 });
+    expect(k.posted).toHaveLength(2);
+    expect(k.posted[1]!.msg.theme).toBe("dark");
+    // Flipping back and forth while busy ends on the latest mode only.
+    mode = "light"; onTheme!();
+    mode = "dark"; onTheme!();
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 120 });
+    expect(k.posted).toHaveLength(2);
+  });
+
   test("a theme change redraws connected diagrams in their frames, once per change", () => {
     let mode = "light";
     let onTheme: (() => void) | undefined;
@@ -855,5 +899,16 @@ describe("ui.review Codex fixes, round 3", () => {
     const root = kit().review({ doc: { kind: "prose", path: "d.md", text, contentHash: sha(text) }, threads: [thread("only", 1, sha(text))], onComment() {}, onPlacement: (r) => { results = r; } }) as unknown as KitNode;
     expect(results).toEqual([{ threadId: "only", placed: false, via: null }]);
     expect(walk(root).find((n) => n.className === "ui-review-strip")!.textContent).toContain("body only");
+  });
+});
+
+describe("ui.visual Codex fixes", () => {
+  test("the frame shows Mermaid's output as an image and our frame code assigns no markup", () => {
+    const frameJs = shell("visual-frame.js");
+    expect(frameJs).not.toContain("innerHTML");
+    expect(frameJs).not.toContain("outerHTML");
+    expect(frameJs).not.toContain("insertAdjacentHTML");
+    expect(frameJs).toContain('`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`');
+    expect(frameJs).toContain("root.replaceChildren(img)");
   });
 });

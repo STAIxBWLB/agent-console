@@ -583,7 +583,7 @@ function visualFrames() {
     let frame = pool.find((f) => !f.el.isConnected && !f.busy);
     if (!frame) {
       const el = h("iframe", { class: "ui-visual-frame", src: "/visual/frame", sandbox: "allow-scripts", title: "Diagram", height: "160", referrerpolicy: "no-referrer" });
-      frame = { el, ready: false, failed: false, queued: null, busy: false, used: false };
+      frame = { el, ready: false, failed: false, queued: null, busy: false, used: false, owner: null };
       pool.push(frame);
     }
     // Reattaching a detached iframe reloads its document: wait for that document's ready handshake again.
@@ -648,12 +648,15 @@ function visualView(payload, kit, frames, theme) {
   if (source.length > VISUAL.source) { fallback(`The diagram source is over ${VISUAL.source / 1024} KB, so it is shown as text.`); return root; }
   let started = false;
   let shownTheme = null;
+  let wantedTheme = null;
   let frame = null;
   const draw = (mode) => {
     frames.render(frame, { source, theme: mode, title: p.title ? String(p.title) : "" }, (data) => {
       frames.release(frame);
+      if (frame.owner !== entry) return; // the frame moved to another diagram meanwhile
       if (!data.ok) {
         frames.live.delete(entry);
+        frame.owner = null;
         frame.el.remove();
         fallback(data.error === "timeout" ? "The diagram took longer than 5 seconds, so it is shown as text." : "The diagram could not be drawn, so it is shown as text.");
         return;
@@ -664,13 +667,16 @@ function visualView(payload, kit, frames, theme) {
       frame.el.classList.remove("ui-visual-loading");
       status.textContent = "";
       status.hidden = true;
+      // A theme change that arrived during this render is applied now.
+      if (wantedTheme !== null && wantedTheme !== shownTheme) entry.retheme(wantedTheme);
     });
   };
-  // Redraw in the frame it already has when the console theme changes; a detached diagram drops out.
+  // Redraw in the frame it owns when the console theme changes; a detached or handed-over diagram drops out.
   const entry = {
     retheme(mode) {
-      if (!frame || !frame.el.isConnected) { frames.live.delete(entry); return; }
-      if (mode === shownTheme || frame.busy) return;
+      if (!frame || frame.owner !== entry || !frame.el.isConnected) { frames.live.delete(entry); return; }
+      wantedTheme = mode;
+      if (mode === shownTheme || frame.busy) return; // a busy frame picks up wantedTheme when it finishes
       frame.busy = true;
       draw(mode);
     },
@@ -679,11 +685,15 @@ function visualView(payload, kit, frames, theme) {
     if (started) return;
     started = true;
     frame = frames.take();
+    // Hand-over: the frame's previous diagram stops redrawing into it.
+    if (frame.owner) frames.live.delete(frame.owner);
+    frame.owner = entry;
     frame.el.setAttribute("title", p.title ? String(p.title) : "Diagram");
     frame.el.classList.add("ui-visual-loading");
     holder.replaceChildren(frame.el);
     frames.live.add(entry);
-    draw(theme());
+    wantedTheme = theme();
+    draw(wantedTheme);
   };
   // Load only when the visual scrolls into view.
   if (typeof IntersectionObserver === "function") {

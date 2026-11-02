@@ -9,9 +9,12 @@
   // The vendored IIFE build assigns globalThis.mermaid.
   const mermaid = typeof globalThis.mermaid?.render === "function" ? globalThis.mermaid : null;
   const ready = mermaid !== null;
-  function height() {
-    const box = root.getBoundingClientRect();
-    return Math.ceil(Math.max(box.height, root.scrollHeight)) + 2;
+  // The page's own content height: body padding plus the image box.
+  const height = () => Math.ceil(document.body.getBoundingClientRect().height) + 2;
+  /** Width and height from the SVG's viewBox (Mermaid always sets one), read without parsing it into this page. */
+  function size(svg) {
+    const box = /viewBox="\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)\s*"/.exec(svg);
+    return box ? { w: Number(box[1]), h: Number(box[2]) } : null;
   }
   async function render(data) {
     const id = Number(data.id);
@@ -29,15 +32,23 @@
       mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default", darkMode: dark,
         // Edge labels sit on a box that matches the canvas, so they stay readable in dark mode.
         themeVariables: dark ? { edgeLabelBackground: "#16181d", textColor: "#e6e8ee" } : { edgeLabelBackground: "#ffffff" }, htmlLabels: false, flowchart: { htmlLabels: false }, fontFamily: "system-ui, sans-serif" });
+      // Mermaid lays out in its own temporary element during render(); this page assigns no markup. The result is
+      // shown as an image of the SVG, which runs no script and loads nothing (FRAME_CSP allows img-src data: only).
       const { svg } = await mermaid.render(`acon-visual-${++seq}`, source);
-      // The SVG comes from Mermaid with securityLevel strict and stays inside this opaque-origin frame.
-      root.innerHTML = svg;
-      root.setAttribute("aria-label", typeof data.title === "string" && data.title ? data.title : "Diagram");
-      const svgEl = root.querySelector("svg");
-      if (svgEl) { svgEl.setAttribute("aria-hidden", "true"); svgEl.style.maxWidth = "100%"; svgEl.style.height = "auto"; }
+      const img = document.createElement("img");
+      img.alt = typeof data.title === "string" && data.title ? data.title : "Diagram";
+      const dims = size(svg);
+      if (dims) { img.width = Math.round(dims.w); img.height = Math.round(dims.h); }
+      img.style.display = "block";
+      img.style.maxWidth = "100%";
+      img.style.height = "auto";
+      img.style.margin = "0 auto";
+      await new Promise((done) => { img.onload = done; img.onerror = done; img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; });
+      root.replaceChildren(img);
+      root.setAttribute("aria-label", img.alt);
       requestAnimationFrame(() => reply({ id, ok: true, height: height() }));
     } catch (error) {
-      root.textContent = "";
+      root.replaceChildren();
       reply({ id, ok: false, error: String(error && error.message ? error.message : error).split("\n")[0].slice(0, 200) });
     }
   }
