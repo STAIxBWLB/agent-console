@@ -142,7 +142,7 @@ const consoleUi = {
     let sort = null;
     const tbody = h("tbody");
     const heads = columns.map((c) => {
-      const label = String(c.label);
+      const label = String(c.label ?? c.key ?? "");
       const th = h("th", { scope: "col", class: c.align === "end" ? "end" : null });
       if (!sortable) { th.append(label); return th; }
       th.append(h("button", { type: "button", class: "ui-sort", onclick: () => {
@@ -181,7 +181,7 @@ const consoleUi = {
       const hasTarget = typeof item.target === "number" && Number.isFinite(item.target);
       if (hasTarget) svg.append(svgEl("line", { class: "ui-bar-target", x1: pct(item.target), x2: pct(item.target), y1: 0, y2: 10, "vector-effect": "non-scaling-stroke" }));
       return h("li", { class: "ui-bar" },
-        h("span", { class: "ui-bar-label", text: String(item.label) }), svg,
+        h("span", { class: "ui-bar-label", text: String(item.label ?? "") }), svg,
         h("span", { class: "ui-bar-value", text: hasTarget ? `${fmtNum(item.value)} (target ${fmtNum(item.target)})` : fmtNum(item.value) }));
     }));
     return h("figure", { class: "ui-chart ui-bars-chart", role: "figure", "aria-label": o.caption },
@@ -207,6 +207,38 @@ const consoleUi = {
       h("ol", { class: "ui-sr" }, values.map((v) => h("li", { text: fmtNum(v) }))));
   },
 };
+// Per-plugin kit: img, frame and link build their own same-origin URLs from the tool and an asset id or panel.
+const ASSET_ID_MAX = 512;
+const PANEL_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+function assetId(to) {
+  if (!to || typeof to !== "object" || typeof to.asset !== "string" || !to.asset || to.asset.length > ASSET_ID_MAX) throw new TypeError("Panel kit assets take {asset: id}, never a URL");
+  return to.asset;
+}
+function kitFor(tool, hash) {
+  const assetUrl = (id) => `/p/${tool}/asset?id=${encodeURIComponent(id)}`;
+  return Object.freeze({
+    ...consoleUi,
+    img(o) {
+      const id = assetId(o);
+      return h("img", { class: "ui-img", src: assetUrl(id), alt: String(o.alt ?? ""), loading: "lazy", decoding: "async" });
+    },
+    frame(o) {
+      const id = assetId(o);
+      return h("iframe", { class: "ui-frame", src: assetUrl(id), title: String(o.title ?? "Attachment"), referrerpolicy: "no-referrer" });
+    },
+    link(to, text) {
+      const keys = to && typeof to === "object" ? Object.keys(to) : [];
+      if (keys.includes("asset")) {
+        if (keys.length !== 1) throw new TypeError("Panel kit links take {asset} or {panel, params?}");
+        return h("a", { class: "ui-link", href: assetUrl(assetId(to)), target: "_blank", rel: "noopener noreferrer", text: String(text) });
+      }
+      if (!keys.includes("panel") || keys.some((k) => k !== "panel" && k !== "params") || typeof to.panel !== "string" || !PANEL_ID.test(to.panel)) throw new TypeError("Panel kit links take {asset} or {panel, params?}");
+      const params = to.params ?? {};
+      if (typeof params !== "object" || Array.isArray(params) || Object.values(params).some((v) => typeof v !== "string")) throw new TypeError("Link params must be strings");
+      return h("a", { class: "ui-link", href: hash(tool, to.panel, params), text: String(text) });
+    },
+  });
+}
 // ---------- end public panel kit ----------
 function icon(name, cls = "ic") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -679,7 +711,7 @@ function hostFor(tool, p) {
     tool: tool.tool,
     node: NODE,
     mount: p.body,
-    ui: consoleUi,
+    ui: kitFor(tool.tool, hashFor),
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),

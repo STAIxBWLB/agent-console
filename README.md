@@ -186,6 +186,9 @@ Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/c
 | `table({columns, rows, caption?, sortable?})` | A table with text cells. A column is a `TableColumn`: `{key, label, align?: "start" \| "end", format?: "text" \| "number" \| "percent"}`. Header buttons sort stably (ascending, then descending) and set `aria-sort`; `sortable: false` turns this off. |
 | `bars({items, max?, caption})` | Horizontal SVG bars; items are `{label, value, target?}` and `target` draws a marker. `max` defaults to the largest value or target. |
 | `spark({values, caption})` | A small SVG line with a low/high/last summary. |
+| `img({asset, alt})` | An image of this plugin's asset (PNG or JPEG). |
+| `frame({asset, title})` | A same-origin frame of this plugin's asset, for PDF or text. |
+| `link({asset} \| {panel, params?}, text)` | A link to this plugin's asset (opens in a new tab) or to one of its panels. |
 
 Table and charts are built by the shell from attributes and CSS classes, so they need no CSP change. Each chart has the caption as its accessible name and a text equivalent: bars show each value (and target) as text, and spark carries a visually hidden list of values. Inputs are bounded: 500 rows and 12 columns per table, 50 bar items and the last 365 spark points. Larger input is cut and a `ui-notice` states how much is shown. `tableColumnProblems(columns)` from `@staix/agent-console/conformance` checks a column list.
 
@@ -216,6 +219,16 @@ export default (host) => {
 
 With focus on kit rows inside a panel, `j` and `k` move between rows and `Enter` opens the focused row. Form input keeps its normal typing behavior. Run actions through `host.action()` so destructive actions keep the shell's confirmation flow.
 
+### Plugin assets
+
+A provider may implement `asset({id})` and answer `{bytes: Uint8Array, mime, name}`, or `null` for an unknown id. The console serves it at `GET /p/<tool>/asset?id=<id>` with the same Host, Origin and session checks as other plugin routes (and the `acon serve` authentication), plus `X-Content-Type-Options: nosniff`, a `Content-Disposition` filename and a framing policy of same origin only. A cross-site fetch gets 403, an unknown id 404.
+
+- Types: `application/pdf`, `image/png`, `image/jpeg`, `text/plain` and `text/csv` are served inline; `image/svg+xml` is served only as an attachment. Any other type gets 415.
+- Size: 32 MB per asset by default (`ServerOptions.assetMaxBytes`); larger answers get 413.
+- Panels reference assets only through `ui.img`, `ui.frame` and `ui.link`, which build the URL from the panel's own tool and an id. URLs, other tools and other link targets throw `TypeError`; `h` still has no `a`, `img` or `iframe`.
+
+A plugin without `asset` behaves as before. Pass `assets: [ids]` to `registerConsoleConformance` to check that those ids answer a served type.
+
 ### Public styling contract
 
 Panels may use these classes. Modifiers apply only with their base class:
@@ -225,6 +238,7 @@ Panels may use these classes. Modifiers apply only with their base class:
 - Containers and text: `empty`, `card`, `mono`, `ui-form`, `ui-field`.
 - Details: `ui-detail`, `ui-detail-head`, `ui-detail-kind`, `ui-detail-move`, `ui-detail-actions`, `ui-detail-summary`, `ui-provenance`, `ui-detail-section`, `ui-detail-body`, `ui-detail-footer`.
 - Tables and charts: `ui-table-block`, `ui-table-wrap`, `ui-table`, `ui-sort`, `ui-chart`, `ui-bars`, `ui-bar`, `ui-bar-label`, `ui-bar-value`, `ui-bar-track`, `ui-bar-fill`, `ui-bar-target`, `ui-spark`, `ui-spark-summary`, `ui-spark-line`, `ui-sr` (visually hidden).
+- Assets and links: `ui-img`, `ui-frame`, `ui-link`.
 
 The public CSS tokens are:
 

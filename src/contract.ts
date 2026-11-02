@@ -59,6 +59,8 @@ export interface ConsoleProvider {
   assets: { js: string; css?: string };
   snapshot(input: { after: number; panel: string } & Record<string, unknown>): Promise<Record<string, unknown>>;
   action(input: { action: string; confirmed?: true; fingerprint?: string } & Record<string, unknown>): Promise<ActionResult>;
+  /** Optional file for GET /p/<tool>/asset?id=; null when the id is unknown. Types: see README "Plugin assets". */
+  asset?(input: { id: string }): Promise<{ bytes: Uint8Array; mime: string; name: string } | null>;
   close?(): Promise<void>;
 }
 
@@ -124,7 +126,7 @@ export interface SpaceScene {
   links?: { kind: "message" | "overlap" | "conflict" | "cohort"; from: string; to: string; label?: string; at?: string }[];
 }
 
-/** A ui.table column. Cells render as text; `number` and `percent` format numeric cells. */
+/** A ui.table column. Cells render as text; `number` and `percent` format numeric cells, and `percent` expects percent units (38.5, not 0.385). */
 export interface TableColumn { key: string; label: string; align?: "start" | "end"; format?: "text" | "number" | "percent" }
 
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
@@ -147,6 +149,12 @@ export interface ConsoleUi {
   bars(o: { items: { label: string; value: number; target?: number }[]; max?: number; caption: string }): HTMLElement;
   /** A small line of the last 365 values at most. */
   spark(o: { values: number[]; caption: string }): HTMLElement;
+  /** An image of this plugin's asset `id` (PNG or JPEG). Only asset ids are accepted, never URLs. */
+  img(o: { asset: string; alt: string }): HTMLElement;
+  /** A same-origin frame of this plugin's asset `id`, for PDF and text. */
+  frame(o: { asset: string; title: string }): HTMLElement;
+  /** A link to this plugin's asset or to one of its panels; any other target throws TypeError. */
+  link(to: { asset: string } | { panel: string; params?: Record<string, string> }, text: string): HTMLElement;
 }
 
 /** Browser-side host each panel module receives. Declared for panel authors; the shell implements it. */
