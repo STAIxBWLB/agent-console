@@ -280,3 +280,96 @@ describe("public panel kit", () => {
     expect(() => ui.h("img", { src: "/x" })).toThrow();
   });
 });
+
+describe("inbox answers and seen receipts (#27)", () => {
+  type Form = { questions: { id: string; prompt: string; header?: string; multiple?: boolean; options: { id: string; label: string }[]; other?: { label?: string; maxLength?: number } }[] };
+  function answers() {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("// ---------- inbox answers (#27) ----------"), js.indexOf("function snooze(item) {"));
+    const str = (v: unknown) => (typeof v === "string" ? v : "");
+    return runInNewContext(`${source}\n({ validForm, formAnswers, seenWatch, draftFor })`, { str, document: { visibilityState: "visible", hasFocus: () => true } }) as {
+      validForm(f: unknown): boolean;
+      formAnswers(f: Form, d: { q: Record<string, { selected: string[]; other?: string }> }): { answers?: Record<string, { selected: string[]; other?: string }>; missing?: string[] };
+      seenWatch(o: { now(): number; visible(): boolean; focused(): boolean; fire(key: string): void; holdMs?: number }): { tick(key: string | null): void; done: Set<string> };
+    };
+  }
+  const form: Form = { questions: [
+    { id: "scope", prompt: "Which parts?", multiple: true, options: [{ id: "cli", label: "CLI" }, { id: "shell", label: "Shell" }, { id: "docs", label: "Docs" }] },
+    { id: "when", prompt: "When?", options: [{ id: "today", label: "Today" }, { id: "monday", label: "Monday" }], other: { label: "Another time", maxLength: 10 } },
+  ] };
+
+  test("AC1: answers carry the chosen ids and the Other text; an empty choice cannot be submitted", () => {
+    const { formAnswers } = answers();
+    expect(formAnswers(form, { q: { scope: { selected: ["cli"] } } }).missing).toEqual(["when"]);
+    // Focus on Other without text is no answer; text is, cut to maxLength.
+    expect(formAnswers(form, { q: { scope: { selected: ["cli", "docs"] }, when: { selected: [], other: "   " } } }).missing).toEqual(["when"]);
+    expect(formAnswers(form, { q: { scope: { selected: ["cli", "docs", "forged"] }, when: { selected: [], other: " next Tuesday afternoon " } } }).answers)
+      .toEqual({ scope: { selected: ["cli", "docs"] }, when: { selected: [], other: "next Tuesd" } });
+  });
+
+  test("question ids that name Object.prototype members are ordinary keys", () => {
+    const { formAnswers, draftFor } = answers() as unknown as { formAnswers: (f: Form, d: unknown) => { answers?: Record<string, unknown> }; draftFor: (k: string) => { q: Record<string, { selected: string[] }> } };
+    const odd: Form = { questions: ["constructor", "__proto__", "toString"].map((id) => ({ id, prompt: id, options: [{ id: "a", label: "A" }, { id: "b", label: "B" }] })) };
+    const draft = draftFor("ask:q9");
+    expect(draft.q.constructor).toBeUndefined();
+    for (const q of odd.questions) draft.q[q.id] = { selected: ["a"] };
+    expect(JSON.parse(JSON.stringify(formAnswers(odd, draft).answers))).toEqual({ constructor: { selected: ["a"] }, __proto__: { selected: ["a"] }, toString: { selected: ["a"] } });
+  });
+
+  test("the review step never submits a draft that lost an answer under it", () => {
+    const js = shell("shell.js");
+    const block = js.slice(js.indexOf("function answerForm("), js.indexOf("function openAnswer("));
+    // The check sits before the review branch builds its Submit button.
+    expect(block.indexOf('draft.step === "review" && (formAnswers(form, draft).missing')).toBeGreaterThan(-1);
+    expect(block.indexOf('draft.step === "review" && (formAnswers(form, draft).missing')).toBeLessThan(block.indexOf("answer-submit"));
+  });
+
+  test("a single-choice question refuses a draft with several choices or an option plus Other", () => {
+    const { formAnswers } = answers();
+    const single: Form = { questions: [{ id: "when", prompt: "When?", options: [{ id: "today", label: "Today" }, { id: "monday", label: "Monday" }], other: { label: "Another time" } }] };
+    expect(formAnswers(single, { q: { when: { selected: ["today", "monday"] } } }).missing).toEqual(["when"]);
+    expect(formAnswers(single, { q: { when: { selected: ["today"], other: "Friday" } } }).missing).toEqual(["when"]);
+    expect(formAnswers(single, { q: { when: { selected: ["today"] } } }).answers).toEqual({ when: { selected: ["today"] } });
+  });
+
+  test("forms outside the bounds are refused, so the item is reported as malformed", () => {
+    const { validForm } = answers();
+    expect(validForm(form)).toBe(true);
+    const q = form.questions[1]!;
+    expect(validForm({ questions: [] })).toBe(false);
+    expect(validForm({ questions: Array.from({ length: 5 }, (_, i) => ({ ...q, id: `q${i}` })) })).toBe(false);
+    expect(validForm({ questions: [{ ...q, options: [q.options[0]] }] })).toBe(false);
+    expect(validForm({ questions: [{ ...q, options: [q.options[0], { id: "today", label: "Dup" }] }] })).toBe(false);
+    expect(validForm({ questions: [{ ...q, options: [q.options[0], { id: "x", label: "y".repeat(81) }] }] })).toBe(false);
+    expect(validForm({ questions: [{ ...q, other: { maxLength: 1001 } }] })).toBe(false);
+    expect(validForm({ questions: [q, { ...q }] })).toBe(false); // duplicate question id
+  });
+
+  test("AC4: a receipt fires once, only after 1 s of the body end in view in a focused, visible window", () => {
+    const { seenWatch } = answers();
+    let t = 0, visible = true, focused = true;
+    const fired: string[] = [];
+    const w = seenWatch({ now: () => t, visible: () => visible, focused: () => focused, fire: (k) => fired.push(k) });
+    const run = (key: string | null, ms: number) => { for (let end = t + ms; t <= end; t += 250) w.tick(key); };
+    run(null, 3000); // a row in the list, or the body end not in view
+    expect(fired).toEqual([]);
+    visible = false; run("ask:r1", 3000); visible = true;
+    focused = false; run("ask:r1", 3000); focused = true;
+    expect(fired).toEqual([]);
+    run("ask:r1", 750); // under 1 s
+    w.tick(null);
+    run("ask:r1", 750);
+    expect(fired).toEqual([]);
+    run("ask:r1", 1000);
+    expect(fired).toEqual(["ask:r1"]);
+    run("ask:r1", 3000); // once per page session
+    expect(fired).toEqual(["ask:r1"]);
+  });
+
+  test("the shell keeps results out of the pet and the needs-me count, and Mini never answers a form in one step", () => {
+    const js = shell("shell.js");
+    expect(js).toMatch(/const NEEDS_ME = new Set\(\["decision", "review", "candidate"\]\)/);
+    expect(js).toContain("!v.reason && !v.form");
+    expect(js).toContain('["result", "Results"]');
+  });
+});

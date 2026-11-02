@@ -6,6 +6,7 @@ import { startServer } from "../src/server.ts";
 import { accessVerifier, bearerVerifier, serveConfig, type ServeOptions } from "../src/serve.ts";
 import type { PluginEntry } from "../src/plugins.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
+import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 
 // Placeholders only: no real team, AUD, hostname or account appears in tests.
 const TEAM = "example-team.cloudflareaccess.com";
@@ -251,5 +252,21 @@ describe("health and residency (AC6)", () => {
     expect(server.checkIdle()).toBe(false);
     expect(idle).toBe(false);
     expect((await call(server, "/healthz")).status).toBe(204);
+  });
+});
+
+describe("action meta under serve (#27 AC2)", () => {
+  test("the provider gets the verified identity as meta, and a page-sent meta stays page data", async () => {
+    const plugin = createAskPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {}, features: ["inbox.form", "inbox.result", "action.meta"] });
+    const entry: PluginEntry = { tool: "ask", file: "ask.json", status: "ready", manifest: plugin.manifest, provider };
+    const server = startServer({ plugins: [entry], version: "t", pluginsDir: "/tmp/plugins", log: () => {}, serve: { ...accessServe(), port: 0 } });
+    running.push(server);
+    const jwt = await sign(main, "k1", claims());
+    const forged = { identity: "someone-else", node: "elsewhere", via: "console" };
+    const res = await call(server, "/p/ask/action", { jwt, body: { action: "seen", id: "r1", seenAt: "2026-11-02T00:00:00Z", meta: forged } });
+    expect(res.status).toBe(200);
+    expect(plugin.calls.at(-1)!.meta).toEqual({ identity: "access:user-1", node: "local", via: "console" });
+    expect(plugin.calls.at(-1)!.input.meta).toEqual(forged);
   });
 });

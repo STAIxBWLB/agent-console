@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
-import { ACTION_ID, type ActionResult } from "./contract.ts";
+import { ACTION_ID, type ActionMeta, type ActionResult } from "./contract.ts";
 import { ASSET_TYPES, assetResultProblems, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import type { PetPackage } from "./pets.ts";
 import { readValidatedImage, readValidatedModel, type AssetPack } from "./assets.ts";
@@ -194,7 +194,7 @@ export function startServer(options: ServerOptions) {
     return new Response(new Uint8Array(result.bytes), { headers: { ...HEADERS, "X-Frame-Options": "SAMEORIGIN", "Content-Security-Policy": ASSET_CSP, "Content-Type": type, "Content-Disposition": disposition, "Content-Length": String(result.bytes.byteLength) } });
   }
 
-  async function action(entry: PluginEntry, session: string, input: Record<string, unknown>) {
+  async function action(entry: PluginEntry, session: string, input: Record<string, unknown>, meta: ActionMeta) {
     const name = input.action;
     if (typeof name !== "string" || !ACTION_ID.test(name)) return reject(400, "invalid action");
     const declared = entry.manifest!.capabilities?.actions;
@@ -212,7 +212,8 @@ export function startServer(options: ServerOptions) {
       request = { ...rest, confirmed: true, fingerprint: bound.fingerprint };
     }
     let result: ActionResult;
-    const running = Promise.resolve().then(() => entry.provider!.action(request as { action: string }));
+    // meta comes from the verified session, never from the body; an input key named meta stays page data.
+    const running = Promise.resolve().then(() => entry.provider!.action(request as { action: string }, meta));
     try {
       result = await withTimeout(running, callMs, `${entry.tool} action`);
       if (!result || typeof result !== "object" || typeof (result as { ok?: unknown }).ok !== "boolean") throw new Error("action must return {ok: boolean}");
@@ -353,7 +354,7 @@ export function startServer(options: ServerOptions) {
       }
       const entry = pluginEntry();
       if (!entry) return unknownTool();
-      return plugin![2] === "snapshot" ? snapshot(entry, input) : action(entry, cookie!, input);
+      return plugin![2] === "snapshot" ? snapshot(entry, input) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
     },
     error(error) {
       log(`request failed: ${error.message}`);

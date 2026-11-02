@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { startServer } from "../src/server.ts";
 import type { PluginEntry } from "../src/plugins.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
+import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 
 type Server = ReturnType<typeof startServer>;
 const running: Server[] = [];
@@ -401,3 +402,19 @@ describe("staged plugin activation (#26)", () => {
   });
 });
 
+describe("action meta under acon ui (#27 AC2)", () => {
+  test("the provider gets identity local from the session; a page-sent meta does not change it", async () => {
+    const plugin = createAskPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {}, features: ["inbox.form", "inbox.result", "action.meta"] });
+    const server = startServer({ plugins: [{ tool: "ask", file: "ask.json", status: "ready", manifest: plugin.manifest, provider }], version: "t", pluginsDir: "/tmp/plugins", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    const answers = { scope: { selected: ["cli", "docs"] }, when: { selected: [], other: "Tuesday" } };
+    const res = await post(server, "/p/ask/action", { action: "answer", id: "q1", answers, meta: { identity: "forged", node: "x", via: "console" } }, cookie);
+    expect((await res.json() as { ok: boolean }).ok).toBe(true);
+    expect(plugin.calls.at(-1)).toEqual({ input: { action: "answer", id: "q1", answers, meta: { identity: "forged", node: "x", via: "console" } }, meta: { identity: "local", node: "local", via: "console" } });
+    // AC3 at the server: a stale answer returns the tool's error unchanged.
+    const stale = await (await post(server, "/p/ask/action", { action: "answer", id: "q2", answers: { when: { selected: ["today"] } } }, cookie)).json() as { ok: boolean; error: string };
+    expect(stale).toEqual({ ok: false, error: "This question was answered elsewhere; nothing was changed." });
+  });
+});

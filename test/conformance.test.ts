@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { registerConsoleConformance, stableAtProblems } from "../src/conformance.ts";
+import { inboxItemProblems, registerConsoleConformance, stableAtProblems, verbFormProblems } from "../src/conformance.ts";
+import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
 registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png"] });
@@ -63,4 +64,22 @@ test("asset answers are checked for shape, and unknown ids answer null", async (
   expect(await provider.asset!({ id: "missing" })).toBeNull();
   expect(assetResultProblems(await provider.asset!({ id: "figure.png" }))).toEqual([]);
   expect(assetResultProblems({ bytes: "x", mime: "", name: 1 })).toEqual(["asset.bytes must be a Uint8Array", "asset.mime must be a non-empty string", "asset.name must be a non-empty string"]);
+});
+
+registerConsoleConformance(createAskPlugin());
+
+test("inbox items with forms and seen receipts pass; out-of-bounds forms and a bad seen are named", () => {
+  const item = { id: "q", group: "decision", kind: "question", title: "Q", at: "2026-11-01T09:00:00Z", link: { panel: "log" } };
+  const form = { questions: [{ id: "a", prompt: "Pick", options: [{ id: "x", label: "X" }, { id: "y", label: "Y" }] }] };
+  expect(inboxItemProblems({ ...item, verbs: [{ id: "answer", label: "Answer", form }] })).toEqual([]);
+  expect(inboxItemProblems({ ...item, group: "result", verbs: [], seen: { action: "seen" } })).toEqual([]);
+  expect(inboxItemProblems({ ...item, group: "result", verbs: [], seen: {} })).toEqual(["item.seen.action must be a non-empty string"]);
+  expect(verbFormProblems({ questions: [{ ...form.questions[0], options: [{ id: "x", label: "X" }] }] })).toEqual(["form.questions[0].options needs 2-8 options"]);
+  expect(verbFormProblems({ questions: [] })).toEqual(["form needs 1-4 questions"]);
+  expect(verbFormProblems({ questions: [{ ...form.questions[0], other: { maxLength: 2000 } }] })).toEqual(["form.questions[0].other.maxLength must be 1-1000"]);
+});
+
+test("AC5: the ask fixture sends no form or result to a console that did not advertise them", async () => {
+  const provider = await createAskPlugin().open({ home: "/tmp", log: () => {} });
+  expect(((await provider.snapshot({ after: 0, panel: "inbox" })).items as unknown[])).toEqual([]);
 });
