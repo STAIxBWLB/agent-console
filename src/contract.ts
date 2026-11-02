@@ -205,6 +205,18 @@ export type ReviewDoc =
 /** One placement result reported by ui.review; the tool's stored anchor stays the authority. */
 export interface ReviewPlacement { threadId: string; placed: boolean; via: "hash" | "quote" | null }
 
+/** One side of a before/after visual: text, or this plugin's asset id (#24) with alt text. */
+export type VisualSide = { text: string } | { asset: string; alt: string };
+/**
+ * A visual a plugin shows with ui.visual. Mermaid renders only in a sandboxed frame; tables use ui.table; asset
+ * sides use ui.img. Bounds: mermaid source <= 20 KB; comparison 2-6 options with at most 10 pros and 10 cons each.
+ */
+export type VisualPayload =
+  | { kind: "mermaid"; source: string; title?: string }
+  | { kind: "comparison"; title?: string; options: { title: string; summary?: string; pros?: string[]; cons?: string[]; recommended?: boolean }[] }
+  | { kind: "table"; caption?: string; columns: TableColumn[]; rows: Record<string, string | number>[] }
+  | { kind: "beforeAfter"; caption?: string; before: VisualSide; after: VisualSide };
+
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
 export interface ConsoleUi {
   h(tag: string, props?: Record<string, unknown>, ...kids: (Node | string | null | false)[]): HTMLElement;
@@ -237,6 +249,8 @@ export interface ConsoleUi {
     onComment(c: { anchor: ReviewAnchor; body: string }): void | Promise<unknown>;
     onPlacement?(results: ReviewPlacement[]): void;
   }): HTMLElement;
+  /** A diagram (sandboxed Mermaid frame), comparison cards, a table or a before/after pair; failures show the source. */
+  visual(payload: VisualPayload): HTMLElement;
 }
 
 /** Browser-side host each panel module receives. Declared for panel authors; the shell implements it. */

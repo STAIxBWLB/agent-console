@@ -24,6 +24,19 @@ const demoPanel = (host: ConsoleHost) => {
       ] : [ui.empty("No metrics")]));
       return;
     }
+    if (panel === "visual") {
+      list.replaceChildren(
+        ui.visual({ kind: "mermaid", title: "Release flow", source: "flowchart LR\n  draft[Draft] --> review{Review}\n  review -->|approve| merge[Merge]\n  review -->|changes| draft\n  merge --> deploy[Deploy]" }),
+        ui.visual({ kind: "comparison", title: "Where review threads live", options: [
+          { title: "agent-hub", summary: "Stored with the task", pros: ["one owner", "delivered to agents"], cons: ["needs the hub"], recommended: true },
+          { title: "acon", summary: "Stored by the console", pros: ["no hub needed"], cons: ["second store", "no delivery"] },
+        ] }),
+        ui.visual({ kind: "table", caption: "Vendored size", columns: [{ key: "name", label: "Package" }, { key: "kb", label: "KB", align: "end", format: "number" }], rows: [{ name: "@mermaid-js/tiny 12.2.0", kb: 2745.5 }, { name: "three 0.187.0", kb: 1290 }] }),
+        ui.visual({ kind: "beforeAfter", caption: "Figure", before: { text: "No figure yet." }, after: { asset: "figure.png", alt: "Fixture figure" } }),
+        ui.visual({ kind: "mermaid", title: "Broken diagram", source: "flowchart LR\n  A -->" }),
+      );
+      return;
+    }
     if (panel === "review") {
       const r = snap.review as { draft: ReviewDoc; diff: ReviewDoc; threads: ReviewThread[] } | undefined;
       if (!r) { list.replaceChildren(ui.empty("Nothing to review")); return; }
@@ -161,7 +174,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
       version: "0.0.1",
       title: "Demo",
       icon: "vault",
-      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }, { id: "files", title: "Files", order: 4 }, { id: "review", title: "Review", order: 5 }],
+      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }, { id: "files", title: "Files", order: 4 }, { id: "review", title: "Review", order: 5 }, { id: "visual", title: "Visual", order: 6 }],
       pollMs: 5000,
       commands: [
         { id: "reopen-n1", title: "Reopen the first note", hint: "restore n1", action: "restore", input: { id: "n1" } },

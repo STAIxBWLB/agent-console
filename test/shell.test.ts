@@ -495,6 +495,205 @@ describe("ui.review Codex fixes", () => {
   });
 });
 
+// ui.visual: text payloads through the double; the frame protocol with a fake window and frame windows.
+describe("ui.visual", () => {
+  function visualKit(opts: { io?: boolean; theme?: () => string; onTheme?: (cb: () => void) => void } = {}) {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+    const listeners: ((event: { source: unknown; data: unknown }) => void)[] = [];
+    const posted: { win: unknown; msg: Record<string, unknown> }[] = [];
+    const timers: (() => void)[] = [];
+    const frames: { win: object }[] = [];
+    class FrameNode extends KitNode {}
+    const createElement = (tag: string) => {
+      const n = tag === "iframe" ? new FrameNode(tag) : new KitNode(tag);
+      if (tag === "iframe") {
+        const win = { postMessage: (msg: Record<string, unknown>) => posted.push({ win, msg }) };
+        Object.defineProperty(n, "contentWindow", { value: win });
+        Object.defineProperty(n, "isConnected", { get: () => n.parentNode !== null });
+        (n as KitNode & { remove(): void }).remove = () => { if (n.parentNode) { n.parentNode.childNodes = n.parentNode.childNodes.filter((c) => c !== n); n.parentNode = null; } };
+        frames.push({ win });
+      }
+      return n;
+    };
+    const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null, onError: () => {}, theme: themeFn, onTheme: onThemeFn })`, {
+      themeFn: opts.theme ?? (() => "dark"), onThemeFn: opts.onTheme ?? (() => {}),
+      Node: KitNode, URLSearchParams, TypeError, document: { createElement },
+      window: { addEventListener: (type: string, fn: (event: { source: unknown; data: unknown }) => void) => { if (type === "message") listeners.push(fn); } },
+      setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
+      queueMicrotask: (fn: () => void) => fn(),
+      ...(opts.io ? { IntersectionObserver: class { constructor(private cb: (e: { isIntersecting: boolean }[]) => void) { ioCallbacks.push(cb); } observe() {} disconnect() {} } } : {}),
+    }) as ConsoleUi;
+    const ioCallbacks: ((e: { isIntersecting: boolean }[]) => void)[] = [];
+    const send = (src: unknown, data: unknown) => { for (const fn of listeners) fn({ source: src, data }); };
+    return { ui, posted, timers, frames, send, ioCallbacks };
+  }
+  const flow = "flowchart LR\n  A[Start] --> B{Ok?}\n  B -->|yes| C[Ship]";
+
+  test("AC1 + AC4: the frame is sandboxed allow-scripts only; replies from other windows are ignored; height is clamped", () => {
+    const { ui, posted, frames, send } = visualKit();
+    const root = node(ui.visual({ kind: "mermaid", source: flow, title: "Release flow" }));
+    const iframe = walk(root).find((n) => n.tagName === "IFRAME")!;
+    expect(iframe.attributes.get("sandbox")).toBe("allow-scripts");
+    expect(iframe.attributes.get("src")).toBe("/visual/frame");
+    expect(iframe.attributes.get("title")).toBe("Release flow");
+    const win = frames[0]!.win;
+    expect(posted).toHaveLength(0);
+    send({ postMessage() {} }, { acon: "visual", ready: true, ok: true });
+    expect(posted).toHaveLength(0);
+    send(win, { acon: "visual", ready: true, ok: true });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.msg).toMatchObject({ acon: "visual-render", source: flow, theme: "dark", title: "Release flow" });
+    const id = posted[0]!.msg.id;
+    send({}, { acon: "visual", id, ok: true, height: 300 });
+    expect(iframe.attributes.has("height") && iframe.attributes.get("height")).toBe("160");
+    send(win, { acon: "visual", id, ok: true, height: 999999 });
+    expect(iframe.attributes.get("height")).toBe("2000");
+    expect(walk(root).some((n) => n.className.includes("ui-visual-source"))).toBe(false);
+  });
+
+  test("AC3: invalid source, over 20 KB, and a 5 s timeout show the source with a notice", () => {
+    const invalid = visualKit();
+    const r1 = node(invalid.ui.visual({ kind: "mermaid", source: "flowchart ??? <script>" }));
+    invalid.send(invalid.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    invalid.send(invalid.frames[0]!.win, { acon: "visual", id: invalid.posted[0]!.msg.id, ok: false, error: "Parse error" });
+    expect(walk(r1).find((n) => n.className === "ui-visual-source")!.textContent).toBe("flowchart ??? <script>");
+    expect(walk(r1).find((n) => n.className.includes("ui-notice"))!.textContent).toBe("The diagram could not be drawn, so it is shown as text.");
+    expect(walk(r1).some((n) => n.tagName === "IFRAME" || n.tagName === "SCRIPT")).toBe(false);
+
+    const big = visualKit();
+    const r2 = node(big.ui.visual({ kind: "mermaid", source: `flowchart LR\n${"A-->B\n".repeat(4000)}` }));
+    expect(big.frames).toHaveLength(0);
+    expect(walk(r2).find((n) => n.className.includes("ui-notice"))!.textContent).toBe("The diagram source is over 20 KB, so it is shown as text.");
+
+    const slow = visualKit();
+    const r3 = node(slow.ui.visual({ kind: "mermaid", source: flow }));
+    slow.send(slow.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    for (const fire of slow.timers) fire();
+    expect(walk(r3).find((n) => n.className.includes("ui-notice"))!.textContent).toBe("The diagram took longer than 5 seconds, so it is shown as text.");
+    expect(walk(r3).find((n) => n.className === "ui-visual-source")!.textContent).toBe(flow);
+    // A late reply after the timeout changes nothing.
+    slow.send(slow.frames[0]!.win, { acon: "visual", id: slow.posted[0]!.msg.id, ok: true, height: 300 });
+    expect(walk(r3).some((n) => n.tagName === "IFRAME")).toBe(false);
+  });
+
+  test("lazy load: no frame until the visual is in view; a released frame is reused", () => {
+    const k = visualKit({ io: true });
+    const r = node(k.ui.visual({ kind: "mermaid", source: flow }));
+    expect(k.frames).toHaveLength(0);
+    k.ioCallbacks[0]!([{ isIntersecting: true }]);
+    expect(k.frames).toHaveLength(1);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 200 });
+    // The panel re-renders: the old visual leaves the DOM, the next diagram takes the same frame.
+    const old = walk(r).find((n) => n.tagName === "IFRAME")! as KitNode & { remove(): void };
+    old.remove();
+    k.ui.visual({ kind: "mermaid", source: flow });
+    k.ioCallbacks[1]!([{ isIntersecting: true }]);
+    expect(k.frames).toHaveLength(1);
+    // Reattaching reloads the frame document: nothing is posted until that document says it is ready again.
+    expect(k.posted).toHaveLength(1);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    expect(k.posted).toHaveLength(2);
+  });
+
+  test("a frame handed to a new diagram is not redrawn by the old one on a theme change", () => {
+    let mode = "light";
+    let onTheme: (() => void) | undefined;
+    const k = visualKit({ io: true, theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
+    const a = node(k.ui.visual({ kind: "mermaid", source: "flowchart LR\n A-->B" }));
+    k.ioCallbacks[0]!([{ isIntersecting: true }]);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 120 });
+    // A leaves the page; B takes the same pooled frame and renders.
+    (walk(a).find((n) => n.tagName === "IFRAME")! as KitNode & { remove(): void }).remove();
+    const b = node(k.ui.visual({ kind: "mermaid", source: "flowchart LR\n C-->D" }));
+    k.ioCallbacks[1]!([{ isIntersecting: true }]);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 140 });
+    expect(k.frames).toHaveLength(1);
+    mode = "dark";
+    onTheme!();
+    // Exactly one redraw, and it is B's source.
+    expect(k.posted).toHaveLength(3);
+    expect(k.posted[2]!.msg).toMatchObject({ source: "flowchart LR\n C-->D", theme: "dark" });
+    void b;
+  });
+
+  test("a theme change during a render is applied when that render finishes", () => {
+    let mode = "light";
+    let onTheme: (() => void) | undefined;
+    const k = visualKit({ theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
+    k.ui.visual({ kind: "mermaid", source: "flowchart LR\n A-->B" });
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    expect(k.posted[0]!.msg.theme).toBe("light");
+    // Still rendering the light version when the theme flips.
+    mode = "dark";
+    onTheme!();
+    expect(k.posted).toHaveLength(1);
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 120 });
+    expect(k.posted).toHaveLength(2);
+    expect(k.posted[1]!.msg.theme).toBe("dark");
+    // Flipping back and forth while busy ends on the latest mode only.
+    mode = "light"; onTheme!();
+    mode = "dark"; onTheme!();
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 120 });
+    expect(k.posted).toHaveLength(2);
+  });
+
+  test("a theme change redraws connected diagrams in their frames, once per change", () => {
+    let mode = "light";
+    let onTheme: (() => void) | undefined;
+    const k = visualKit({ theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
+    const r = node(k.ui.visual({ kind: "mermaid", source: flow }));
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    expect(k.posted[0]!.msg.theme).toBe("light");
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 200 });
+    mode = "dark";
+    onTheme!();
+    expect(k.posted).toHaveLength(2);
+    expect(k.posted[1]!.msg.theme).toBe("dark");
+    onTheme!();
+    expect(k.posted).toHaveLength(2);
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 220 });
+    expect(walk(r).find((n) => n.tagName === "IFRAME")!.attributes.get("height")).toBe("220");
+    // A diagram that left the page is not redrawn.
+    (walk(r).find((n) => n.tagName === "IFRAME")! as KitNode & { remove(): void }).remove();
+    mode = "light";
+    onTheme!();
+    expect(k.posted).toHaveLength(2);
+  });
+
+  test("AC5: comparison, table and beforeAfter render as text and kit elements", () => {
+    const { ui } = visualKit();
+    const cmp = node(ui.visual({ kind: "comparison", title: "Pick a store", options: [
+      { title: "SQLite <b>", summary: "One file", pros: ["simple"], cons: ["one writer"], recommended: true },
+      { title: "Postgres", pros: Array.from({ length: 12 }, (_, i) => `p${i}`) },
+    ] }));
+    const all = walk(cmp);
+    expect(all.some((n) => n.tagName === "B" || n.tagName === "SCRIPT")).toBe(false);
+    expect(all.find((n) => n.tagName === "H3")!.textContent).toBe("SQLite <b>");
+    expect(all.find((n) => n.className.includes("ui-visual-recommended"))!.textContent).toBe("★ Recommended");
+    expect(all.filter((n) => n.className.includes("ui-visual-option")).length).toBeGreaterThanOrEqual(2);
+    expect(walk(all.find((n) => n.className === "ui-visual-points pros" && n.textContent.startsWith("Prosp0"))!).filter((n) => n.tagName === "LI")).toHaveLength(10);
+    expect(walk(node(ui.visual({ kind: "comparison", options: [{ title: "only" }] }))).some((n) => n.textContent === "A comparison needs at least two options.")).toBe(true);
+
+    const table = node(ui.visual({ kind: "table", caption: "Costs", columns: [{ key: "a", label: "A" }], rows: [{ a: "<i>x</i>" }] }));
+    expect(walk(table).some((n) => n.className === "ui-table")).toBe(true);
+    expect(walk(table).find((n) => n.tagName === "TBODY")!.textContent).toBe("<i>x</i>");
+
+    const pair = node(ui.visual({ kind: "beforeAfter", caption: "Logo", before: { text: "<svg onload=alert(1)>" }, after: { asset: "figure.png", alt: "New logo" } }));
+    const p = walk(pair);
+    expect(p.find((n) => n.className === "ui-visual-text")!.textContent).toBe("<svg onload=alert(1)>");
+    const img = p.find((n) => n.tagName === "IMG")!;
+    expect(img.attributes.get("src")).toBe("/p/demo/asset?id=figure.png");
+    expect(img.attributes.get("alt")).toBe("New logo");
+    expect(() => ui.visual({ kind: "beforeAfter", before: { text: "a" }, after: { asset: "", alt: "x" } })).toThrow();
+    expect(() => ui.visual({ kind: "html", source: "<b>" } as never)).toThrow();
+    expect(p.some((n) => n.attributes.has("style"))).toBe(false);
+  });
+});
+
 describe("ui.review Codex fixes, round 2", () => {
   const sha = (text: string) => createHash("sha256").update(text).digest("hex");
   const kit = () => {
@@ -700,5 +899,23 @@ describe("ui.review Codex fixes, round 3", () => {
     const root = kit().review({ doc: { kind: "prose", path: "d.md", text, contentHash: sha(text) }, threads: [thread("only", 1, sha(text))], onComment() {}, onPlacement: (r) => { results = r; } }) as unknown as KitNode;
     expect(results).toEqual([{ threadId: "only", placed: false, via: null }]);
     expect(walk(root).find((n) => n.className === "ui-review-strip")!.textContent).toContain("body only");
+  });
+});
+
+describe("ui.visual Codex fixes", () => {
+  test("the frame shows Mermaid's output as an image and our frame code assigns no markup", () => {
+    const frameJs = shell("visual-frame.js");
+    expect(frameJs).not.toContain("innerHTML");
+    expect(frameJs).not.toContain("outerHTML");
+    expect(frameJs).not.toContain("insertAdjacentHTML");
+    // No inline styles from our code: sizing is width/height attributes plus /visual/frame.css.
+    expect(frameJs).not.toContain(".style");
+    expect(frameJs).not.toContain('setAttribute("style"');
+    expect(frameJs).toContain("img.width = Math.round(dims.w)");
+    const css = shell("visual-frame.css");
+    expect(css).toContain("html.dark");
+    expect(css).toContain("max-width: 100%");
+    expect(frameJs).toContain('`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`');
+    expect(frameJs).toContain("root.replaceChildren(img)");
   });
 });

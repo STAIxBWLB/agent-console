@@ -418,3 +418,34 @@ describe("action meta under acon ui (#27 AC2)", () => {
     expect(stale).toEqual({ ok: false, error: "This question was answered elsewhere; nothing was changed." });
   });
 });
+
+describe("visual frame (#29)", () => {
+  test("frame files have the frame CSP, are framable by the console only and need no plugin", async () => {
+    const { server } = await boot();
+    for (const [path, type] of [["/visual/frame", "text/html; charset=utf-8"], ["/visual/frame.css", "text/css; charset=utf-8"], ["/visual/frame.js", "text/javascript; charset=utf-8"], ["/visual/mermaid.js", "text/javascript; charset=utf-8"]] as const) {
+      const res = await fetch(`${server.origin}${path}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe(type);
+      const csp = res.headers.get("content-security-policy")!;
+      expect(csp).toBe("default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+      expect(csp).not.toContain("connect-src");
+      expect(res.headers.get("x-frame-options")).toBe("SAMEORIGIN");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      await res.arrayBuffer();
+    }
+    const html = await (await fetch(`${server.origin}/visual/frame`)).text();
+    expect(html).toContain('<script src="/visual/mermaid.js" defer></script>');
+    expect(html).toContain('<link rel="stylesheet" href="/visual/frame.css">');
+    expect(html).not.toMatch(/<script>|\son[a-z]+=|\sstyle=/);
+    // The console page itself keeps its own CSP, still framable by nobody, frames from self only.
+    const shellCsp = (await fetch(`${server.origin}/`)).headers.get("content-security-policy")!;
+    expect(shellCsp).toContain("frame-src 'self'");
+    expect(shellCsp).toContain("frame-ancestors 'none'");
+    expect(shellCsp.match(/frame-src/g)).toHaveLength(1);
+  });
+
+  test("a foreign host or origin is refused for frame files too", async () => {
+    const { server } = await boot();
+    expect((await fetch(`${server.origin}/visual/frame`, { headers: { Origin: "https://evil.example" } })).status).toBe(403);
+  });
+});

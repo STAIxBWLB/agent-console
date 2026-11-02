@@ -115,7 +115,8 @@ describe("Three.js vendoring", () => {
   });
 
   test("checked-in Three.js modules, NOTICE and manifest match independent literal pins", () => {
-    expect(readdirSync(vendor).sort()).toEqual([...Object.keys(pinnedFiles), "manifest.json"].sort());
+    // shell/vendor/mermaid is a separate vendored package with its own manifest (scripts/vendor-mermaid.ts).
+    expect(readdirSync(vendor).filter((name) => name !== "mermaid").sort()).toEqual([...Object.keys(pinnedFiles), "manifest.json"].sort());
     const manifest = readFileSync(join(vendor, "manifest.json"));
     expect(createHash("sha256").update(manifest).digest("hex")).toBe(pinnedManifestSha256);
     expect(JSON.parse(manifest.toString("utf8"))).toEqual({ schema: 1, name: "three", version: "0.187.0", license: "MIT", entries: ["three.module.js", "GLTFLoader.js"], files: pinnedFiles });

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "@mermaid-js/tiny",
+  "version": "12.2.0",
+  "license": "MIT",
+  "entry": "mermaid.js",
+  "files": {
+    "mermaid.js": {
+      "source": "dist/mermaid.tiny.js",
+      "bytes": 2811424,
+      "sha256": "ea0cdf04eb31907eb20d956a34fe300095365c876887b54ffa29f1f847f56d00"
+    },
+    "NOTICE": {
+      "source": "LICENSE",
+      "bytes": 1238,
+      "sha256": "67bc269bfd16f2eca37e893dc270a6e1abff146909c2a98937f962b05812565a"
+    }
+  }
+}

@@ -58,6 +58,14 @@ const ASSET_ID_MAX = 512;
 // Cut by code points, never inside a surrogate pair, so encodeURIComponent cannot throw on the result.
 const codePoints = (name: string, max: number) => Array.from(name).slice(0, max).join("");
 const fileName = (name: string) => codePoints(name.replace(/[^A-Za-z0-9._ -]/gu, "_"), 120) || "asset";
+/**
+ * CSP for the sandboxed Mermaid frame (#29): its own scripts and /visual/frame.css only, data: images, no connect-src
+ * (so no fetch or XHR), and only the console may frame it. style-src keeps 'unsafe-inline' for Mermaid alone: during
+ * render() it styles its own temporary measuring element and the SVG's <style>, and under style-src 'self' those
+ * are blocked, so text is measured in the wrong font and labels are laid out too narrow (checked in Chromium:
+ * 901 vs 918 px for the demo flowchart). The frame's own code sets no inline styles (test/shell.test.ts asserts it).
+ */
+export const FRAME_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 const HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -78,7 +86,12 @@ export function startServer(options: ServerOptions) {
   const startedAt = new Date(now()).toISOString();
   const serve = options.serve;
   const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
-  const files = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
+  const files: Record<string, { body: string; type: string; frame?: true }> = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
+  // Sandboxed visual frame: fixed files only, served with FRAME_CSP and framable by the console itself.
+  files["/visual/frame"] = { body: asset("visual-frame.html"), type: "text/html; charset=utf-8", frame: true };
+  files["/visual/frame.css"] = { body: asset("visual-frame.css"), type: "text/css; charset=utf-8", frame: true };
+  files["/visual/frame.js"] = { body: asset("visual-frame.js"), type: "text/javascript; charset=utf-8", frame: true };
+  files["/visual/mermaid.js"] = { body: readFileSync(new URL("../shell/vendor/mermaid/mermaid.js", import.meta.url), "utf8"), type: "text/javascript; charset=utf-8", frame: true };
   // Fixed vendored module allowlist, never a request-derived filesystem path.
   for (const name of ["three.module.js", "three.core.js", "GLTFLoader.js", "BufferGeometryUtils.js", "SkeletonUtils.js"]) files[`/vendor/${name}`] = { body: asset(`vendor/${name}`), type: "text/javascript; charset=utf-8" };
   // tools: the current load per tool, for new pages. refs: every load since start, so an open page keeps its version.
@@ -276,7 +289,7 @@ export function startServer(options: ServerOptions) {
         : reject(404, "unknown tool");
       if (req.method === "GET") {
         const file = files[path];
-        if (file) return new Response(file.body, { headers: { ...HEADERS, "Content-Type": file.type } });
+        if (file) return new Response(file.body, { headers: { ...HEADERS, ...(file.frame ? { "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "private, max-age=3600" } : {}), "Content-Type": file.type } });
         if (plugin && (plugin[2] === "panel.js" || plugin[2] === "panel.css")) {
           if (!live) return reject(401, "session expired or missing; run acon ui");
           const entry = pluginEntry();

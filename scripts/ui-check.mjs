@@ -88,7 +88,12 @@ function fixturePanel(host) {
       ],
       onComment: (c) => { review.dataset.lastComment = JSON.stringify(c); },
     }));
-    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics, review);
+    const visual = ui.h("section", { "data-ui-check": "visual" },
+      ui.visual({ kind: "mermaid", title: "Fixture flow", source: "flowchart LR\n  A[Draft] --> B{Review}\n  B -->|ok| C[Ship]" }),
+      ui.visual({ kind: "comparison", title: "Fixture options", options: [{ title: "First option with a longer name", pros: ["fast"], cons: ["new"], recommended: true }, { title: "Second", summary: "Kept for comparison" }] }),
+      ui.visual({ kind: "beforeAfter", caption: "Fixture change", before: { text: "old <b>text</b>" }, after: { text: "new text" } }),
+      ui.visual({ kind: "mermaid", title: "Fixture broken", source: "flowchart LR\n  A -->" }));
+    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics, review, visual);
   });
   return { show(id, params) { panel = id; selected = params?.id; }, hide() {}, destroy() { mount.remove(); } };
 }
@@ -518,6 +523,7 @@ async function runScenario(ticket, scenario, fallback = false) {
     await capture(page, scenario, "panel-form", typingFinding);
     await capture(page, scenario, "panel-metrics", await checkMetrics(page));
     await capture(page, scenario, "panel-review", await checkReview(page));
+    await capture(page, scenario, "panel-visual", await checkVisual(page));
     await page.evaluate(() => { location.hash = "#/local/demo/archive"; });
     await page.locator("#tabs .tab:last-child[aria-selected='true']").waitFor();
     await settle(page);
@@ -594,6 +600,47 @@ async function checkReview(page) {
     return out;
   });
   if (!typed) findings.push({ kind: "review-keyboard", detail: "Enter on the gutter did not move focus to the comment box" });
+  return findings;
+}
+
+/** Visual kit checks: sandboxed frame renders, broken source falls back to text, cards fit, no markup from data. */
+async function checkVisual(page) {
+  const section = page.locator("[data-ui-check='visual']");
+  await section.locator(".ui-visual-mermaid").first().scrollIntoViewIfNeeded();
+  await section.locator(".ui-visual-mermaid").last().scrollIntoViewIfNeeded();
+  const done = await page.waitForFunction(() => {
+    const root = document.querySelector("[data-ui-check='visual']");
+    return root && root.querySelector(".ui-visual-frame[height]:not(.ui-visual-loading)") && root.querySelector(".ui-visual-source");
+  }, null, { timeout: 8000 }).then(() => true, () => false);
+  await section.locator(".ui-visual-mermaid").first().scrollIntoViewIfNeeded();
+  await settle(page);
+  const findings = await section.evaluate((root) => {
+    const out = [];
+    const add = (kind, detail) => out.push({ kind, detail });
+    const frame = root.querySelector(".ui-visual-frame");
+    if (!frame || frame.getAttribute("sandbox") !== "allow-scripts") add("visual-sandbox", "Diagram frame missing or not sandbox=allow-scripts only");
+    const h = Number(frame?.getAttribute("height"));
+    if (!(h >= 80 && h <= 2000)) add("visual-height", `Frame height ${frame?.getAttribute("height")}`);
+    if (root.querySelector(".ui-visual-source")?.textContent !== "flowchart LR\n  A -->") add("visual-fallback", "Broken diagram did not fall back to its source");
+    if (root.querySelector("b, script, svg")) add("visual-markup", "Visual data rendered as markup in the console document");
+    const styled = [...root.querySelectorAll("[style]")].find((n) => n.getAttribute("style").trim());
+    if (styled) add("inline-style", `Visual output carries a style attribute: ${styled.tagName}.${styled.className}`);
+    if (!root.querySelector(".ui-visual-option.recommended .ui-visual-recommended")?.textContent.includes("Recommended")) add("visual-recommended", "Recommended option is not marked by text");
+    const width = root.getBoundingClientRect().width;
+    for (const el of root.querySelectorAll(".ui-visual-frame, .ui-visual-options, .ui-visual-pair, .ui-visual-source")) if (el.getBoundingClientRect().width > width + 1) add("visual-overflow", `${el.className} wider than its panel`);
+    return out;
+  });
+  if (!done) findings.push({ kind: "visual-render", detail: "Diagram did not render or fall back within 8 s" });
+  // Re-render the panel: the pooled frame is detached and reattached, so it must wait for a new handshake.
+  const hash = await page.evaluate(() => location.hash);
+  await page.evaluate(() => { location.hash = "#/local/demo/log"; });
+  await settle(page);
+  await page.evaluate((h) => { location.hash = h; }, hash);
+  await page.waitForFunction(() => document.querySelector(".panel-mount:not([hidden]) [data-ui-check='visual'] .ui-visual-mermaid")?.isConnected, null, { timeout: 8000 }).catch(() => {});
+  await settle(page);
+  await page.evaluate(() => document.querySelector(".panel-mount:not([hidden]) [data-ui-check='visual'] .ui-visual-mermaid")?.scrollIntoView({ block: "center" }));
+  const redrawn = await page.waitForFunction(() => Boolean(document.querySelector(".panel-mount:not([hidden]) [data-ui-check='visual'] .ui-visual-mermaid .ui-visual-frame[height]:not(.ui-visual-loading)")), null, { timeout: 8000 }).then(() => true, () => false);
+  if (!redrawn) findings.push({ kind: "visual-reuse", detail: "A reused diagram frame did not render after the panel re-rendered" });
   return findings;
 }
 
