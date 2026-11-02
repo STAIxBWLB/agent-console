@@ -696,8 +696,15 @@ function answerForm(item, verb, draft, submit, redraw) {
   const form = verb.form;
   const name = (q) => `${item.key}:${q.id}`;
   const error = h("p", { class: "answer-error", role: "alert", text: draft.error });
+  const reasonMissing = () => verb.reason === "required" && !str(draft.reason).trim();
   const next = () => {
     const r = formAnswers(form, draft);
+    if (!r.missing && reasonMissing()) {
+      draft.error = "A reason is required.";
+      error.textContent = draft.error;
+      el.querySelector(".answer-reason")?.focus();
+      return;
+    }
     if (r.missing) {
       draft.error = `Choose your answer for: ${r.missing.map((id) => { const q = form.questions.find((x) => x.id === id); return `${q?.header ?? q?.prompt} (${q?.multiple ? "one or more" : "exactly one"})`; }).join("; ")}.`;
       error.textContent = draft.error;
@@ -709,12 +716,13 @@ function answerForm(item, verb, draft, submit, redraw) {
     submit(r.answers);
   };
   // A poll can change the question under the review step: with an answer now missing, go back to editing.
-  if (draft.step === "review" && formAnswers(form, draft).missing) { draft.step = "edit"; draft.error = "The question changed; check your answers again."; error.textContent = draft.error; }
+  if (draft.step === "review" && (formAnswers(form, draft).missing || reasonMissing())) { draft.step = "edit"; draft.error = "The question changed; check your answers again."; error.textContent = draft.error; }
   if (draft.step === "review") {
     const r = formAnswers(form, draft);
     const el = h("div", { class: "answer-form answer-review", role: "group", "aria-label": `Review answers for ${verb.label}` },
       h("h3", { text: "Review your answers" }),
-      h("dl", { class: "kv" }, form.questions.flatMap((q) => [h("dt", { text: q.header ?? q.prompt }), h("dd", { text: r.answers ? choiceText(q, r.answers[q.id]) : "" })])),
+      h("dl", { class: "kv" }, form.questions.flatMap((q) => [h("dt", { text: q.header ?? q.prompt }), h("dd", { text: r.answers ? choiceText(q, r.answers[q.id]) : "" })]),
+        str(draft.reason).trim() ? [h("dt", { text: "Reason" }), h("dd", { text: str(draft.reason).trim() })] : []),
       error,
       h("div", { class: "sheet-verbs" },
         h("button", { type: "button", class: "btn primary answer-submit", onclick: () => submit(r.answers), text: `Submit: ${verb.label}` }),
@@ -750,6 +758,9 @@ function answerForm(item, verb, draft, submit, redraw) {
         h("span", { class: "answer-label" }, h("span", { text: o.label }), o.description ? h("small", { text: o.description }) : null))),
       other ? h("label", { class: "answer-opt answer-other" }, h("span", { class: "answer-label", text: q.other.label ?? "Other" }), other) : null);
   }),
+  // A verb may ask for a reason as well as answers; it is sent as `reason`, like the inline reason box.
+  verb.reason ? h("label", { class: "answer-opt answer-other" }, h("span", { class: "answer-label", text: `Reason${verb.reason === "required" ? " (required)" : " (optional)"}` }),
+    h("input", { type: "text", class: "answer-other-text answer-reason", maxlength: "500", autocomplete: "off", value: str(draft.reason), oninput: (e) => { draft.reason = e.target.value; } })) : null,
   error,
   h("div", { class: "sheet-verbs" }, h("button", { type: "submit", class: "btn primary answer-submit", text: form.questions.length > 1 ? "Review answers" : `Submit: ${verb.label}` })));
   return el;
@@ -763,7 +774,8 @@ function openAnswer(item, verb) {
 async function submitAnswer(item, verb, answers) {
   const draftKey = `${item.key}\n${verb.id}`;
   const draft = draftFor(draftKey);
-  const result = await runAction(item.tool, { action: verb.id, id: item.id, answers }, { label: verb.label, inbox: false });
+  const reason = str(draft.reason).trim();
+  const result = await runAction(item.tool, { action: verb.id, id: item.id, answers, ...(reason ? { reason } : {}) }, { label: verb.label, inbox: false });
   if (result?.ok) {
     drafts.delete(draftKey);
     const list = sortedItems();
@@ -1529,6 +1541,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); moveSelection(1); }
   else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); moveSelection(-1); }
   else if (!item) return;
+  // Keys that act on an item must act on the one the peek shows (a just-read result stays shown after it left the list).
+  else if ($("sheet").contains(e.target) && state.peekKey !== `item:${item.key}` && ["1", "2", "h", "Enter", " "].includes(e.key)) return;
   else if (e.key === " " && $("sheet").contains(e.target)) return; // Space presses the focused sheet button
   else if (e.key === " ") { e.preventDefault(); if (state.peekKey === `item:${item.key}`) closeSheet(); else openPeek(item.key); }
   else if (e.key === "Enter" && e.target.classList?.contains("row-main")) { e.preventDefault(); openItem(item); }
@@ -1537,7 +1551,7 @@ document.addEventListener("keydown", (e) => {
     const verb = verbs[Number(e.key) - 1];
     // 1 on a form verb focuses the form in the peek, or submits it when focus is already on the form's button.
     const inForm = e.target.closest?.(".answer-form");
-    if (verb?.form && inForm) { e.preventDefault(); inForm.querySelector(".answer-submit")?.click(); }
+    if (verb?.form && inForm && verb.id === chosenForm.get(item.key)) { e.preventDefault(); inForm.querySelector(".answer-submit")?.click(); }
     else if (verb) { e.preventDefault(); runVerb(item, verb); }
   } else if (e.key === "h") { e.preventDefault(); snooze(item); }
 });

@@ -320,8 +320,8 @@ describe("inbox answers and seen receipts (#27)", () => {
     const js = shell("shell.js");
     const block = js.slice(js.indexOf("function answerForm("), js.indexOf("function openAnswer("));
     // The check sits before the review branch builds its Submit button.
-    expect(block.indexOf('draft.step === "review" && formAnswers(form, draft).missing')).toBeGreaterThan(-1);
-    expect(block.indexOf('draft.step === "review" && formAnswers(form, draft).missing')).toBeLessThan(block.indexOf("answer-submit"));
+    expect(block.indexOf('draft.step === "review" && (formAnswers(form, draft).missing')).toBeGreaterThan(-1);
+    expect(block.indexOf('draft.step === "review" && (formAnswers(form, draft).missing')).toBeLessThan(block.indexOf("answer-submit"));
   });
 
   test("a single-choice question refuses a draft with several choices or an option plus Other", () => {

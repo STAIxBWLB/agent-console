@@ -21,14 +21,14 @@ const RESULT_BODY = (n: number) => Array.from({ length: 40 }, (_, i) => `Result 
 
 export function createAskPlugin() {
   const calls: { input: Record<string, unknown>; meta?: ActionMeta }[] = [];
-  const open = new Set(["q1", "q2", "q3", "r1", "r2"]);
+  const open = new Set(["q1", "q2", "q3", "q4", "r1", "r2"]);
   const at = new Date(Date.UTC(2026, 10, 1, 9)).toISOString();
   const plugin: ConsolePlugin & { calls: typeof calls } = {
     calls,
     manifest: {
       api: 1, tool: "ask", version: "0.0.1", title: "Ask", icon: "agents",
       panels: [{ id: "log", title: "Log" }],
-      capabilities: { actions: ["answer", "decline", "seen", "assign", "suggest"], inbox: true },
+      capabilities: { actions: ["answer", "decline", "seen", "assign", "suggest", "approve"], inbox: true },
     },
     async open(ctx) {
       const features = new Set(ctx.features ?? []);
@@ -42,6 +42,10 @@ export function createAskPlugin() {
           if (open.has("q3")) out.push({ id: "q3", group: "decision", kind: "question", title: "Who reviews the release?", actor: "codex", at, verbs: [
             { id: "assign", label: "Assign", primary: true, form: { questions: [{ id: "who", prompt: "Assign a reviewer", options: [{ id: "kimi", label: "kimi" }, { id: "pi", label: "pi" }] }] } },
             { id: "suggest", label: "Suggest", form: { questions: [{ id: "who", prompt: "Suggest reviewers", multiple: true, options: [{ id: "codex", label: "codex" }, { id: "jcode", label: "jcode" }] }] } },
+          ], link: { panel: "log" } });
+          // q4's form verb also requires a reason.
+          if (open.has("q4")) out.push({ id: "q4", group: "decision", kind: "question", title: "Approve the rollout?", actor: "codex", at, verbs: [
+            { id: "approve", label: "Approve", primary: true, reason: "required", form: { questions: [{ id: "scope", prompt: "Roll out to", options: [{ id: "all", label: "All nodes" }, { id: "mac", label: "The Mac node only" }] }] } },
           ], link: { panel: "log" } });
           if (open.has("q2")) out.push({ id: "q2", group: "decision", kind: "question", title: "Superseded question", actor: "codex", at, verbs: [{ id: "answer", label: "Answer", primary: true, form: { questions: [FORM.questions[1]!] } }], link: { panel: "log" } });
         }
@@ -64,6 +68,11 @@ export function createAskPlugin() {
             if (!open.has(id)) return { ok: false, error: "This question is no longer open." };
             open.delete(id);
             return { ok: true, message: "Answer recorded" };
+          }
+          if (input.action === "approve") {
+            if (typeof input.reason !== "string" || !input.reason) return { ok: false, error: "A reason is required to approve." };
+            if (!open.delete(id)) return { ok: false, error: `${id} is not waiting.` };
+            return { ok: true, message: "approve recorded" };
           }
           if (input.action === "assign" || input.action === "suggest") {
             if (!open.delete(id)) return { ok: false, error: `${id} is not waiting.` };
