@@ -18,7 +18,10 @@ describe("versioned console install (#26)", () => {
     const first = installRelease({ root, home });
     expect(first.reused).toBe(false);
     expect(existsSync(join(first.dir, "bin", "acon.js"))).toBe(true);
-    expect(existsSync(join(first.dir, "test"))).toBe(false); // package files only
+    // Package files only: no test code. The shared review fixture (#28) is published on purpose.
+    expect(existsSync(join(first.dir, "test", "server.test.ts"))).toBe(false);
+    expect(existsSync(join(first.dir, "test", "fixtures", "demo-plugin.ts"))).toBe(false);
+    expect(existsSync(join(first.dir, "test", "fixtures", "review", "cases.json"))).toBe(true);
     expect(readlinkSync(join(home, "console", "current"))).toBe(join("releases", first.name));
     const shellBefore = readFileSync(join(first.dir, "shell", "shell.js"), "utf8");
 
