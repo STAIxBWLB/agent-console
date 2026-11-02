@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { inboxItemProblems, registerConsoleConformance, reviewAnchorProblems, reviewCaseValue, reviewProblems, reviewThreadProblems, stableAtProblems, verbFormProblems } from "../src/conformance.ts";
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
@@ -119,4 +120,23 @@ test("the demo review threads pass reviewProblems", async () => {
   const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
   const snap = await provider.snapshot({ after: 0, panel: "review" }) as { review: { threads: unknown } };
   expect(reviewProblems(snap.review.threads)).toEqual([]);
+});
+
+test("the demo review panel rejects onComment when the action fails, so the draft is kept", async () => {
+  const plugin = createDemoPlugin();
+  const provider = await plugin.open({ home: "/tmp", log: () => {} });
+  const file = join(mkdtempSync(join(tmpdir(), "acon-panel-")), "panel.mjs");
+  writeFileSync(file, provider.assets.js);
+  const panel = (await import(file)).default;
+  let review: { onComment(c: { anchor: unknown; body: string }): Promise<unknown> } | undefined;
+  let listener: ((snap: Record<string, unknown>) => void) | undefined;
+  let answer: Record<string, unknown> = { ok: false, error: "offline" };
+  const node = () => ({ dataset: {}, append() {}, replaceChildren() {}, remove() {} });
+  const ui = { h: node, empty: node, link: node, review: (o: typeof review) => { review = o; return node(); } };
+  const instance = panel({ tool: "demo", mount: node(), ui, onSnapshot: (cb: typeof listener) => { listener = cb; }, action: async () => answer, navigate() {} });
+  instance.show("review", {});
+  listener!(await provider.snapshot({ after: 0, panel: "review" }));
+  await expect(review!.onComment({ anchor: {}, body: "x" })).rejects.toThrow("offline");
+  answer = { ok: true };
+  await expect(review!.onComment({ anchor: {}, body: "x" })).resolves.toBeUndefined();
 });

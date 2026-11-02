@@ -361,11 +361,20 @@ function reviewView(o, openSheet, onError) {
   const results = threads.map((thread) => {
     const r = reviewPlace(doc, rows, sides, thread, cut);
     const id = String(thread?.id ?? "");
-    if (r.placed) {
+    // Prose units skip blank lines: a range that lands only on blank lines marks the next paragraph (else the
+    // previous one); with no paragraph at all it goes to the strip, so every thread is shown somewhere.
+    let ks = r.placed ? [...new Set(r.rows.map((i) => unitOf.get(i)).filter((k) => k !== undefined))] : [];
+    if (r.placed && !ks.length && units.length) {
+      const at = r.rows[0] ?? 0;
+      const next = units.findIndex((u) => u.a > at);
+      ks = [next >= 0 ? next : units.length - 1];
+    }
+    const shown = r.placed && ks.length > 0;
+    if (shown) {
       placed.push(thread);
-      for (const k of new Set(r.rows.map((i) => unitOf.get(i)).filter((k) => k !== undefined))) (marks.get(k) ?? marks.set(k, []).get(k)).push(thread);
+      for (const k of ks) (marks.get(k) ?? marks.set(k, []).get(k)).push(thread);
     } else unplaced.push(thread);
-    return { threadId: id, placed: r.placed, via: r.via };
+    return { threadId: id, placed: shown, via: shown ? r.via : null };
   });
   const status = h("p", { class: "ui-review-status", role: "status", "aria-live": "polite" });
   const textarea = h("textarea", { class: "ui-review-input", name: "comment", rows: "3", maxlength: String(REVIEW.body), required: true, "aria-label": "Comment" });

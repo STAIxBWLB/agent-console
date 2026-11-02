@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
-import type { ConsoleUi } from "../src/contract.ts";
+import type { ConsoleUi, ReviewThread } from "../src/contract.ts";
 
 const shell = (name: string) => readFileSync(join(import.meta.dir, "..", "shell", name), "utf8");
 
@@ -668,5 +668,37 @@ describe("inbox answers and seen receipts (#27)", () => {
     expect(js).toMatch(/const NEEDS_ME = new Set\(\["decision", "review", "candidate"\]\)/);
     expect(js).toContain("!v.reason && !v.form");
     expect(js).toContain('["result", "Results"]');
+  });
+});
+
+describe("ui.review Codex fixes, round 3", () => {
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  const kit = () => {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+    return runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null, onError: () => {} })`, {
+      Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+    }) as ConsoleUi;
+  };
+  const thread = (id: string, startLine: number, hash: string): ReviewThread => ({ id, author: "a", at: "2026-11-02T00:00:00Z", body: `body ${id}`, anchor: { path: "d.md", contentHash: hash, selectors: [{ kind: "lineRange", startLine, endLine: startLine }] } });
+
+  test("a hash placement on a blank prose line marks the nearest paragraph, never vanishes", () => {
+    const text = "First para\n\nSecond para\n\n";
+    let results: unknown[] = [];
+    const root = kit().review({ doc: { kind: "prose", path: "d.md", text, contentHash: sha(text) }, threads: [thread("gap", 2, sha(text)), thread("tail", 4, sha(text))], onComment() {}, onPlacement: (r) => { results = r; } }) as unknown as KitNode;
+    expect(results).toEqual([{ threadId: "gap", placed: true, via: "hash" }, { threadId: "tail", placed: true, via: "hash" }]);
+    const marked = walk(root).filter((n) => n.className.includes("ui-review-has-thread")).map((n) => walk(n).find((c) => c.className === "ui-review-src")!.textContent);
+    // Line 2 is between paragraphs: the next one. Line 4 is after the last: the previous one.
+    expect(marked).toEqual(["Second para"]);
+    expect(walk(root).find((n) => n.className === "ui-review-mark")!.textContent).toBe("2 comments");
+    expect(walk(root).some((n) => n.className === "ui-review-strip")).toBe(false);
+  });
+
+  test("a prose doc with no paragraph puts a blank-line thread in the strip and reports it unplaced", () => {
+    const text = "\n\n";
+    let results: unknown[] = [];
+    const root = kit().review({ doc: { kind: "prose", path: "d.md", text, contentHash: sha(text) }, threads: [thread("only", 1, sha(text))], onComment() {}, onPlacement: (r) => { results = r; } }) as unknown as KitNode;
+    expect(results).toEqual([{ threadId: "only", placed: false, via: null }]);
+    expect(walk(root).find((n) => n.className === "ui-review-strip")!.textContent).toContain("body only");
   });
 });

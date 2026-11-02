@@ -27,7 +27,11 @@ const demoPanel = (host: ConsoleHost) => {
     if (panel === "review") {
       const r = snap.review as { draft: ReviewDoc; diff: ReviewDoc; threads: ReviewThread[] } | undefined;
       if (!r) { list.replaceChildren(ui.empty("Nothing to review")); return; }
-      const send = (c: { anchor: unknown; body: string }) => host.action({ action: "comment", anchor: c.anchor, body: c.body });
+      // Reject on failure so ui.review keeps the draft and says it was not sent.
+      const send = async (c: { anchor: unknown; body: string }) => {
+        const result = await host.action({ action: "comment", anchor: c.anchor, body: c.body });
+        if (!result.ok) throw new Error("error" in result ? result.error : "comment not saved");
+      };
       const view = selected === "diff" ? r.diff : r.draft;
       list.replaceChildren(
         ui.h("p", {}, "View: ", ui.link({ panel: "review" }, "Draft"), " · ", ui.link({ panel: "review", params: { id: "diff" } }, "Diff")),
