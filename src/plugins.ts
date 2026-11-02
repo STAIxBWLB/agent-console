@@ -3,7 +3,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
+import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, CONSOLE_FEATURES, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
 export const pluginDir = (home: string): string => join(home, "console", "plugins");
@@ -340,7 +340,7 @@ async function loadOne(entry: PluginEntry, ctx: ConsoleContext): Promise<PluginE
     if (!plugin || typeof plugin.open !== "function") return { ...entry, status: "failed", reason: "module exports no console plugin" };
     const problems = manifestProblems(plugin.manifest, entry.tool);
     if (problems.length) return { ...entry, status: "failed", reason: problems[0] };
-    const provider = await withTimeout(plugin.open(ctx), OPEN_MS, "open()");
+    const provider = await withTimeout(plugin.open({ ...ctx, features: [...CONSOLE_FEATURES] }), OPEN_MS, "open()");
     const pp = providerProblems(provider);
     if (pp.length) return { ...entry, status: "failed", reason: pp[0] };
     // The manifest goes to the browser as JSON; a value that cannot (BigInt, cycles) fails this plugin only.

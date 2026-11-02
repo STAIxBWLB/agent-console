@@ -53,6 +53,22 @@ export interface ConsoleContext {
   /** Family home ($AGENTHUB_HOME or ~/.agenthub). */
   home: string;
   log(line: string): void;
+  /**
+   * What this console renders beyond api 1's base (#27); set by the console, absent in older consoles. Send verb
+   * `form`s only with "inbox.form" and `result` items only with "inbox.result"; "action.meta" means action() gets `meta`.
+   */
+  features?: readonly string[];
+}
+
+/** Features this console advertises in ConsoleContext.features. */
+export const CONSOLE_FEATURES = ["inbox.form", "inbox.result", "action.meta"] as const;
+
+/** Who acted, built by the console from the verified session; the page cannot set it (#27). */
+export interface ActionMeta {
+  /** "local" under `acon ui`; under `acon serve` "access:<subject>", "bearer" or "loopback", as authenticated. */
+  identity: string;
+  node: string;
+  via: "console";
 }
 
 export interface ConsolePlugin {
@@ -64,7 +80,8 @@ export interface ConsoleProvider {
   /** panel.js is an ES module: `export default (host) => ({ show(panelId, params), hide(), destroy() })`. */
   assets: { js: string; css?: string };
   snapshot(input: { after: number; panel: string } & Record<string, unknown>): Promise<Record<string, unknown>>;
-  action(input: { action: string; confirmed?: true; fingerprint?: string } & Record<string, unknown>): Promise<ActionResult>;
+  /** `meta` is present when the console advertises "action.meta"; tools use it as evidence of who acted, under their own rules. */
+  action(input: { action: string; confirmed?: true; fingerprint?: string } & Record<string, unknown>, meta?: ActionMeta): Promise<ActionResult>;
   /** Optional file for GET /p/<tool>/asset?id=; null when the id is unknown. Types: see README "Plugin assets". */
   asset?(input: { id: string }): Promise<{ bytes: Uint8Array; mime: string; name: string } | null>;
   close?(): Promise<void>;
@@ -88,7 +105,8 @@ export type ActionResult =
       confirmText?: string;
     };
 
-export type InboxGroup = "decision" | "review" | "candidate" | "alert";
+/** "result" needs the "inbox.result" feature (#27); an older console reports it as malformed. */
+export type InboxGroup = "decision" | "review" | "result" | "candidate" | "alert";
 export type Tone = "ok" | "warn" | "err" | "neutral";
 
 export interface InboxItem {
@@ -103,9 +121,33 @@ export interface InboxItem {
   at: string;
   chip?: { text: string; tone: Tone };
   /** With `reason`, the shell asks for a reason and sends it as `reason` in the action input; "required" refuses an empty one. */
-  verbs: { id: string; label: string; primary?: boolean; destructive?: boolean; reason?: "optional" | "required" }[];
+  verbs: InboxVerb[];
   link: { panel: string; params?: Record<string, string> };
+  /**
+   * For `result` items: the shell runs action({action, id, seenAt}) once per page session after the result body was
+   * in view for 1 s in a focused, visible window, and with `explicit: true` from "Mark all read".
+   */
+  seen?: { action: string };
 }
+
+export interface InboxVerb {
+  id: string; label: string; primary?: boolean; destructive?: boolean; reason?: "optional" | "required";
+  /** Choice questions (needs "inbox.form"); submit sends action({action: id, id: item.id, answers}). */
+  form?: VerbForm;
+}
+
+/** Bounds: 1-4 questions, 2-8 options, label <= 80, description <= 240, prompt <= 1000, other.maxLength <= 1000 (500). */
+export interface VerbForm {
+  questions: {
+    id: string; header?: string; prompt: string;
+    options: { id: string; label: string; description?: string }[];
+    multiple?: boolean;
+    other?: { label?: string; maxLength?: number };
+  }[];
+}
+
+/** Answers by question id: chosen option ids, and the "Other" text when given. */
+export type InboxAnswers = Record<string, { selected: string[]; other?: string }>;
 
 export interface SearchHit {
   id: string;

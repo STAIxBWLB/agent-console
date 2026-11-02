@@ -1,6 +1,6 @@
 // acon shell (H0). Vanilla ES module under a strict CSP: no inline code, and data is rendered as text, never as markup.
 const NODE = "local";
-const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["candidate", "Candidates"], ["alert", "Alerts"]];
+const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["result", "Results"], ["candidate", "Candidates"], ["alert", "Alerts"]];
 const NEEDS_ME = new Set(["decision", "review", "candidate"]);
 const TOOL_ORDER = ["ahub", "amem", "vmem"];
 const TOKENS = ["bg", "surface", "surface-2", "line", "line-2", "text", "text-2", "accent", "accent-soft", "accent-text", "on-accent", "ok", "ok-soft", "warn", "warn-soft", "err", "err-soft", "focus"].map((t) => `--acon-${t}`);
@@ -468,7 +468,8 @@ function visibleItems() {
   return out;
 }
 function validItem(i) {
-  return i && typeof i === "object" && str(i.id) && str(i.title) && GROUPS.some(([g]) => g === i.group) && Array.isArray(i.verbs) && i.verbs.every((v) => v && typeof v === "object" && str(v.id) && str(v.label)) && i.link && str(i.link.panel);
+  return i && typeof i === "object" && str(i.id) && str(i.title) && GROUPS.some(([g]) => g === i.group) && Array.isArray(i.verbs) && i.verbs.every((v) => v && typeof v === "object" && str(v.id) && str(v.label) && (v.form === undefined || validForm(v.form))) && i.link && str(i.link.panel)
+    && (i.seen === undefined || Boolean(i.seen && str(i.seen.action)));
 }
 let inboxSeq = 0;
 const inboxApplied = new Map();
@@ -501,10 +502,11 @@ function sortedItems() {
 }
 function leadText(items) {
   const n = (g) => items.filter((i) => i.group === g).length;
-  const d = n("decision"), rv = n("review"), c = n("candidate"), a = n("alert");
+  const d = n("decision"), rv = n("review"), c = n("candidate"), a = n("alert"), rs = n("result");
   if (!items.length) return ["Nothing needs you right now.", "New decisions, reviews and candidates from your tools appear here."];
-  const head = d ? `${plural(d, "decision")} ${d === 1 ? "needs" : "need"} you.` : rv ? `${plural(rv, "review")} ${rv === 1 ? "waits" : "wait"} for you.` : c ? `${plural(c, "candidate")} ${c === 1 ? "waits" : "wait"} for you.` : `${plural(a, "alert")}.`;
-  const rest = [d && rv ? plural(rv, "review") : "", (d || rv) && c ? plural(c, "candidate") : "", (d || rv || c) && a ? plural(a, "alert") : ""].filter(Boolean);
+  // Results are counted on their own: they are to read, not to decide.
+  const head = d ? `${plural(d, "decision")} ${d === 1 ? "needs" : "need"} you.` : rv ? `${plural(rv, "review")} ${rv === 1 ? "waits" : "wait"} for you.` : c ? `${plural(c, "candidate")} ${c === 1 ? "waits" : "wait"} for you.` : a ? `${plural(a, "alert")}.` : `${plural(rs, "result")} to read.`;
+  const rest = [d && rv ? plural(rv, "review") : "", (d || rv || c || a) && rs ? `${plural(rs, "result")} to read` : "", (d || rv) && c ? plural(c, "candidate") : "", (d || rv || c) && a ? plural(a, "alert") : ""].filter(Boolean);
   return [head, rest.length ? `Also waiting: ${rest.join(", ")}.` : "Oldest first in each group."];
 }
 function renderInbox(force = false) {
@@ -531,7 +533,8 @@ function renderInbox(force = false) {
     const group = items.filter((i) => i.group === g);
     if (!group.length) continue;
     kids.push(h("section", { class: "group", "aria-labelledby": `g-${g}` },
-      h("h2", { id: `g-${g}` }, h("span", { text: label }), h("span", { class: "badge", text: String(group.length) })),
+      h("h2", { id: `g-${g}` }, h("span", { text: label }), h("span", { class: "badge", text: String(group.length) }),
+        g === "result" && group.some((i) => i.seen) ? h("button", { type: "button", class: "btn group-command", onclick: () => markAllRead(group), text: "Mark all read" }) : null),
       h("ul", { class: "rows" }, group.map(rowFor))));
   }
   view.replaceChildren(...kids);
@@ -543,6 +546,7 @@ function renderInbox(force = false) {
 function whose(item) {
   if (item.group === "alert") return h("span", { class: "whose alert", title: "Alert" }, icon("alert"));
   if (item.group === "decision") return h("span", { class: "whose you", title: "Your move" }, icon("you"));
+  if (item.group === "result") return h("span", { class: "whose", title: "Result to read" }, icon("review"));
   return h("span", { class: "whose", title: item.group === "review" ? "Ready for review" : "Candidate" }, icon(item.group === "review" ? "review" : "candidate"));
 }
 function subline(item) {
@@ -586,6 +590,7 @@ function moveSelection(step) {
 }
 const selectedItem = () => sortedItems().find((i) => i.key === state.selectedKey);
 async function runVerb(item, verb, reason, extra = {}) {
+  if (verb.form) { openAnswer(item, verb); return; }
   if ((verb.reason === "required" || verb.reason === "optional") && reason === undefined) { askReason(item, verb); return; }
   const list = sortedItems();
   const i = list.findIndex((x) => x.key === item.key);
@@ -640,6 +645,194 @@ function closeReason(refocus) {
   el.remove();
   if (refocus) (inSheet ? $("sheet-body").querySelector(".item-verbs .btn") : $("view-inbox").querySelector(`.row[data-key="${CSS.escape(key)}"] .row-main`))?.focus({ preventScroll: true });
 }
+// ---------- inbox answers (#27) ----------
+// A verb with a form asks choice questions in the peek. The draft lives in page memory per item, survives re-renders
+// and a refused answer, and is never stored by the console: the tool decides whether an answer is accepted.
+const FORM_MAX = { label: 80, description: 240, prompt: 1000, other: 1000, otherDefault: 500 };
+const within = (v, max) => typeof v === "string" && v.length > 0 && v.length <= max;
+function validForm(f) {
+  if (!f || !Array.isArray(f.questions) || f.questions.length < 1 || f.questions.length > 4) return false;
+  const ids = new Set();
+  return f.questions.every((q) => {
+    if (!q || !within(q.id, 64) || ids.has(q.id) || !within(q.prompt, FORM_MAX.prompt) || (q.header !== undefined && !within(q.header, FORM_MAX.label))) return false;
+    ids.add(q.id);
+    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 8) return false;
+    const oids = new Set();
+    const okOptions = q.options.every((o) => o && within(o.id, 64) && !oids.has(o.id) && oids.add(o.id) && within(o.label, FORM_MAX.label) && (o.description === undefined || within(o.description, FORM_MAX.description)));
+    const okOther = q.other === undefined || (q.other && typeof q.other === "object" && (q.other.label === undefined || within(q.other.label, FORM_MAX.label))
+      && (q.other.maxLength === undefined || (Number.isSafeInteger(q.other.maxLength) && q.other.maxLength >= 1 && q.other.maxLength <= FORM_MAX.other)));
+    return okOptions && okOther && (q.multiple === undefined || typeof q.multiple === "boolean");
+  });
+}
+// The form verb the person chose per item (an item may offer more than one); the first form verb by default.
+const chosenForm = new Map();
+const formVerb = (item) => item.verbs.find((v) => v.form && v.id === chosenForm.get(item.key)) ?? item.verbs.find((v) => v.form) ?? null;
+// Drafts are per item and verb, so switching between two forms never mixes their answers.
+const drafts = new Map();
+function draftFor(key) {
+  // Question ids are tool data: a null-prototype record keeps ids like "constructor" or "__proto__" ordinary keys.
+  if (!drafts.has(key)) drafts.set(key, { step: "edit", error: "", q: Object.create(null) });
+  return drafts.get(key);
+}
+/** Answers from a draft, or the ids of questions that still have no choice. Text, not focus, makes "Other" an answer. */
+function formAnswers(form, draft) {
+  const answers = Object.create(null);
+  const missing = [];
+  for (const q of form.questions) {
+    const d = draft.q[q.id] ?? { selected: [], other: "" };
+    const selected = d.selected.filter((id) => q.options.some((o) => o.id === id));
+    const other = q.other ? str(d.other).trim().slice(0, q.other.maxLength ?? FORM_MAX.otherDefault) : "";
+    // A single choice is one option or the Other text; a draft kept from a multiple-choice version must be redone.
+    if ((!selected.length && !other) || (!q.multiple && selected.length + (other ? 1 : 0) > 1)) missing.push(q.id);
+    answers[q.id] = other ? { selected, other } : { selected };
+  }
+  return missing.length ? { missing } : { answers };
+}
+function choiceText(q, a) {
+  return [...q.options.filter((o) => a.selected.includes(o.id)).map((o) => o.label), ...(a.other ? [`${q.other?.label ?? "Other"}: ${a.other}`] : [])].join(", ");
+}
+/** The form, or with several questions its review step. `submit(answers)` sends; `redraw()` re-renders the peek. */
+function answerForm(item, verb, draft, submit, redraw) {
+  const form = verb.form;
+  const name = (q) => `${item.key}:${q.id}`;
+  const error = h("p", { class: "answer-error", role: "alert", text: draft.error });
+  const next = () => {
+    const r = formAnswers(form, draft);
+    if (r.missing) {
+      draft.error = `Choose your answer for: ${r.missing.map((id) => { const q = form.questions.find((x) => x.id === id); return `${q?.header ?? q?.prompt} (${q?.multiple ? "one or more" : "exactly one"})`; }).join("; ")}.`;
+      error.textContent = draft.error;
+      el.querySelector(`fieldset[data-q="${CSS.escape(r.missing[0])}"] input`)?.focus();
+      return;
+    }
+    draft.error = "";
+    if (form.questions.length > 1 && draft.step === "edit") { draft.step = "review"; redraw(true); return; }
+    submit(r.answers);
+  };
+  // A poll can change the question under the review step: with an answer now missing, go back to editing.
+  if (draft.step === "review" && formAnswers(form, draft).missing) { draft.step = "edit"; draft.error = "The question changed; check your answers again."; error.textContent = draft.error; }
+  if (draft.step === "review") {
+    const r = formAnswers(form, draft);
+    const el = h("div", { class: "answer-form answer-review", role: "group", "aria-label": `Review answers for ${verb.label}` },
+      h("h3", { text: "Review your answers" }),
+      h("dl", { class: "kv" }, form.questions.flatMap((q) => [h("dt", { text: q.header ?? q.prompt }), h("dd", { text: r.answers ? choiceText(q, r.answers[q.id]) : "" })])),
+      error,
+      h("div", { class: "sheet-verbs" },
+        h("button", { type: "button", class: "btn primary answer-submit", onclick: () => submit(r.answers), text: `Submit: ${verb.label}` }),
+        h("button", { type: "button", class: "btn", onclick: () => { draft.step = "edit"; redraw(true); }, text: "Back" })));
+    return el;
+  }
+  const el = h("form", { class: "answer-form", novalidate: true, "aria-label": verb.label, onsubmit: (e) => { e.preventDefault(); next(); },
+    onkeydown: (e) => {
+      if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); next(); return; }
+      // Radios move with arrows natively; checkboxes get the same between the options of one question.
+      if ((e.key === "ArrowDown" || e.key === "ArrowUp") && e.target.type === "checkbox") {
+        const boxes = [...e.target.closest("fieldset").querySelectorAll("input[type=checkbox]")];
+        const i = boxes.indexOf(e.target) + (e.key === "ArrowDown" ? 1 : -1);
+        if (boxes[i]) { e.preventDefault(); boxes[i].focus(); }
+      }
+    } },
+  ...form.questions.map((q) => {
+    const d = draft.q[q.id] ?? (draft.q[q.id] = { selected: [], other: "" });
+    const other = q.other ? h("input", { type: "text", class: "answer-other-text", maxlength: String(q.other.maxLength ?? FORM_MAX.otherDefault), autocomplete: "off", value: d.other,
+      oninput: (e) => {
+        d.other = e.target.value;
+        // A single choice is either an option or the "Other" text.
+        if (!q.multiple && d.other.trim()) { d.selected = []; for (const r of el.querySelectorAll(`input[name="${CSS.escape(name(q))}"]`)) r.checked = false; }
+      } }) : null;
+    return h("fieldset", { class: "answer-q", "data-q": q.id },
+      h("legend", {}, q.header ? h("strong", { text: q.header }) : null, h("span", { text: q.prompt }), q.multiple ? h("small", { text: "Choose one or more." }) : null),
+      ...q.options.map((o) => h("label", { class: "answer-opt" },
+        h("input", { type: q.multiple ? "checkbox" : "radio", name: name(q), value: o.id, checked: d.selected.includes(o.id),
+          onchange: (e) => {
+            d.selected = q.multiple ? (e.target.checked ? [...new Set([...d.selected, o.id])] : d.selected.filter((id) => id !== o.id)) : [o.id];
+            if (!q.multiple && other) { d.other = ""; other.value = ""; }
+          } }),
+        h("span", { class: "answer-label" }, h("span", { text: o.label }), o.description ? h("small", { text: o.description }) : null))),
+      other ? h("label", { class: "answer-opt answer-other" }, h("span", { class: "answer-label", text: q.other.label ?? "Other" }), other) : null);
+  }),
+  error,
+  h("div", { class: "sheet-verbs" }, h("button", { type: "submit", class: "btn primary answer-submit", text: form.questions.length > 1 ? "Review answers" : `Submit: ${verb.label}` })));
+  return el;
+}
+function openAnswer(item, verb) {
+  if (verb && chosenForm.get(item.key) !== verb.id) { chosenForm.set(item.key, verb.id); peekSig = ""; }
+  if (state.peekKey !== `item:${item.key}`) { selectKey(item.key, false); openPeek(item.key); }
+  else renderPeek();
+  $("sheet-body").querySelector(".answer-form input, .answer-form button")?.focus();
+}
+async function submitAnswer(item, verb, answers) {
+  const draftKey = `${item.key}\n${verb.id}`;
+  const draft = draftFor(draftKey);
+  const result = await runAction(item.tool, { action: verb.id, id: item.id, answers }, { label: verb.label, inbox: false });
+  if (result?.ok) {
+    drafts.delete(draftKey);
+    const list = sortedItems();
+    const next = list[list.findIndex((x) => x.key === item.key) + 1];
+    await pollInbox();
+    // Advance only if the peek still shows this item: the person may have closed it or moved on while it was sent.
+    if (next && state.peekKey === `item:${item.key}` && !sortedItems().some((x) => x.key === item.key)) { selectKey(next.key); openPeek(next.key); }
+    return;
+  }
+  // A stale or refused answer: show the tool's error, refresh, and keep the draft so the person sees what they chose.
+  if (result?.cancelled) return;
+  draft.error = str(result?.error) || "The answer was not accepted.";
+  draft.step = "edit";
+  await pollInbox();
+  if (state.peekKey === `item:${item.key}`) { peekSig = ""; renderPeek(); }
+}
+
+// ---------- results and seen receipts (#27) ----------
+/**
+ * A result counts as seen once its body's end has been in view for `holdMs` in a visible, focused window, at most once
+ * per item per page session. `tick(key)` gets the key whose body end is in view now, or null.
+ */
+function seenWatch({ now, visible, focused, fire, holdMs = 1000 }) {
+  const done = new Set();
+  let key = null;
+  let since = 0;
+  return {
+    done,
+    tick(inView) {
+      if (!inView || done.has(inView) || !visible() || !focused()) { key = null; return; }
+      if (key !== inView) { key = inView; since = now(); return; }
+      if (now() - since >= holdMs) { done.add(key); key = null; fire(inView); }
+    },
+  };
+}
+const readResults = new Map();
+const seen = seenWatch({ now: () => Date.now(), visible: () => document.visibilityState === "visible", focused: () => document.hasFocus(), fire: (key) => sendSeen(key, false) });
+let seenTimer = null;
+let watching = null;
+function watchSeen(key) {
+  if (key && key === watching) return;
+  // Stopping or switching drops any pending dwell, so a reopened result needs its full second again.
+  seen.tick(null);
+  watching = key;
+  clearInterval(seenTimer);
+  seenTimer = key ? setInterval(() => {
+    const end = $("sheet").hidden ? null : $("sheet-body").querySelector(".seen-end");
+    if (!end || state.peekKey !== `item:${key}`) { seen.tick(null); return; }
+    const r = end.getBoundingClientRect();
+    const box = $("sheet-body").getBoundingClientRect();
+    seen.tick(r.top >= box.top - 1 && r.bottom <= Math.min(box.bottom, innerHeight) + 1 ? key : null);
+  }, 250) : null;
+}
+async function sendSeen(key, explicit) {
+  const item = visibleItems().find((i) => i.key === key);
+  if (!item?.seen) return false;
+  readResults.set(key, item);
+  const r = await post(`/p/${item.tool}/action`, { action: item.seen.action, id: item.id, seenAt: new Date().toISOString(), ...(explicit ? { explicit: true } : {}) });
+  if (!r.data?.ok) { clientError(item.tool, "seen receipt", new Error(str(r.data?.error) || `status ${r.status}`)); return false; }
+  if (!explicit) await pollInbox();
+  return true;
+}
+async function markAllRead(group) {
+  const items = group.filter((i) => i.seen);
+  const sent = await Promise.all(items.map((i) => { seen.done.add(i.key); return sendSeen(i.key, true); }));
+  await pollInbox();
+  toast(`Marked ${plural(sent.filter(Boolean).length, "result")} read`);
+}
+
 function snooze(item) {
   const sn = snoozes();
   sn[item.key] = { at: item.at, until: Date.now() + SNOOZE_MS };
@@ -667,6 +860,7 @@ function showSheet(title, key, moveFocus) {
 }
 function closeSheet() {
   peekSig = "";
+  watchSeen(null);
   if ($("sheet").hidden) return;
   $("sheet").hidden = true;
   $("app").classList.remove("peeking");
@@ -683,29 +877,48 @@ function openPeek(key) {
 let peekSig = "";
 function renderPeek() {
   const key = state.peekKey?.slice(5);
-  const item = sortedItems().find((i) => i.key === key);
-  const sig = JSON.stringify([key, item ?? null]);
+  const live = sortedItems().find((i) => i.key === key);
+  // A result that was just marked seen stays readable in the open peek.
+  const item = live ?? readResults.get(key);
+  const sig = JSON.stringify([key, item ?? null, Boolean(live)]);
   if (sig === peekSig && !$("sheet").hidden) return;
   peekSig = sig;
   // Keep keyboard focus on the same control when the data changes under it.
   const old = [...$("sheet-body").querySelectorAll("button")];
   const focusAt = old.indexOf(document.activeElement);
   const reasonFocused = Boolean(reasonBox) && reasonBox.el.contains(document.activeElement);
+  const formInputs = () => [...$("sheet-body").querySelectorAll(".answer-form input")];
+  const inputAt = formInputs().indexOf(document.activeElement);
   const body = showSheet(item ? item.title : "No longer waiting", state.peekKey, false);
-  if (!item) { body.replaceChildren(h("p", { class: "sub", text: "This item was handled or withdrawn." })); return; }
+  const draft = drafts.get(`${key}\n${chosenForm.get(key) ?? ""}`) ?? [...drafts].find(([k]) => k.startsWith(`${key}\n`))?.[1];
+  if (!item) {
+    // A withdrawn question keeps the person's draft on screen, so they can see what they had chosen.
+    const gone = draft?.verb ? formAnswers(draft.verb.form, draft) : null;
+    body.replaceChildren(h("p", { class: "sub", text: "This item was handled or withdrawn." }),
+      ...(gone?.answers ? [h("dl", { class: "kv" }, draft.verb.form.questions.flatMap((q) => [h("dt", { text: q.header ?? q.prompt }), h("dd", { text: choiceText(q, gone.answers[q.id]) })]))] : []));
+    watchSeen(null);
+    return;
+  }
+  const fv = live ? formVerb(item) : null;
+  if (fv) { chosenForm.set(key, fv.id); draftFor(`${key}\n${fv.id}`).verb = fv; }
   const dl = h("dl", { class: "kv" });
   const add = (k, v) => { if (v) dl.append(h("dt", { text: k }), h("dd", { text: v })); };
   add("Kind", item.kind); add("Tool", toolById(item.tool)?.title ?? item.tool); add("Project", item.project); add("From", item.actor);
   add("Waiting since", `${new Date(item.at).toLocaleString()} (${ago(item.at)})`);
   body.replaceChildren(...[
     h("div", { class: "sheet-verbs" }, item.chip ? h("span", { class: `chip ${toneClass(item.chip.tone)}`, text: str(item.chip.text) }) : null, h("span", { class: "chip", text: GROUPS.find(([g]) => g === item.group)?.[1] })),
-    item.detail ? h("p", { class: "detail", text: item.detail }) : null,
+    item.detail ? h("p", { class: `detail${item.group === "result" ? " result-body" : ""}`, text: item.detail }) : null,
+    item.group === "result" && item.seen ? h("span", { class: "seen-end", "aria-hidden": "true" }) : null,
+    !live ? h("p", { class: "sub", text: "Marked read." }) : null,
     dl,
-    h("div", { class: "sheet-verbs item-verbs" }, verbButtons(item, 8)),
+    fv ? answerForm(item, fv, draftFor(`${key}\n${fv.id}`), (answers) => submitAnswer(item, fv, answers), (focus) => { peekSig = ""; renderPeek(); if (focus) $("sheet-body").querySelector(".answer-form input, .answer-form button")?.focus(); }) : null,
+    live ? h("div", { class: "sheet-verbs item-verbs" }, verbButtons({ ...item, verbs: item.verbs.filter((v) => v !== fv) }, 8)) : null,
     h("div", { class: "sheet-verbs" }, h("button", { type: "button", class: "btn", onclick: () => openItem(item) }, h("span", { text: `Open in ${toolById(item.tool)?.title ?? item.tool}` }), icon("go"))),
   ].filter(Boolean));
   if (focusAt >= 0 && !reasonFocused) (body.querySelectorAll("button")[focusAt] ?? $("sheet-close")).focus({ preventScroll: true });
+  if (inputAt >= 0) formInputs()[inputAt]?.focus({ preventScroll: true });
   if (reasonBox?.key === key) placeReason(reasonFocused);
+  watchSeen(live && item.group === "result" && item.seen ? key : null);
 }
 
 // ---------- tool panels ----------
@@ -1133,7 +1346,7 @@ function openInConsole(item) {
   window.focus();
 }
 // One step, no reason, not destructive; everything else opens in the console, where confirm and reason rows live.
-const safeVerb = (item) => item.verbs.find((v) => v.primary && !v.destructive && !v.reason);
+const safeVerb = (item) => item.verbs.find((v) => v.primary && !v.destructive && !v.reason && !v.form);
 let miniSig = "";
 function renderMini(force = false) {
   if (miniView.hidden && !pip) return;
@@ -1322,7 +1535,10 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "1" || e.key === "2") {
     const verbs = [...item.verbs].sort((a, b) => Number(Boolean(b.primary)) - Number(Boolean(a.primary)));
     const verb = verbs[Number(e.key) - 1];
-    if (verb) { e.preventDefault(); runVerb(item, verb); }
+    // 1 on a form verb focuses the form in the peek, or submits it when focus is already on the form's button.
+    const inForm = e.target.closest?.(".answer-form");
+    if (verb?.form && inForm) { e.preventDefault(); inForm.querySelector(".answer-submit")?.click(); }
+    else if (verb) { e.preventDefault(); runVerb(item, verb); }
   } else if (e.key === "h") { e.preventDefault(); snooze(item); }
 });
 $("sheet-close").append(icon("close"));

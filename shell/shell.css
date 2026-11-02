@@ -275,6 +275,23 @@ button.link { padding: 0; border: 0; background: none; text-decoration: underlin
 .sheet-head h2 { flex: 1; min-width: 0; margin: 0; padding: 8px 0; font-size: var(--acon-text-xl); font-weight: 650; }
 .sheet-body { flex: 1; overflow-y: auto; padding: var(--acon-space-4); display: flex; flex-direction: column; gap: var(--acon-space-4); }
 .sheet-body .detail { margin: 0; white-space: pre-wrap; }
+/* Inbox answers and results (#27) */
+.answer-form { display: flex; flex-direction: column; gap: var(--acon-space-3); }
+.answer-q { margin: 0; padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); min-width: 0; }
+.answer-q legend { display: flex; flex-direction: column; gap: var(--acon-space-1); float: left; width: 100%; margin-bottom: var(--acon-space-2); padding: 0; }
+.answer-q legend + * { clear: both; }
+.answer-q legend small, .answer-label small { color: var(--acon-text-2); font-size: var(--acon-text-sm); }
+.answer-opt { display: flex; align-items: flex-start; gap: var(--acon-space-2); min-height: 44px; padding: var(--acon-space-1) 0; cursor: pointer; }
+.answer-opt input[type="radio"], .answer-opt input[type="checkbox"] { flex: none; width: 1.1rem; height: 1.1rem; margin: 0.15rem 0 0; accent-color: var(--acon-accent); }
+.answer-opt input:focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
+.answer-label { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.answer-other { flex-direction: column; align-items: stretch; cursor: default; }
+.answer-other-text { min-height: 44px; padding: 0 var(--acon-space-2); border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); background: var(--acon-surface); color: var(--acon-text); font: inherit; }
+.answer-error { margin: 0; color: var(--acon-err); }
+.answer-error:empty { display: none; }
+.answer-review h3 { margin: 0; font-size: var(--acon-text-md); }
+.group h2 .group-command { margin-inline-start: auto; min-height: 32px; font-size: var(--acon-text-sm); font-weight: 500; letter-spacing: normal; text-transform: none; color: var(--acon-text); }
+.seen-end { display: block; height: 1px; }
 .sheet-verbs { display: flex; flex-wrap: wrap; gap: var(--acon-space-2); }
 .reason-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--acon-space-2); flex: 1 0 100%; }
 .row:has(> .reason-row) { flex-wrap: wrap; }

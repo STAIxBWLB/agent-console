@@ -4,6 +4,8 @@
 
 ### Compatibility
 
+- N-1 (#27): a plugin that checks `ctx.features` sends no forms or `result` items to a console before this release, which would report them as malformed; plugins that ignore `meta` are unaffected.
+
 - N-1: plugins registered for api 1 with a single `<tool>.json` and a plain `"api": 1` load unchanged; `/p/<tool>/...` routes keep working beside the new `/p/<tool>@<hash>/...` refs. Consoles before this release refuse `apiMin`/`apiMax` keys and ignore `<tool>@<version>.json` files (they fail the tool-id check), so a tool that needs both should keep writing `<tool>.json`.
 
 ### Fixed
@@ -11,6 +13,8 @@
 - Plugin discovery scans files that start with a `#!` line (CLI entry files) instead of marking the plugin "cannot be read"; a file that cannot be scanned is now named in the reason. The stripped line ends at any JavaScript line terminator (LF, CR, U+2028, U+2029), so an import after a CR-terminated `#!` is still checked.
 
 ### Added
+
+- Inbox choice answers and results (#27): `ctx.features` (`inbox.form`, `inbox.result`, `action.meta`); verb `form` with 1-4 choice questions, an "Other" text, a review step and drafts kept across a refused answer; a `result` group with `seen` receipts after the body end was in view for 1 s in a focused window, and "Mark all read"; `action(input, meta)` with the verified identity; `verbFormProblems` and feature checks in conformance.
 
 - Staged plugin upgrades (#26): `apiMin`/`apiMax` ranges, versioned registrations `plugins/<tool>@<version>.json` (newest loadable wins), a re-scan at most every 5 s that serves a new registration to pages opened after it while open pages keep their load until restart, and `scripts/install-release.ts` for immutable `console/releases/<version>-<commit>/` installs with `current` and `previous` links.
 - Plugin assets (api 1, additive): optional `provider.asset({id})`, served at a session-gated `GET /p/<tool>/asset?id=` with a type allowlist (SVG as attachment only), nosniff, a 32 MB default cap and same-origin framing; shell CSP gains `frame-src 'self'`; `host.ui.img`, `host.ui.frame` and `host.ui.link` accept only this plugin's asset ids or panels; conformance checks `asset` answers (#24).
