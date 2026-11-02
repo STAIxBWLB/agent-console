@@ -214,8 +214,9 @@ function assetId(to) {
   if (!to || typeof to !== "object" || typeof to.asset !== "string" || !to.asset || to.asset.length > ASSET_ID_MAX) throw new TypeError("Panel kit assets take {asset: id}, never a URL");
   return to.asset;
 }
-function kitFor(tool, hash) {
-  const assetUrl = (id) => `/p/${tool}/asset?id=${encodeURIComponent(id)}`;
+// `route` maps a plugin path to the load this page uses (#26), so assets come from the same version as the panel.
+function kitFor(tool, hash, route = (path) => path) {
+  const assetUrl = (id) => `${route(`/p/${tool}/asset`)}?id=${encodeURIComponent(id)}`;
   return Object.freeze({
     ...consoleUi,
     img(o) {
@@ -272,7 +273,12 @@ function store(key, value) {
 }
 
 // ---------- network ----------
+// A page keeps the plugin load it first saw (#26): a version registered later serves pages opened after it.
+const pinnedRefs = new Map();
+const pluginPath = (path) => path.replace(/^\/p\/([a-z][a-z0-9-]{1,15})\//, (whole, id) => (pinnedRefs.has(id) ? `/p/${pinnedRefs.get(id)}/` : whole));
+
 async function post(path, body = {}) {
+  path = pluginPath(path);
   state.lastRequest = Date.now();
   let res;
   try {
@@ -711,7 +717,7 @@ function hostFor(tool, p) {
     tool: tool.tool,
     node: NODE,
     mount: p.body,
-    ui: kitFor(tool.tool, hashFor),
+    ui: kitFor(tool.tool, hashFor, pluginPath),
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),
@@ -731,8 +737,8 @@ async function showTool(r) {
     p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0, lastSig: "" };
     state.panels.set(tool.tool, p);
     $("main").append(p.mount);
-    document.head.append(h("link", { rel: "stylesheet", href: `/p/${tool.tool}/panel.css` }));
-    p.loading = import(`/p/${tool.tool}/panel.js`).then((mod) => {
+    document.head.append(h("link", { rel: "stylesheet", href: pluginPath(`/p/${tool.tool}/panel.css`) }));
+    p.loading = import(pluginPath(`/p/${tool.tool}/panel.js`)).then((mod) => {
       if (typeof mod.default !== "function") throw new Error("panel.js has no default export");
       p.instance = mod.default(hostFor(tool, p));
     }).catch((error) => {
@@ -1227,7 +1233,7 @@ function renderSystem(force = false) {
       h("section", { class: "card wide" }, h("h2", { text: `Plugins (${state.tools.length})` }),
         node.pluginsError ? h("p", { class: "notice", role: "alert", text: node.pluginsError }) : null,
         state.tools.length ? h("ul", { class: "list" }, state.tools.map((t) => h("li", {}, h("strong", { text: t.title ?? t.tool }), h("span", { class: "meta mono", text: t.tool }), statusChip(t.status),
-          h("span", { class: "meta", text: t.status === "ready" ? `${t.version} · ${plural(t.panels.length, "panel")}${t.capabilities?.inbox ? " · inbox" : ""}${t.capabilities?.search ? " · search" : ""}` : str(t.reason) }))))
+          h("span", { class: "meta", text: t.status === "ready" ? `${t.version} · ${plural(t.panels.length, "panel")}${t.capabilities?.inbox ? " · inbox" : ""}${t.capabilities?.search ? " · search" : ""}${t.update ? ` · ${t.update} is registered; reload the page to use it` : ""}` : str(t.reason) }))))
           : h("p", { class: "sub", text: "No plugin manifests were found. A tool registers itself with its setup command." })),
       h("section", { class: "card wide" }, h("h2", { text: `Errors (${errors.length})` }),
         errors.length ? h("ul", { class: "list" }, errors.map((e) => h("li", {}, h("span", { class: "meta mono", text: new Date(e.at).toLocaleTimeString() }), h("strong", { text: e.tool }), h("span", { class: "meta", text: e.where }), h("span", { text: e.message }))))
@@ -1238,7 +1244,15 @@ function renderSystem(force = false) {
 async function loadTools() {
   const r = await post("/tools");
   if (r.status !== 200) return false;
-  state.tools = Array.isArray(r.data.tools) ? r.data.tools : [];
+  const incoming = Array.isArray(r.data.tools) ? r.data.tools : [];
+  // Keep the metadata of the load this page uses; note a newer one so System can say a reload picks it up.
+  state.tools = incoming.map((t) => {
+    if (t.status !== "ready" || typeof t.ref !== "string") return t;
+    if (!pinnedRefs.has(t.tool)) pinnedRefs.set(t.tool, t.ref);
+    if (pinnedRefs.get(t.tool) === t.ref) return t;
+    const kept = state.tools.find((o) => o.tool === t.tool && o.ref === pinnedRefs.get(t.tool));
+    return kept ? { ...kept, update: str(t.version) } : t;
+  });
   state.node = r.data.node ?? null;
   state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
   state.assetPacks = Array.isArray(r.data.assetPacks) ? r.data.assetPacks.filter((p) => p && PET_ID.test(str(p.id)) && Array.isArray(p.images) && p.images.every((id) => PET_ID.test(str(id))) && Array.isArray(p.tile) && p.tile.length === 2 && p.tile.every((n) => Number.isSafeInteger(n) && n > 0)) : [];

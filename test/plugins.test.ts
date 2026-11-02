@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { realpathSync } from "node:fs";
-import { loadPlugins, manifestProblems, pluginDir, scanPlugins } from "../src/plugins.ts";
+import { apiRangeProblem, loadPlugins, manifestProblems, pluginDir, scanPlugins } from "../src/plugins.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
 const fixture = join(import.meta.dir, "fixtures", "demo-plugin.ts");
@@ -233,3 +233,115 @@ describe("manifest commands", () => {
     }
   });
 });
+
+describe("api range and versioned registrations (#26)", () => {
+  test("an api-1 plugin loads in a 1-2 console and is refused by name in a 2-only console", () => {
+    expect(apiRangeProblem({ api: 1 }, { min: 1, max: 2 })).toBeUndefined();
+    expect(apiRangeProblem({ api: 1 }, { min: 2, max: 2 })).toBe("unsupported api 1; this console speaks api 2");
+    expect(apiRangeProblem({ api: 1, apiMax: 2 }, { min: 2, max: 2 })).toBeUndefined();
+    expect(apiRangeProblem({ apiMin: 2, apiMax: 3 })).toBe("unsupported api 2-3; this console speaks api 1");
+    expect(apiRangeProblem({ apiMin: 3, apiMax: 2 })).toContain("above apiMax");
+    expect(apiRangeProblem({})).toBe("api is required");
+    expect(apiRangeProblem({ api: 1.5 })).toBe("api must be a positive integer");
+  });
+
+  test("a registration file with an api range loads; one outside the console's range is invalid", () => {
+    const dir = home({
+      "aa.json": { apiMin: 1, apiMax: 3, tool: "aa", module: fixture, sha256: sha(fixture) },
+      "bb.json": { apiMin: 2, apiMax: 3, tool: "bb", module: fixture, sha256: sha(fixture) },
+    });
+    const byTool = Object.fromEntries(scanPlugins(dir).entries.map((e) => [e.tool, e]));
+    expect(byTool.aa?.status).toBe("verified");
+    expect(byTool.bb).toEqual(expect.objectContaining({ status: "invalid", reason: "unsupported api 2-3; this console speaks api 1" }));
+  });
+
+  test("the newest version loads, older ones are superseded, and a bad version name is invalid", async () => {
+    const reg = { api: 1, tool: "demo", module: fixture, sha256: sha(fixture) };
+    const dir = home({ "demo.json": reg, "demo@1.10.0.json": reg, "demo@1.9.0.json": reg, "demo@latest.json": reg });
+    const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
+    const status = Object.fromEntries(loaded.map((e) => [basename(e.file), e.status]));
+    expect(status).toEqual({ "demo@latest.json": "invalid", "demo@1.10.0.json": "ready", "demo@1.9.0.json": "superseded", "demo.json": "superseded" });
+    const ready = loaded.find((e) => e.status === "ready")!;
+    expect(ready.ref).toBe(`demo@${createHash("sha256").update(`${ready.module}\n${sha(fixture)}`).digest("hex").slice(0, 12)}`);
+  });
+
+  test("when the newest version fails, the next one loads", async () => {
+    const empty = join(mkdtempSync(join(tmpdir(), "acon-mod-")), "empty.ts");
+    writeFileSync(empty, "export const nothing = 1;\n");
+    const dir = home({ "demo@2.0.0.json": { api: 1, tool: "demo", module: empty, sha256: sha(empty) }, "demo@1.0.0.json": { api: 1, tool: "demo", module: fixture, sha256: sha(fixture) } });
+    const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(loaded.map((e) => `${e.version} ${e.status}`)).toEqual(["2.0.0 failed", "1.0.0 ready"]);
+  });
+
+  test("a re-scan reuses an unchanged load instead of importing and opening it again", async () => {
+    const dir = home({ "demo.json": { api: 1, tool: "demo", module: fixture, sha256: sha(fixture) } });
+    const first = await loadPlugins(scanPlugins(dir), ctx(dir));
+    const again = await loadPlugins(scanPlugins(dir), ctx(dir), first);
+    expect(again[0]?.provider).toBe(first[0]!.provider!);
+  });
+
+  // Codex review on #32: Bun caches a module by path, so changed code at a loaded path must not be served as new.
+  test("a module changed in place is not hot-loaded; the current load keeps serving and says to restart", async () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const mod = join(pkg, "plugin.ts");
+    const source = (v: string) => readFileSync(fixture, "utf8").replace('version: "0.0.1"', `version: "${v}"`).replace('"../../src/contract.ts"', JSON.stringify(join(import.meta.dir, "..", "src", "contract.ts")));
+    writeFileSync(mod, source("1.0.0"));
+    const dir = home({ "demo.json": { api: 1, tool: "demo", module: mod, sha256: sha(mod) } });
+    const first = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(first[0]?.manifest?.version).toBe("1.0.0");
+    writeFileSync(mod, source("2.0.0"));
+    writeFileSync(join(pluginDir(dir), "demo.json"), JSON.stringify({ api: 1, tool: "demo", module: mod, sha256: sha(mod) }), { mode: 0o600 });
+    const again = await loadPlugins(scanPlugins(dir), ctx(dir), first);
+    expect(again[0]).toEqual(expect.objectContaining({ status: "stale", reason: expect.stringContaining("restart acon") }));
+    expect(again[0]?.provider).toBeUndefined();
+  });
+
+  test("two packages with the same entry file but different imports get distinct refs", async () => {
+    const make = (impl: string) => {
+      const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+      writeFileSync(join(pkg, "package.json"), "{}");
+      writeFileSync(join(pkg, "impl.ts"), readFileSync(fixture, "utf8").replace('version: "0.0.1"', `version: "${impl}"`).replace('"../../src/contract.ts"', JSON.stringify(join(import.meta.dir, "..", "src", "contract.ts"))));
+      writeFileSync(join(pkg, "plugin.ts"), 'export { default } from "./impl.ts";\n');
+      return join(pkg, "plugin.ts");
+    };
+    const a = make("3.0.0"), b = make("4.0.0");
+    expect(sha(a)).toBe(sha(b));
+    const dir = home({ "demo@3.0.0.json": { api: 1, tool: "demo", module: a, sha256: sha(a) } });
+    const first = await loadPlugins(scanPlugins(dir), ctx(dir));
+    writeFileSync(join(pluginDir(dir), "demo@4.0.0.json"), JSON.stringify({ api: 1, tool: "demo", module: b, sha256: sha(b) }), { mode: 0o600 });
+    const second = await loadPlugins(scanPlugins(dir), ctx(dir), first);
+    const v3 = first.find((e) => e.status === "ready")!, v4 = second.find((e) => e.status === "ready")!;
+    expect(v4.manifest?.version).toBe("4.0.0");
+    expect(v4.ref).not.toBe(v3.ref);
+  });
+
+  test("a module whose open() failed is not re-imported after an in-place change either", async () => {
+    const pkg = mkdtempSync(join(tmpdir(), "acon-pkg-"));
+    writeFileSync(join(pkg, "package.json"), "{}");
+    const mod = join(pkg, "plugin.ts");
+    const contract = JSON.stringify(join(import.meta.dir, "..", "src", "contract.ts"));
+    const base = readFileSync(fixture, "utf8").replace('"../../src/contract.ts"', contract);
+    writeFileSync(mod, base.replace("async open() {", 'async open() { throw new Error("first open fails");'));
+    const reg = () => writeFileSync(join(pluginDir(dir), "demo.json"), JSON.stringify({ api: 1, tool: "demo", module: mod, sha256: sha(mod) }), { mode: 0o600 });
+    const dir = home({});
+    reg();
+    const first = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(first[0]?.status).toBe("failed");
+    writeFileSync(mod, base.replace('version: "0.0.1"', 'version: "2.0.0"'));
+    reg();
+    const again = await loadPlugins(scanPlugins(dir), ctx(dir), first.filter((e) => e.status === "ready"));
+    expect(again[0]).toEqual(expect.objectContaining({ status: "stale", reason: expect.stringContaining("restart acon") }));
+  });
+
+  test("a registration that points at another tool's loaded module fails by name instead of reusing it", async () => {
+    const reg = { api: 1, module: fixture, sha256: sha(fixture) };
+    const dir = home({ "demo.json": { ...reg, tool: "demo" } });
+    const first = await loadPlugins(scanPlugins(dir), ctx(dir));
+    writeFileSync(join(pluginDir(dir), "other.json"), JSON.stringify({ ...reg, tool: "other" }), { mode: 0o600 });
+    const again = await loadPlugins(scanPlugins(dir), ctx(dir), first);
+    expect(again.find((e) => e.tool === "other")).toEqual(expect.objectContaining({ status: "failed", reason: "manifest.tool is demo, expected other" }));
+    expect(again.filter((e) => e.status === "ready").map((e) => e.tool)).toEqual(["demo"]);
+  });
+});
+
