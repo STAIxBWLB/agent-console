@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -94,22 +95,34 @@ class KitNode {
   value = "";
   ownText = "";
   namespaced = false;
+  parentNode: KitNode | null = null;
+  hidden = false;
+  disabled = false;
+  get nodeType() { return this.tagName === "#TEXT" ? 3 : 1; }
+  get classList() {
+    const self = this;
+    const list = () => self.className.split(" ").filter(Boolean);
+    return { add: (c: string) => { if (!list().includes(c)) self.className = [...list(), c].join(" "); }, remove: (c: string) => { self.className = list().filter((x) => x !== c).join(" "); }, contains: (c: string) => list().includes(c) };
+  }
+  getAttribute(key: string) { return this.attributes.get(key) ?? null; }
+  focus() { focused.node = this; }
   constructor(tag: string) { this.tagName = tag.toUpperCase(); }
   set textContent(value: string) { this.ownText = String(value); this.childNodes = []; }
   get textContent(): string { return this.ownText + this.childNodes.map((n) => n.textContent).join(""); }
   append(...nodes: (KitNode | string)[]) {
     for (const node of nodes) {
-      if (node instanceof KitNode) this.childNodes.push(node);
-      else { const text = new KitNode("#text"); text.ownText = String(node); this.childNodes.push(text); }
+      if (node instanceof KitNode) { node.parentNode = this; this.childNodes.push(node); }
+      else { const text = new KitNode("#text"); text.ownText = String(node); text.parentNode = this; this.childNodes.push(text); }
     }
   }
-  setAttribute(key: string, value: string) { this.attributes.set(key, value); if (key === "value") this.value = value; }
+  setAttribute(key: string, value: string) { this.attributes.set(key, value); if (key === "value") this.value = value; if (key === "hidden") this.hidden = true; if (key === "class") this.className = value; }
   removeAttribute(key: string) { this.attributes.delete(key); }
   replaceChildren(...nodes: (KitNode | string)[]) { this.childNodes = []; this.ownText = ""; this.append(...nodes); }
   querySelector(sel: string): KitNode | null { const cls = sel.replace(/^\./, ""); return walk(this).slice(1).find((n) => n.className.split(" ").includes(cls)) ?? null; }
   addEventListener(key: string, fn: (event: { preventDefault(): void }) => void) { this.listeners.set(key, fn); }
   reportValidity(): boolean { return walk(this).every((n) => n.tagName !== "INPUT" || !n.attributes.has("required") || Boolean(n.value)); }
 }
+const focused: { node: KitNode | null } = { node: null };
 function walk(node: KitNode): KitNode[] { return [node, ...node.childNodes.flatMap(walk)]; }
 function kit(): ConsoleUi {
   const js = shell("shell.js");
@@ -279,6 +292,290 @@ describe("public panel kit", () => {
     expect(() => ui.h("a", { href: "/p/demo/asset?id=x" })).toThrow();
     expect(() => ui.h("img", { src: "/x" })).toThrow();
   });
+
+});
+
+// ui.review runs against the same double; keys and clicks are dispatched to the listeners the view registers.
+describe("ui.review", () => {
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  function review(): (o: Parameters<ConsoleUi["review"]>[0]) => KitNode {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+    const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null })`, {
+      Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+    }) as ConsoleUi;
+    return (o) => ui.review(o) as unknown as KitNode;
+  }
+  const gutters = (root: KitNode) => walk(root).filter((n) => n.className === "ui-review-gutter");
+  const key = (el: KitNode, k: string, shiftKey = false) => {
+    let prevented = false;
+    const docEl = walk(rootOf(el)).find((n) => n.className.startsWith("ui-review-doc"))!;
+    docEl.listeners.get("keydown")!({ key: k, shiftKey, target: el, preventDefault() { prevented = true; } } as never);
+    return prevented;
+  };
+  const rootOf = (n: KitNode) => { let r = n; while (r.parentNode) r = r.parentNode; return r; };
+  const text = "alpha\nbeta\ngamma\ndelta\n";
+  const doc = { kind: "text" as const, path: "docs/a.md", text, contentHash: sha(text) };
+  const thread = (id: string, anchor: object) => ({ id, anchor, body: "<b>note</b>", author: "owner", at: "2026-11-02T00:00:00Z" }) as never;
+
+  test("AC1 + AC4: keyboard selects two lines into lineRange + textQuote, then submits a comment", async () => {
+    const comments: { anchor: Record<string, unknown>; body: string }[] = [];
+    const root = review()({ doc, threads: [], onComment: (c) => { comments.push(c as never); } });
+    const g = gutters(root);
+    expect(g[0]!.attributes.get("tabindex")).toBe("0");
+    expect(g[1]!.attributes.get("tabindex")).toBe("-1");
+    key(g[0]!, "ArrowDown");
+    expect(focused.node).toBe(g[1]!);
+    expect(key(g[1]!, "ArrowDown", true)).toBe(true);
+    expect(focused.node).toBe(g[2]!);
+    key(g[2]!, "Enter");
+    const box = walk(root).find((n) => n.className === "ui-review-box")!;
+    expect(box.hidden).toBe(false);
+    const textarea = walk(root).find((n) => n.tagName === "TEXTAREA")!;
+    expect(focused.node).toBe(textarea);
+    textarea.value = "Merge these two lines.";
+    await box.listeners.get("submit")!({ preventDefault() {} });
+    expect(comments).toHaveLength(1);
+    expect(comments[0]!.body).toBe("Merge these two lines.");
+    expect(comments[0]!.anchor).toEqual({ path: "docs/a.md", contentHash: sha(text), selectors: [
+      { kind: "lineRange", startLine: 2, endLine: 3 },
+      { kind: "textQuote", exact: "beta\ngamma", prefix: "alpha\n", suffix: "\ndelta\n" },
+    ] });
+    expect(walk(root).find((n) => n.className === "ui-review-status")!.textContent).toBe("Comment sent on lines 2 to 3.");
+    expect(box.hidden).toBe(true);
+  });
+
+  test("AC1: a diff selection adds diffHunk and side, and numbers lines on that side", () => {
+    const unified = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n keep\n-old line\n+new line\n+added\n";
+    let anchor: Record<string, unknown> | undefined;
+    const root = review()({ doc: { kind: "diff", path: "x", unified, contentHash: sha(unified) }, threads: [], onComment: (c) => { anchor = c.anchor as never; } });
+    const g = gutters(root);
+    expect(g.map((n) => n.attributes.get("aria-label"))).toEqual(["Line 1", "Removed line 2", "Added line 2", "Added line 3"]);
+    key(g[2]!, "ArrowDown", true);
+    key(g[3]!, "Enter");
+    const textarea = walk(root).find((n) => n.tagName === "TEXTAREA")!;
+    textarea.value = "ok";
+    void walk(root).find((n) => n.className === "ui-review-box")!.listeners.get("submit")!({ preventDefault() {} });
+    expect(anchor).toEqual({ path: "x", side: "head", contentHash: sha(unified), selectors: [
+      { kind: "lineRange", startLine: 2, endLine: 3 },
+      { kind: "textQuote", exact: "new line\nadded", prefix: "keep\n", suffix: "" },
+      { kind: "diffHunk", hunkHeader: "@@ -1,3 +1,3 @@" },
+    ] });
+  });
+
+  test("AC2: hash match places by line; an edit above places by quote; deleted text goes to the unplaced strip", () => {
+    const anchor = { path: "docs/a.md", contentHash: sha(text), selectors: [{ kind: "lineRange", startLine: 3, endLine: 3 }, { kind: "textQuote", exact: "gamma", prefix: "beta\n", suffix: "\ndelta" }] };
+    const place = (t: string) => {
+      let results: unknown;
+      const root = review()({ doc: { ...doc, text: t, contentHash: sha(t) }, threads: [thread("t1", anchor)], onComment() {}, onPlacement: (r) => { results = r; } });
+      return { root, results };
+    };
+    expect(place(text).results).toEqual([{ threadId: "t1", placed: true, via: "hash" }]);
+    const edited = place("intro\nalpha\nbeta\ngamma\ndelta\n");
+    expect(edited.results).toEqual([{ threadId: "t1", placed: true, via: "quote" }]);
+    const marked = walk(edited.root).find((n) => n.className.includes("ui-review-has-thread"))!;
+    expect(marked.textContent).toContain("gamma");
+    const gone = place("alpha\nbeta\ndelta\n");
+    expect(gone.results).toEqual([{ threadId: "t1", placed: false, via: null }]);
+    const strip = walk(gone.root).find((n) => n.className === "ui-review-strip")!;
+    expect(strip.textContent).toContain("1 comment could not be placed");
+    expect(walk(strip).find((n) => n.tagName === "BLOCKQUOTE")!.textContent).toBe("gamma");
+  });
+
+  test("AC3: a duplicated quote places on the occurrence its prefix names; an ambiguous one is unplaced", () => {
+    const dup = "a: same\nb: same\n";
+    const hit = (prefix: string, suffix = "") => {
+      let results: { placed: boolean }[] = [];
+      const root = review()({ doc: { ...doc, text: dup, contentHash: sha(dup) }, threads: [thread("q", { path: "docs/a.md", contentHash: sha("old"), selectors: [{ kind: "textQuote", exact: "same", prefix, suffix }] })], onComment() {}, onPlacement: (r) => { results = r as never; } });
+      return { results, line: walk(root).find((n) => n.className.includes("ui-review-has-thread"))?.textContent };
+    };
+    expect(hit("b: ")).toEqual({ results: [{ threadId: "q", placed: true, via: "quote" }] as never, line: "2b: same1 comment" });
+    expect(hit("a: ").line).toBe("1a: same1 comment");
+    expect(hit("").results).toEqual([{ threadId: "q", placed: false, via: null }] as never);
+  });
+
+  test("projection mismatch and unknown selectors are unplaced; hash with a different path is ignored", () => {
+    const projected = { ...doc, projection: { name: "md", version: "2" } };
+    const anchor = (extra: object) => ({ path: "docs/a.md", contentHash: sha(text), selectors: [{ kind: "lineRange", startLine: 1, endLine: 1 }, { kind: "textQuote", exact: "alpha", prefix: "", suffix: "\n" }], ...extra });
+    let results: unknown[] = [];
+    review()({ doc: projected, threads: [
+      thread("same", anchor({ projection: { name: "md", version: "2" } })),
+      thread("older", anchor({ projection: { name: "md", version: "1" } })),
+      thread("none", anchor({})),
+      thread("region", { path: "docs/a.md", selectors: [{ kind: "region", x: 0, y: 0, width: 1, height: 1 }] }),
+      thread("other", anchor({ path: "docs/b.md", projection: { name: "md", version: "2" } })),
+    ], onComment() {}, onPlacement: (r) => { results = r; } });
+    expect(results.map((r) => (r as { placed: boolean }).placed)).toEqual([true, false, false, false, false]);
+  });
+
+  test("AC5: HTML in the doc, thread bodies and quotes renders as text; prose groups paragraphs", () => {
+    const md = "# Title <script>alert(1)</script>\n\nFirst para\nstill first\n\n<img src=x onerror=alert(1)>\n";
+    const root = review()({ doc: { kind: "prose", path: "d.md", text: md, contentHash: sha(md) }, threads: [thread("t", { path: "d.md", selectors: [{ kind: "textQuote", exact: "<gone>", prefix: "", suffix: "" }] })], onComment() {} });
+    const all = walk(root);
+    expect(all.some((n) => ["SCRIPT", "IMG", "IFRAME"].includes(n.tagName))).toBe(false);
+    expect(gutters(root).map((n) => n.attributes.get("aria-label"))).toEqual(["Line 1", "Lines 3 to 4", "Line 6"]);
+    expect(root.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect(all.find((n) => n.tagName === "BLOCKQUOTE")!.textContent).toBe("<gone>");
+    expect(all.some((n) => n.attributes.has("style"))).toBe(false);
+  });
+
+  test("bounds: over-limit lines and threads are cut with a notice; a failed send keeps the text", async () => {
+    const big = Array.from({ length: 20005 }, (_, i) => `l${i}`).join("\n");
+    const threads = Array.from({ length: 205 }, (_, i) => thread(`t${i}`, { path: "x", selectors: [{ kind: "lineRange", startLine: 1, endLine: 1 }] }));
+    const root = review()({ doc: { kind: "text", path: "big", text: big, contentHash: sha(big) }, threads, onComment: () => Promise.reject(new Error("hub is offline")) });
+    const notices = walk(root).filter((n) => n.className.includes("ui-notice")).map((n) => n.textContent);
+    expect(notices).toEqual(["Showing the first 20000 of 20005 lines.", "Showing the first 200 of 205 comment threads."]);
+    const g = gutters(root);
+    key(g[0]!, "Enter");
+    const textarea = walk(root).find((n) => n.tagName === "TEXTAREA")!;
+    textarea.value = "keep me";
+    await walk(root).find((n) => n.className === "ui-review-box")!.listeners.get("submit")!({ preventDefault() {} });
+    expect(textarea.value).toBe("keep me");
+    expect(walk(root).find((n) => n.className === "ui-review-status")!.textContent).toBe("The comment was not sent. Your text is kept; try again, and check System for details.");
+  });
+});
+
+describe("ui.review Codex fixes", () => {
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  function review() {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+    const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null })`, {
+      Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+    }) as ConsoleUi;
+    return ui;
+  }
+  const place = (doc: Parameters<ConsoleUi["review"]>[0]["doc"], exact: string, prefix = "", suffix = "") => {
+    let results: { placed: boolean }[] = [];
+    review().review({ doc, threads: [{ id: "t", author: "a", at: "2026-11-02T00:00:00Z", body: "b", anchor: { path: doc.path, contentHash: sha("old"), selectors: [{ kind: "textQuote", exact, prefix, suffix }] } }], onComment() {}, onPlacement: (r) => { results = r as never; } });
+    return results[0]!.placed;
+  };
+
+  test("(1) a quote never matches across two diff hunks", () => {
+    const unified = "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n end of hunk one\n-x\n+y\n@@ -40,2 +40,2 @@\n start of hunk two\n-p\n+q\n";
+    const doc = { kind: "diff" as const, path: "x", unified, contentHash: sha(unified) };
+    expect(place(doc, "y\nstart of hunk two")).toBe(false);
+    expect(place(doc, "start of hunk two\nq")).toBe(true);
+    // Within one file, a jump in line numbers is a gap too.
+    expect(place(doc, "end of hunk one\ny")).toBe(true);
+  });
+
+  test("(1) a selection across hunks keeps prefix/suffix and exact inside one hunk", () => {
+    const unified = "--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n-a\n+first\n@@ -9,1 +9,1 @@\n-b\n+second\n";
+    let anchor: { selectors: { kind: string; exact?: string; prefix?: string; suffix?: string }[] } | undefined;
+    const root = review().review({ doc: { kind: "diff", path: "x", unified, contentHash: sha(unified) }, threads: [], onComment: (c) => { anchor = c.anchor as never; } }) as unknown as KitNode;
+    const g = walk(root).filter((n) => n.className === "ui-review-gutter");
+    const docEl = walk(root).find((n) => n.className.startsWith("ui-review-doc"))!;
+    docEl.listeners.get("keydown")!({ key: "Enter", target: g[3]!, preventDefault() {} } as never);
+    walk(root).find((n) => n.tagName === "TEXTAREA")!.value = "c";
+    void walk(root).find((n) => n.className === "ui-review-box")!.listeners.get("submit")!({ preventDefault() {} });
+    const quote = anchor!.selectors.find((s) => s.kind === "textQuote")!;
+    expect(quote).toEqual({ kind: "textQuote", exact: "second", prefix: "", suffix: "" });
+    expect(JSON.stringify(anchor)).not.toContain("\\uffff");
+  });
+
+  test("(2) a quote with more occurrences than the cap is ambiguous, even if the filter leaves one", () => {
+    const lines = Array.from({ length: 10001 }, (_, i) => (i === 5000 ? "unique same" : "x same")).join("\n");
+    const doc = { kind: "text" as const, path: "big", text: lines, contentHash: sha(lines) };
+    expect(place(doc, "same", "unique ")).toBe(false);
+    const small = Array.from({ length: 50 }, (_, i) => (i === 20 ? "unique same" : "x same")).join("\n");
+    expect(place({ ...doc, text: small, contentHash: sha(small) }, "same", "unique ")).toBe(true);
+  });
+
+  test("(3) selecting a blank line gives lineRange only, never an empty textQuote", () => {
+    const text = "a\n\nb\n";
+    let anchor: { selectors: Record<string, unknown>[] } | undefined;
+    const root = review().review({ doc: { kind: "text", path: "t", text, contentHash: sha(text) }, threads: [], onComment: (c) => { anchor = c.anchor as never; } }) as unknown as KitNode;
+    const g = walk(root).filter((n) => n.className === "ui-review-gutter");
+    const docEl = walk(root).find((n) => n.className.startsWith("ui-review-doc"))!;
+    docEl.listeners.get("keydown")!({ key: "Enter", target: g[1]!, preventDefault() {} } as never);
+    walk(root).find((n) => n.tagName === "TEXTAREA")!.value = "blank line";
+    void walk(root).find((n) => n.className === "ui-review-box")!.listeners.get("submit")!({ preventDefault() {} });
+    expect(anchor!.selectors).toEqual([{ kind: "lineRange", startLine: 2, endLine: 2 }]);
+  });
+});
+
+describe("ui.review Codex fixes, round 2", () => {
+  const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+  const kit = () => {
+    const js = shell("shell.js");
+    const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+    return runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null, onError: () => {} })`, {
+      Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+    }) as ConsoleUi;
+  };
+  const parts = (root: KitNode) => ({
+    g: walk(root).filter((n) => n.className === "ui-review-gutter"),
+    docEl: walk(root).find((n) => n.className.startsWith("ui-review-doc"))!,
+    textarea: walk(root).find((n) => n.tagName === "TEXTAREA")!,
+    box: walk(root).find((n) => n.className === "ui-review-box")!,
+    status: walk(root).find((n) => n.className === "ui-review-status")!,
+  });
+  const key = (p: ReturnType<typeof parts>, el: KitNode, k: string, shiftKey = false) => p.docEl.listeners.get("keydown")!({ key: k, shiftKey, target: el, preventDefault() {} } as never);
+
+  test("(1) context plus deletions without additions anchors on base and keeps the deleted text", () => {
+    const unified = "--- a/x\n+++ b/x\n@@ -1,3 +1,1 @@\n keep\n-gone one\n-gone two\n";
+    let anchor: Record<string, unknown> | undefined;
+    const root = kit().review({ doc: { kind: "diff", path: "x", unified, contentHash: sha(unified) }, threads: [], onComment: (c) => { anchor = c.anchor as never; } }) as unknown as KitNode;
+    const p = parts(root);
+    key(p, p.g[0]!, "ArrowDown", true);
+    key(p, p.g[1]!, "ArrowDown", true);
+    key(p, p.g[2]!, "Enter");
+    p.textarea.value = "why remove";
+    void p.box.listeners.get("submit")!({ preventDefault() {} });
+    expect(anchor).toMatchObject({ side: "base", selectors: [{ kind: "lineRange", startLine: 1, endLine: 3 }, { kind: "textQuote", exact: "keep\ngone one\ngone two" }, { kind: "diffHunk" }] });
+  });
+
+  test("(2) a newer selection and draft survive when an earlier send resolves", async () => {
+    const text = "a\nb\nc\n";
+    let resolve!: () => void;
+    const sent: unknown[] = [];
+    const root = kit().review({ doc: { kind: "text", path: "t", text, contentHash: sha(text) }, threads: [], onComment: (c) => { sent.push(c); return new Promise<void>((r) => { resolve = r; }); } }) as unknown as KitNode;
+    const p = parts(root);
+    key(p, p.g[0]!, "Enter");
+    p.textarea.value = "first";
+    const pending = p.box.listeners.get("submit")!({ preventDefault() {} }) as unknown as Promise<void>;
+    key(p, p.g[2]!, "Enter");
+    p.textarea.value = "second draft";
+    resolve();
+    await pending;
+    expect((sent[0] as { anchor: { selectors: { startLine: number }[] } }).anchor.selectors[0]!.startLine).toBe(1);
+    expect(p.status.textContent).toBe("Comment sent on line 1.");
+    expect(p.textarea.value).toBe("second draft");
+    expect(p.box.hidden).toBe(false);
+    expect(walk(root).find((n) => n.className === "ui-review-target")!.textContent).toBe("Comment on line 3");
+  });
+
+  test("(3) a cut document does not place by quote, only by hash", () => {
+    const head = Array.from({ length: 20000 }, (_, i) => `l${i}`).join("\n");
+    const text = `${head}\nunique tail\n`;
+    let results: unknown[] = [];
+    kit().review({ doc: { kind: "text", path: "t", text, contentHash: sha(text) }, threads: [
+      { id: "q", author: "a", at: "2026-11-02T00:00:00Z", body: "b", anchor: { path: "t", contentHash: sha("old"), selectors: [{ kind: "textQuote", exact: "l5", prefix: "", suffix: "\n" }] } },
+      { id: "h", author: "a", at: "2026-11-02T00:00:00Z", body: "b", anchor: { path: "t", contentHash: sha(text), selectors: [{ kind: "lineRange", startLine: 6, endLine: 6 }] } },
+    ], onComment() {}, onPlacement: (r) => { results = r; } });
+    expect(results).toEqual([{ threadId: "q", placed: false, via: null }, { threadId: "h", placed: true, via: "hash" }]);
+  });
+
+  test("(4) a projected anchor never places in a raw diff", () => {
+    const unified = "--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n-a\n+same text\n";
+    let results: unknown[] = [];
+    kit().review({ doc: { kind: "diff", path: "x", unified, contentHash: sha(unified) }, threads: [
+      { id: "p", author: "a", at: "2026-11-02T00:00:00Z", body: "b", anchor: { path: "x", side: "head", projection: { name: "md", version: "1" }, selectors: [{ kind: "textQuote", exact: "same text", prefix: "", suffix: "" }] } },
+      { id: "r", author: "a", at: "2026-11-02T00:00:00Z", body: "b", anchor: { path: "x", side: "head", selectors: [{ kind: "textQuote", exact: "same text", prefix: "", suffix: "" }] } },
+    ], onComment() {}, onPlacement: (r) => { results = r; } });
+    expect(results).toEqual([{ threadId: "p", placed: false, via: null }, { threadId: "r", placed: true, via: "quote" }]);
+  });
+});
+
+test("kitFor keeps the pinned plugin route for assets when shell hooks are passed", () => {
+  const js = shell("shell.js");
+  const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+  const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", (p) => p.replace("/p/demo/", "/p/demo@abc/"), { openSheet: () => null, onError: () => {} })`, {
+    Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+  }) as ConsoleUi;
+  expect(node(ui.img({ asset: "figure.png", alt: "x" })).attributes.get("src")).toBe("/p/demo@abc/asset?id=figure.png");
+  expect(typeof ui.review).toBe("function");
 });
 
 describe("inbox answers and seen receipts (#27)", () => {

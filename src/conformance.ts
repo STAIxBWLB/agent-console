@@ -110,6 +110,108 @@ export function tableColumnProblems(columns: unknown): string[] {
   return out;
 }
 
+/** Review bounds shared with agent-hub through test/fixtures/review/cases.json. */
+export const REVIEW_BOUNDS = Object.freeze({ exact: 2000, context: 64, selectors: 4, threads: 200, body: 4000 });
+const SHA256 = /^[0-9a-f]{64}$/;
+const posInt = (v: unknown) => Number.isInteger(v) && (v as number) >= 1;
+const finiteNum = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+
+function selectorProblems(s: unknown, at: string): string[] {
+  const x = (s ?? {}) as Record<string, unknown>;
+  if (!s || typeof s !== "object") return [`${at} must be an object`];
+  switch (x.kind) {
+    case "lineRange":
+      if (!posInt(x.startLine) || !posInt(x.endLine)) return [`${at}: startLine and endLine must be integers >= 1`];
+      return (x.startLine as number) > (x.endLine as number) ? [`${at}: startLine must not exceed endLine`] : [];
+    case "textQuote": {
+      const out: string[] = [];
+      if (typeof x.exact !== "string" || !x.exact) out.push(`${at}.exact must be a non-empty string`);
+      else if (x.exact.length > REVIEW_BOUNDS.exact) out.push(`${at}.exact is over ${REVIEW_BOUNDS.exact} characters`);
+      for (const k of ["prefix", "suffix"]) {
+        if (typeof x[k] !== "string") out.push(`${at}.${k} must be a string`);
+        else if ((x[k] as string).length > REVIEW_BOUNDS.context) out.push(`${at}.${k} is over ${REVIEW_BOUNDS.context} characters`);
+      }
+      return out;
+    }
+    case "diffHunk":
+      return typeof x.hunkHeader === "string" && x.hunkHeader.startsWith("@@") ? [] : [`${at}.hunkHeader must be a unified diff hunk header`];
+    case "structural":
+      return isText(x.scheme) && isText(x.ref) ? [] : [`${at}: scheme and ref must be non-empty strings`];
+    case "region": {
+      const out = ["x", "y", "width", "height"].filter((k) => !finiteNum(x[k]) || (x[k] as number) < 0).map((k) => `${at}.${k} must be a number >= 0`);
+      if (x.page !== undefined && !posInt(x.page)) out.push(`${at}.page must be an integer >= 1`);
+      return out;
+    }
+    default:
+      return [`${at}.kind must be lineRange, textQuote, diffHunk, structural or region`];
+  }
+}
+
+/** Problems in one ReviewAnchor. */
+export function reviewAnchorProblems(anchor: unknown): string[] {
+  const a = (anchor ?? {}) as Record<string, unknown>;
+  if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)) return ["anchor must be an object"];
+  const out: string[] = [];
+  if (!isText(a.path)) out.push("anchor.path must be a non-empty string");
+  if (a.side !== undefined && a.side !== "base" && a.side !== "head") out.push("anchor.side must be base or head");
+  if (a.contentHash !== undefined && (typeof a.contentHash !== "string" || !SHA256.test(a.contentHash))) out.push("anchor.contentHash must be a lowercase hex sha256");
+  if (a.projection !== undefined) {
+    const p = (a.projection ?? {}) as Record<string, unknown>;
+    if (!a.projection || typeof a.projection !== "object" || !isText(p.name) || !isText(p.version)) out.push("anchor.projection must be {name, version}");
+  }
+  if (!Array.isArray(a.selectors) || !a.selectors.length) out.push("anchor.selectors must be a non-empty array");
+  else {
+    if (a.selectors.length > REVIEW_BOUNDS.selectors) out.push(`anchor.selectors has more than ${REVIEW_BOUNDS.selectors} selectors`);
+    a.selectors.forEach((s, i) => out.push(...selectorProblems(s, `anchor.selectors[${i}]`)));
+  }
+  return out;
+}
+
+/** Problems in one ReviewThread. */
+export function reviewThreadProblems(thread: unknown): string[] {
+  const t = (thread ?? {}) as Record<string, unknown>;
+  if (!thread || typeof thread !== "object" || Array.isArray(thread)) return ["thread must be an object"];
+  const out: string[] = [];
+  if (!isText(t.id)) out.push("thread.id must be a non-empty string");
+  if (!isText(t.author)) out.push("thread.author must be a non-empty string");
+  if (typeof t.body !== "string" || !t.body) out.push("thread.body must be a non-empty string");
+  else if (t.body.length > REVIEW_BOUNDS.body) out.push(`thread.body is over ${REVIEW_BOUNDS.body} characters`);
+  if (typeof t.at !== "string" || Number.isNaN(Date.parse(t.at))) out.push("thread.at must be an ISO time");
+  if (t.state !== undefined && t.state !== "open" && t.state !== "resolved") out.push("thread.state must be open or resolved");
+  out.push(...reviewAnchorProblems(t.anchor).map((p) => `thread.${p}`));
+  return out;
+}
+
+/** Problems in the thread list a plugin passes to ui.review: shape, bounds and unique ids. */
+export function reviewProblems(threads: unknown): string[] {
+  if (!Array.isArray(threads)) return ["threads must be an array"];
+  const out: string[] = [];
+  if (threads.length > REVIEW_BOUNDS.threads) out.push(`threads: ${threads.length} is over ${REVIEW_BOUNDS.threads}; ui.review shows the first ${REVIEW_BOUNDS.threads}`);
+  const ids = new Set<unknown>();
+  threads.forEach((t, i) => {
+    out.push(...reviewThreadProblems(t).map((p) => `threads[${i}]: ${p}`));
+    const id = (t as { id?: unknown } | null)?.id;
+    if (ids.has(id)) out.push(`threads[${i}]: id ${String(id)} repeats`);
+    ids.add(id);
+  });
+  return out;
+}
+
+/** Expands the compact forms in test/fixtures/review/cases.json: "<N x c>" strings and {repeat: {count, of, idPrefix}} lists. */
+export function expandReviewCase(value: unknown): unknown {
+  if (typeof value === "string") {
+    const m = /^<(\d+) x (.)>$/u.exec(value);
+    return m ? m[2]!.repeat(Number(m[1])) : value;
+  }
+  if (Array.isArray(value)) return value.map(expandReviewCase);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, expandReviewCase(v)]));
+  return value;
+}
+export function reviewCaseValue(c: { value?: unknown; repeat?: { count: number; of: unknown; idPrefix: string } }): unknown {
+  if (c.repeat) return Array.from({ length: c.repeat.count }, (_, i) => ({ ...(expandReviewCase(c.repeat!.of) as object), id: `${c.repeat!.idPrefix}${i}` }));
+  return expandReviewCase(c.value);
+}
+
 /** Registers the api 1 conformance suite for a plugin under bun:test. */
 export function registerConsoleConformance(plugin: ConsolePlugin, options: ConformanceOptions = {}): void {
   const tool = plugin.manifest?.tool ?? "plugin";

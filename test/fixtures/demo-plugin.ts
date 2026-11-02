@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
-import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem, TableColumn } from "../../src/contract.ts";
+import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem, ReviewDoc, ReviewThread, TableColumn } from "../../src/contract.ts";
 
 /** Test fixture: an in-memory tool with an inbox, search, a reversible verb and a destructive verb. */
 interface Note { id: string; title: string; status: "open" | "accepted" | "rejected"; waited: number }
@@ -22,6 +22,17 @@ const demoPanel = (host: ConsoleHost) => {
         ui.bars({ caption: "Current versus target weight (%)", items: m.bars, max: 100 }),
         ui.spark({ caption: "Daily usage", values: m.spark }),
       ] : [ui.empty("No metrics")]));
+      return;
+    }
+    if (panel === "review") {
+      const r = snap.review as { draft: ReviewDoc; diff: ReviewDoc; threads: ReviewThread[] } | undefined;
+      if (!r) { list.replaceChildren(ui.empty("Nothing to review")); return; }
+      const send = (c: { anchor: unknown; body: string }) => host.action({ action: "comment", anchor: c.anchor, body: c.body });
+      const view = selected === "diff" ? r.diff : r.draft;
+      list.replaceChildren(
+        ui.h("p", {}, "View: ", ui.link({ panel: "review" }, "Draft"), " · ", ui.link({ panel: "review", params: { id: "diff" } }, "Diff")),
+        ui.review({ doc: view, threads: r.threads, onComment: send }),
+      );
       return;
     }
     if (panel === "files") {
@@ -97,8 +108,25 @@ const ASSETS: Record<string, { bytes: Uint8Array; mime: string; name: string }> 
   "page.html": { bytes: new TextEncoder().encode("<script>alert(1)</script>"), mime: "text/html", name: "page.html" },
 };
 
+// Review fixture: a Markdown draft, the version its threads were written against, and a diff between them.
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+const DRAFT_V1 = "# Release plan\n\nShip the console on Friday after the review.\nThe hub upgrade follows.\n\n## Risks\n\nThe <b>asset route</b> needs a security pass.\n\nThe hub upgrade follows.\n";
+const DRAFT_V2 = "# Release plan\n\n> Draft 2: dates moved.\n\nShip the console on Monday after the review.\nThe hub upgrade follows.\n\n## Risks\n\nThe <b>asset route</b> needs a security pass.\n\nThe hub upgrade follows.\n";
+const REVIEW_DRAFT: ReviewDoc = { kind: "prose", path: "docs/release-plan.md", text: DRAFT_V2, contentHash: sha256(DRAFT_V2) };
+const REVIEW_DIFF_TEXT = "diff --git a/docs/release-plan.md b/docs/release-plan.md\n--- a/docs/release-plan.md\n+++ b/docs/release-plan.md\n@@ -1,4 +1,6 @@\n # Release plan\n \n-Ship the console on Friday after the review.\n+> Draft 2: dates moved.\n+\n+Ship the console on Monday after the review.\n The hub upgrade follows.\n";
+const REVIEW_DIFF: ReviewDoc = { kind: "diff", path: "docs/release-plan.md", unified: REVIEW_DIFF_TEXT, contentHash: sha256(REVIEW_DIFF_TEXT) };
+const REVIEW_THREADS: ReviewThread[] = [
+  // Written against v2 (hash matches): places by line.
+  { id: "r1", author: "claude", at: "2026-11-02T01:00:00Z", body: "Name the security reviewer.", anchor: { path: "docs/release-plan.md", contentHash: sha256(DRAFT_V2), selectors: [{ kind: "lineRange", startLine: 10, endLine: 10 }, { kind: "textQuote", exact: "The <b>asset route</b> needs a security pass.", prefix: "## Risks\n\n", suffix: "\n" }] } },
+  // Written against v1: lines moved, the quote with its prefix still finds the second "hub upgrade" line.
+  { id: "r2", author: "codex", at: "2026-11-02T01:05:00Z", body: "Duplicate of the line above; drop one.", anchor: { path: "docs/release-plan.md", contentHash: sha256(DRAFT_V1), selectors: [{ kind: "lineRange", startLine: 10, endLine: 10 }, { kind: "textQuote", exact: "The hub upgrade follows.", prefix: "security pass.\n\n", suffix: "\n" }] } },
+  // Written against v1 on text that v2 changed: unplaced.
+  { id: "r3", author: "owner", at: "2026-11-02T01:10:00Z", body: "Friday is too early.", anchor: { path: "docs/release-plan.md", contentHash: sha256(DRAFT_V1), selectors: [{ kind: "lineRange", startLine: 3, endLine: 3 }, { kind: "textQuote", exact: "Ship the console on Friday", prefix: "# Release plan\n\n", suffix: " after the review." }] } },
+];
+
 export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record<string, unknown>[] } {
   const calls: Record<string, unknown>[] = [];
+  const comments: ReviewThread[] = [];
   const notes: Note[] = [
     { id: "n1", title: "Unknown keys warn on edits", status: "open", waited: 120 },
     { id: "n2", title: "Replace an outdated contract memory", status: "open", waited: 90 },
@@ -129,13 +157,13 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
       version: "0.0.1",
       title: "Demo",
       icon: "vault",
-      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }, { id: "files", title: "Files", order: 4 }],
+      panels: [{ id: "notes", title: "Notes", order: 1 }, { id: "log", title: "Log", order: 2 }, { id: "metrics", title: "Metrics", order: 3 }, { id: "files", title: "Files", order: 4 }, { id: "review", title: "Review", order: 5 }],
       pollMs: 5000,
       commands: [
         { id: "reopen-n1", title: "Reopen the first note", hint: "restore n1", action: "restore", input: { id: "n1" } },
         { id: "delete-n3", title: "Delete the stale lint note", action: "delete", input: { id: "n3" } },
       ],
-      capabilities: { actions: ["accept", "reject", "restore", "delete"], confirm: true, inbox: true, search: true, space: true },
+      capabilities: { actions: ["accept", "reject", "restore", "delete", "comment"], confirm: true, inbox: true, search: true, space: true },
     },
     async open() {
       return {
@@ -157,6 +185,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
               cards, links: [{ kind: "message", from: "claude", to: "codex", label: "Review handoff", at: new Date(opened).toISOString() }],
             }, cursor: 1 };
           }
+          if (input.panel === "review") return { review: { draft: REVIEW_DRAFT, diff: REVIEW_DIFF, threads: [...REVIEW_THREADS, ...comments] }, cursor: comments.length + 1 };
           if (input.panel === "metrics") return { metrics: METRICS, cursor: 1 };
           if (input.panel === "inbox") return { items: notes.filter((n) => n.status === "open").map(item) };
           if (input.panel === "search") {
@@ -174,6 +203,12 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
             const before = note.status;
             note.status = input.action === "restore" ? "open" : input.action === "accept" ? "accepted" : "rejected";
             return { ok: true, message: `${note.title}: ${note.status}`, ...(before === "open" ? { undo: { action: "restore", id: note.id } } : {}) };
+          }
+          if (input.action === "comment") {
+            const anchor = input.anchor as ReviewThread["anchor"];
+            if (!anchor || typeof input.body !== "string" || !input.body) return { ok: false, error: "comment needs an anchor and a body" };
+            comments.push({ id: `c${comments.length + 1}`, anchor, body: input.body, author: "you", at: new Date().toISOString(), state: "open" });
+            return { ok: true, message: "Comment saved" };
           }
           if (input.action === "delete") {
             if (!note) return { ok: false, error: "no such item" };

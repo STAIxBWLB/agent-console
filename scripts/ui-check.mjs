@@ -79,7 +79,16 @@ function fixturePanel(host) {
         rows: [{ name: "Long-duration government bonds", current: 38.5, target: 40, drift: -1.5 }, { name: "Equities", current: 51.2, target: 50, drift: 1.2 }, { name: "Cash", current: 10.3, target: 10, drift: 0.3 }] }),
       ui.bars({ caption: "Current versus target weight (%)", max: 100, items: [{ label: "Long-duration government bonds", value: 38.5, target: 40 }, { label: "Equities", value: 51.2, target: 50 }, { label: "Cash", value: 10.3, target: 10 }] }),
       ui.spark({ caption: "Daily usage", values: [3, 5, 4, 8, 6, 9, 12, 10, 14, 13] }));
-    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics);
+    const text = "# Review fixture <b>draft</b>\n\nFirst paragraph that a reviewer comments on.\nIt continues on a second line.\n\nSecond paragraph.\n";
+    const review = ui.h("section", { "data-ui-check": "review" }, ui.review({
+      doc: { kind: "prose", path: "fixture.md", text, contentHash: "0".repeat(64) },
+      threads: [
+        { id: "q", author: "fixture", at: "2026-11-02T00:00:00Z", body: "Placed by quote.", anchor: { path: "fixture.md", selectors: [{ kind: "textQuote", exact: "Second paragraph.", prefix: "", suffix: "" }] } },
+        { id: "u", author: "fixture", at: "2026-11-02T00:00:00Z", body: "Unplaced.", anchor: { path: "fixture.md", selectors: [{ kind: "textQuote", exact: "deleted text", prefix: "", suffix: "" }] } },
+      ],
+      onComment: (c) => { review.dataset.lastComment = JSON.stringify(c); },
+    }));
+    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics, review);
   });
   return { show(id, params) { panel = id; selected = params?.id; }, hide() {}, destroy() { mount.remove(); } };
 }
@@ -508,6 +517,7 @@ async function runScenario(ticket, scenario, fallback = false) {
     const typingFinding = await input.evaluate((el) => el.value === "jk" && document.activeElement === el ? [] : [{ kind: "typing-shortcut", detail: "Panel row shortcuts intercepted form typing" }]);
     await capture(page, scenario, "panel-form", typingFinding);
     await capture(page, scenario, "panel-metrics", await checkMetrics(page));
+    await capture(page, scenario, "panel-review", await checkReview(page));
     await page.evaluate(() => { location.hash = "#/local/demo/archive"; });
     await page.locator("#tabs .tab:last-child[aria-selected='true']").waitFor();
     await settle(page);
@@ -553,6 +563,38 @@ async function checkMetrics(page) {
     for (const el of root.querySelectorAll(".ui-bars, .ui-spark-svg, .ui-table-wrap")) if (el.getBoundingClientRect().width > width + 1) add("chart-overflow", `${el.className} wider than its panel`);
     return findings;
   });
+}
+
+/** Review kit checks: keyboard-only range selection and comment, placement, text-only rendering, no overflow. */
+async function checkReview(page) {
+  const section = page.locator("[data-ui-check='review']");
+  await section.scrollIntoViewIfNeeded();
+  await section.locator(".ui-review-gutter[tabindex='0']").focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Enter");
+  const typed = await page.evaluate(() => document.activeElement?.classList.contains("ui-review-input"));
+  await page.keyboard.type("Keyboard comment jk");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await settle(page);
+  const findings = await section.evaluate((root) => {
+    const out = [];
+    const add = (kind, detail) => out.push({ kind, detail });
+    let comment;
+    try { comment = JSON.parse(root.dataset.lastComment ?? "null"); } catch { comment = null; }
+    const range = comment?.anchor?.selectors?.[0];
+    if (!comment || comment.body !== "Keyboard comment jk" || range?.kind !== "lineRange" || range.startLine !== 3 || range.endLine !== 6) add("review-keyboard", `Keyboard comment did not submit the expected anchor: ${JSON.stringify(comment)?.slice(0, 300)}`);
+    const view = root.querySelector(".ui-review");
+    if (view?.getAttribute("data-placed") !== "1" || view?.getAttribute("data-unplaced") !== "1") add("review-placement", "Quote thread should place and the deleted one should be unplaced");
+    if (root.querySelector("b, script, img")) add("review-markup", "Document text rendered as markup");
+    { const styled = [...root.querySelectorAll("[style]")].find((n) => n.getAttribute("style").trim()); if (styled) add("inline-style", `Review output carries a style attribute: ${styled.tagName}.${styled.className} ${styled.getAttribute("style")}`); }
+    const width = root.getBoundingClientRect().width;
+    for (const el of root.querySelectorAll(".ui-review-doc, .ui-review-strip, .ui-review-box")) if (el.getBoundingClientRect().width > width + 1) add("review-overflow", `${el.className} wider than its panel`);
+    return out;
+  });
+  if (!typed) findings.push({ kind: "review-keyboard", detail: "Enter on the gutter did not move focus to the comment box" });
+  return findings;
 }
 
 /** One real-motion context; only public fixture facts in intercepted snapshot responses change. */

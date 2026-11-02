@@ -177,6 +177,34 @@ export interface SpaceScene {
 /** A ui.table column. Cells render as text; `number` and `percent` format numeric cells, and `percent` expects percent units (38.5, not 0.385). */
 export interface TableColumn { key: string; label: string; align?: "start" | "end"; format?: "text" | "number" | "percent" }
 
+/** Where a review comment points. The kit creates lineRange, textQuote and diffHunk; it only displays the others. */
+export type ReviewSelector =
+  | { kind: "lineRange"; startLine: number; endLine: number }
+  | { kind: "textQuote"; exact: string; prefix: string; suffix: string }
+  | { kind: "diffHunk"; hunkHeader: string }
+  | { kind: "structural"; scheme: string; ref: string }
+  | { kind: "region"; x: number; y: number; width: number; height: number; page?: number };
+/**
+ * A review anchor, stored unchanged by the owning tool. `contentHash` is the lowercase hex sha256 of the text the
+ * anchor was made against: the projected text when `projection` is set, else the raw file bytes.
+ * Bounds: exact <= 2000 chars, prefix/suffix <= 64, 1-4 selectors. Shared cases: test/fixtures/review/cases.json.
+ */
+export interface ReviewAnchor {
+  path: string;
+  side?: "base" | "head";
+  contentHash?: string;
+  projection?: { name: string; version: string };
+  selectors: ReviewSelector[];
+}
+/** One comment thread on an anchor; body <= 4000 chars, at most 200 threads per view. */
+export interface ReviewThread { id: string; anchor: ReviewAnchor; body: string; author: string; at: string; state?: "open" | "resolved" }
+/** The document under review: plain text, prose (paragraphs split on blank lines, Markdown shown as source) or a unified diff. */
+export type ReviewDoc =
+  | { kind: "text" | "prose"; path: string; text: string; contentHash: string; projection?: { name: string; version: string } }
+  | { kind: "diff"; path: string; unified: string; contentHash: string };
+/** One placement result reported by ui.review; the tool's stored anchor stays the authority. */
+export interface ReviewPlacement { threadId: string; placed: boolean; via: "hash" | "quote" | null }
+
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
 export interface ConsoleUi {
   h(tag: string, props?: Record<string, unknown>, ...kids: (Node | string | null | false)[]): HTMLElement;
@@ -203,6 +231,12 @@ export interface ConsoleUi {
   frame(o: { asset: string; title: string }): HTMLElement;
   /** A link to this plugin's asset or to one of its panels; any other target throws TypeError. */
   link(to: { asset: string } | { panel: string; params?: Record<string, string> }, text: string): HTMLElement;
+  /** Line-numbered review of a text, prose or diff document: select a range, comment on it, see placed and unplaced threads. */
+  review(o: {
+    doc: ReviewDoc; threads: ReviewThread[];
+    onComment(c: { anchor: ReviewAnchor; body: string }): void | Promise<unknown>;
+    onPlacement?(results: ReviewPlacement[]): void;
+  }): HTMLElement;
 }
 
 /** Browser-side host each panel module receives. Declared for panel authors; the shell implements it. */
