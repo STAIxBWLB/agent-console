@@ -888,6 +888,8 @@ async function runSpaceViews(ticket) {
   report.spaceViews = [];
   const keyboardOrder = async (page, keys) => {
     const actual = []; let visibleFocus = true;
+    // Park the pointer off the scene: Tab scrolls billboards under a resting pointer, and its hover rewrites the description.
+    await page.mouse.move(0, 0);
     await page.locator(".space-scroll").focus();
     for (let index = 0; index < keys.length; index += 1) {
       await page.keyboard.press("Tab");
