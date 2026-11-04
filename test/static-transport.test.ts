@@ -10,11 +10,11 @@ interface Transport {
   resource(path: string, refs?: Map<string, string>): string;
   setToken(id: string, token: string): void;
 }
-function transport(fetchImpl: typeof fetch) {
+function transport(fetchImpl: typeof fetch, signals: { timeout(milliseconds: number): AbortSignal } = AbortSignal) {
   const source = readFileSync(new URL("../shell/static.js", import.meta.url), "utf8").replace("export function createStaticTransport", "function createStaticTransport");
   const storage = new Map<string, string>();
   const make = runInNewContext(`${source}\ncreateStaticTransport`, {
-    URL, AbortSignal, fetch: fetchImpl,
+    URL, AbortSignal: signals, fetch: fetchImpl,
     sessionStorage: { getItem: (key: string) => storage.get(key), setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
   }) as (config: unknown) => Transport;
   return { make, storage };
@@ -64,6 +64,65 @@ describe("H2 browser transport", () => {
       expect(calls).toBe(mode === "unauthorized" ? 1 : 2);
       await client.post("/p/a:demo/snapshot", { panel: "inbox" });
       expect(calls).toBe(mode === "unauthorized" ? 1 : 2);
+    }
+  });
+
+  test("JSON application failures keep the node online and stale confirmation can refresh", async () => {
+    let actions = 0;
+    const { make } = transport((async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+      if (path === "/tools") return Response.json({ tools: [] });
+      actions++;
+      if (actions === 1) return Response.json({ ok: false, stale: true }, { status: 409 });
+      if (actions === 2) return Response.json({ needsConfirm: true, confirmToken: "fixture-refreshed" });
+      return Response.json({ ok: false, error: "fixture application error" }, { status: actions === 3 ? 400 : 502 });
+    }) as typeof fetch);
+    const client = make({ api: 1, nodes: [config.nodes[0]] });
+    await client.tools();
+    const stale = await client.post("/p/a:demo/action", { action: "delete", confirmToken: "expired" });
+    expect(stale).toEqual({ status: 409, data: { ok: false, stale: true } });
+    expect(client.nodes[0]!.status).toBe("online");
+    expect((await client.post("/p/a:demo/action", { action: "delete" })).data.needsConfirm).toBe(true);
+    for (const status of [400, 502]) {
+      expect((await client.post("/p/a:demo/action", { action: "probe" })).status).toBe(status);
+      expect(client.nodes[0]!.status).toBe("online");
+    }
+    expect(actions).toBe(4);
+  });
+
+  test("actions have server-deadline margin; an interrupted response is uncertain without disabling the node or retrying", async () => {
+    for (const failure of ["fetch", "body"] as const) {
+      const deadlines: number[] = [];
+      let signal: AbortSignal | undefined;
+      let actions = 0;
+      let health = 0;
+      let snapshot = 0;
+      const { make } = transport((async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+        if (path === "/tools") return Response.json({ tools: [] });
+        if (path === "/healthz") { health++; return new Response(null, { status: 204 }); }
+        if (path.endsWith("/snapshot")) { snapshot++; return Response.json({ ok: true }); }
+        actions++;
+        signal = init?.signal ?? undefined;
+        if (failure === "body") return { status: 200, json: async () => { throw new DOMException("fixture interrupted body", "TimeoutError"); } } as Response;
+        throw new DOMException("fixture action deadline", "TimeoutError");
+      }) as typeof fetch, { timeout(ms) { deadlines.push(ms); return new AbortController().signal; } });
+      const client = make({ api: 1, nodes: [config.nodes[0]] });
+      await client.tools();
+      const result = await client.post("/p/a:demo/action", { action: "probe" });
+      expect(deadlines).toEqual([8000, 8000, 35000]);
+      expect(signal).toBeDefined();
+      expect(result.status).toBe(0);
+      expect(result.data.uncertain).toBe(true);
+      expect(result.data.error).toContain("before repeating");
+      expect(client.nodes[0]!.status).toBe("online");
+      expect(actions).toBe(1);
+      expect(health).toBe(0);
+      expect((await client.post("/p/a:demo/snapshot", { panel: "inbox" })).status).toBe(200);
+      expect(snapshot).toBe(1);
+      expect(deadlines.at(-1)).toBe(8000);
     }
   });
 

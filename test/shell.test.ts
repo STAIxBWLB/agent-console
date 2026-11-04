@@ -950,7 +950,7 @@ describe("read-only node in the shell (#45)", () => {
     expect(check(false, "a:demo")).toBe(true);
     expect(check(false, "b:demo")).toBe(false);
     expect(js).toContain("state.readOnly = r.data.readOnly === true;");
-    expect(js).toContain("$(\"read-only\").hidden = !readOnly();");
+    expect(js.match(/updateReadOnly\(\);/g)?.length).toBe(2);
     expect(js).toMatch(/v\.destructive \? " danger" : ""\}`, disabled: readOnly\(item\.tool\)/);
     expect(js.match(/answer-submit", disabled: readOnly\(item\.tool\)/g)?.length).toBe(2);
     expect(js).toContain("ok.disabled = readOnly(tool) || expired()");
@@ -959,4 +959,21 @@ describe("read-only node in the shell (#45)", () => {
     expect(js).toMatch(/async function sendSeen\(key, explicit\) \{\n[^\n]*\n[^\n]*\n  if \(readOnly\(item\?\.tool\)\) return false;/);
     expect(js).toContain("class: \"btn group-command\", disabled: readOnly()");
   });
+});
+
+
+test("static read-only chip identifies mixed nodes in Inbox without disabling writable-node actions", () => {
+  const js = shell("shell.js");
+  const begin = js.indexOf("function updateReadOnly() {");
+  const end = js.indexOf("const RO_TITLE", begin);
+  for (const tool of [undefined, "b:demo", "a:demo"]) {
+    const chip = { hidden: true, textContent: "", title: "" };
+    runInNewContext(`${js.match(/^const readOnly = .*$/m)![0]}\n${js.slice(begin, end)}\nupdateReadOnly()`, {
+      state: { readOnly: false, route: { tool }, tools: [{ tool: "a:demo", node: "a", readOnly: true }, { tool: "b:demo", node: "b", readOnly: false }] },
+      staticTransport: { nodes: [{ id: "a", data: { readOnly: true } }, { id: "b", data: { readOnly: false } }] }, $: () => chip,
+    });
+    expect(chip.hidden).toBe(false);
+    expect(chip.textContent).toBe(tool === "a:demo" ? "Read-only" : "1 read-only node");
+    expect(chip.title).toContain("writable nodes");
+  }
 });

@@ -28,18 +28,21 @@ export function createStaticTransport(config, onStatus = () => {}) {
     return { status: 0, data: { ok: false, error: node.detail } };
   };
   const request = async (node, path, body) => {
+    const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
+    const signal = AbortSignal.timeout(action ? 35000 : 8000);
+    const uncertain = () => ({ status: 0, data: { ok: false, uncertain: true, error: 'The action outcome is unknown because its response was interrupted or invalid; check the node System log and current result before repeating the action.' } });
     let response;
-    try {
-      response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: headersFor(node, body !== undefined), ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal: AbortSignal.timeout(8000), redirect: 'error' });
-    } catch { return failed(node); }
     let data = null;
-    try { data = await response.json(); } catch { /* named status below, no provider body shown */ }
+    try {
+      response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: headersFor(node, body !== undefined), ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal, redirect: 'error' });
+      try { data = await response.json(); }
+      catch { if (action && response.status !== 401 && response.status !== 403) return uncertain(); }
+    } catch { return action ? uncertain() : failed(node); }
     if (response.status === 401 || response.status === 403) {
       node.grant = '';
       notify(node, 'unauthorized', 'Authentication refused; enter this node\'s bearer token or sign in to its Access application, then reconnect.');
-    } else if (response.ok && data && typeof data === "object" && !Array.isArray(data)) notify(node, 'online', 'Connected');
-    else notify(node, "offline", `Node response was unavailable or invalid (HTTP ${response.status}); check acon serve and its System log.`);
-    return { status: response.status, data: data ?? { ok: false, error: `Node answered HTTP ${response.status}; check its System log.` } };
+    } else notify(node, 'online', 'Connected');
+    return { status: response.status, data: data ?? { ok: false, error: `Node answered HTTP ${response.status} without JSON; check its System log.` } };
   };
   const connect = async (node) => {
     if (!node.grant || Date.now() >= node.grantUntil) {

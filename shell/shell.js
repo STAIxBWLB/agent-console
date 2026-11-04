@@ -864,7 +864,7 @@ function route() {
   const prev = state.route;
   state.route = parseRoute();
   const r = state.route;
-  $("read-only").hidden = !readOnly(r.tool);
+  updateReadOnly();
   if (prev.tool && prev.tool !== r.tool) { const p = state.panels.get(prev.tool); if (p?.instance) safe(prev.tool, "hide", () => p.instance.hide?.()); }
   $("view-inbox").hidden = r.area !== "inbox";
   $("view-system").hidden = r.area !== "system";
@@ -1071,6 +1071,14 @@ function subline(item) {
 }
 // #45: a read-only node refuses every action; verbs and confirm stay visible but disabled.
 const readOnly = (tool = state.route.tool) => state.readOnly === true || Boolean(tool && state.tools.find((t) => t.tool === tool)?.readOnly === true);
+function updateReadOnly() {
+  const chip = $("read-only");
+  const nodes = staticTransport ? staticTransport.nodes.filter((node) => node.data?.readOnly).map((node) => node.id) : [];
+  const routed = readOnly();
+  chip.hidden = !routed && !nodes.length;
+  chip.textContent = routed ? "Read-only" : `${nodes.length} read-only ${nodes.length === 1 ? "node" : "nodes"}`;
+  chip.title = nodes.length ? `Read-only nodes: ${nodes.join(", ")}. Actions remain available on writable nodes.` : "Actions are turned off on this console";
+}
 const RO_TITLE = "This console is read-only";
 function verbButtons(item, max) {
   const verbs = [...item.verbs].sort((a, b) => Number(Boolean(b.primary)) - Number(Boolean(a.primary))).slice(0, max);
@@ -2061,7 +2069,7 @@ async function loadTools() {
   });
   state.node = r.data.node ?? null;
   state.readOnly = r.data.readOnly === true;
-  $("read-only").hidden = !readOnly();
+  updateReadOnly();
   state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
   state.assetPacks = Array.isArray(r.data.assetPacks) ? r.data.assetPacks.filter((p) => p && PET_ID.test(str(p.id)) && Array.isArray(p.images) && p.images.every((id) => PET_ID.test(str(id))) && Array.isArray(p.tile) && p.tile.length === 2 && p.tile.every((n) => Number.isSafeInteger(n) && n > 0)) : [];
   state.serverErrors = Array.isArray(r.data.errors) ? r.data.errors : [];

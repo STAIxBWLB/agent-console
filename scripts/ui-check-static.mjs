@@ -56,7 +56,7 @@ const built=await buildStatic("a="+nodes.a.origin+",b="+nodes.b.origin,out);poli
 function scan(dir,prefix=""){for(const entry of readdirSync(dir,{withFileTypes:true})){const relative=prefix+entry.name;if(entry.isDirectory())scan(join(dir,entry.name),relative+"/");else publicFiles.add(relative);}}scan(out);
 const emit=(data)=>console.log(JSON.stringify(data));
 emit({origin,nodes:{a:nodes.a.origin,b:nodes.b.origin}});
-let input="",queue=Promise.resolve();process.stdin.on("data",chunk=>{input+=chunk.toString();let end;while((end=input.indexOf("\\n"))>=0){const command=input.slice(0,end);input=input.slice(end+1);queue=queue.then(async()=>{if(command==="stop-a"){await nodes.a.stop();emit({stopped:"a"});}else if(command==="refuse-b"){configs.b.origins=[];emit({refused:"b"});}else if(command==="stats")emit({calls,shellSecrets});});}});
+let input="",queue=Promise.resolve();process.stdin.on("data",chunk=>{input+=chunk.toString();let end;while((end=input.indexOf("\\n"))>=0){const command=input.slice(0,end);input=input.slice(end+1);queue=queue.then(async()=>{if(command==="stop-a"){await nodes.a.stop();emit({stopped:"a"});}else if(command==="readonly-b"){configs.b.readOnly=true;emit({readOnly:"b"});}else if(command==="refuse-b"){configs.b.origins=[];emit({refused:"b"});}else if(command==="stats")emit({calls,shellSecrets});});}});
 for(const signal of ["SIGINT","SIGTERM"])process.on(signal,()=>{void Promise.all([nodes.a.stop(),nodes.b.stop()]).finally(()=>{shell.stop(true);process.exit(0);});});
 `;
 }
@@ -158,6 +158,23 @@ export async function runStaticCheck({ browser, root, capture, report, output, f
       await page.getByLabel("Bearer token for b", { exact: true }).fill(TOKENS.b);
       await page.locator("[data-node='b']").getByRole("button", { name: "Connect with token", exact: true }).click();
       await page.locator("[data-node-status='b']").filter({ hasText: /^online:/ }).waitFor();
+      await command("readonly-b");
+      await page.getByLabel("Bearer token for b", { exact: true }).fill(TOKENS.b);
+      await page.locator("[data-node='b']").getByRole("button", { name: "Connect with token", exact: true }).click();
+      await page.locator("#read-only:not([hidden])").filter({ hasText: "1 read-only node" }).waitFor();
+      await setView(page, "inbox");
+      await page.locator("#view-inbox .row-main").first().waitFor();
+      const disabled = await page.locator("#view-inbox .row[data-key^='b:'] .row-verbs button").evaluateAll((buttons) => buttons.length > 0 && buttons.every((button) => button.disabled));
+      const enabled = await page.locator("#view-inbox .row[data-key^='a:'] .row-verbs button").evaluateAll((buttons) => buttons.length > 0 && buttons.every((button) => !button.disabled));
+      if (!disabled || !enabled) add("static-read-only-ownership", "Read-only node verbs and writable node verbs lost their independent disabled state; check the item owner.");
+      for (const width of [375, 1440]) for (const theme of ["light", "dark"]) for (const textPercent of [100, 200]) {
+        await page.setViewportSize({ width, height: 1000 });
+        await page.evaluate(({ theme, textPercent }) => { document.documentElement.dataset.theme = theme; document.documentElement.style.fontSize = `${textPercent}%`; }, { theme, textPercent });
+        await capture(page, { width, theme, textPercent }, "static-read-only");
+      }
+      await page.setViewportSize({ width: 375, height: 1000 });
+      await page.evaluate(() => { document.documentElement.dataset.theme = "light"; document.documentElement.style.fontSize = "100%"; });
+      await system(page);
       await command("stop-a");
       await page.getByLabel("Bearer token for a", { exact: true }).fill(TOKENS.a);
       await page.locator("[data-node='a']").getByRole("button", { name: "Connect with token", exact: true }).click();
