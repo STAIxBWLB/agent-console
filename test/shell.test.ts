@@ -953,5 +953,7 @@ describe("read-only node in the shell (#45)", () => {
     expect(js).toContain("ok.disabled = readOnly() || expired()");
     expect(js).toMatch(/async function runAction\(tool, input, opts\) \{\n  if \(readOnly\(\)\)/);
     expect(js).toContain("\"data-fid\": `v:${item.key}`, disabled: readOnly()");
+    expect(js).toMatch(/async function sendSeen\(key, explicit\) \{\n[^\n]*\n  if \(readOnly\(\)\) return false;/);
+    expect(js).toContain("class: \"btn group-command\", disabled: readOnly()");
   });
 });

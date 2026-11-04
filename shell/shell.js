@@ -1035,7 +1035,7 @@ function renderInbox(force = false) {
     if (!group.length) continue;
     kids.push(h("section", { class: "group", "aria-labelledby": `g-${g}` },
       h("h2", { id: `g-${g}` }, h("span", { text: label }), h("span", { class: "badge", text: String(group.length) }),
-        g === "result" && group.some((i) => i.seen) ? h("button", { type: "button", class: "btn group-command", onclick: () => markAllRead(group), text: "Mark all read" }) : null),
+        g === "result" && group.some((i) => i.seen) ? h("button", { type: "button", class: "btn group-command", disabled: readOnly(), title: readOnly() ? RO_TITLE : undefined, onclick: () => markAllRead(group), text: "Mark all read" }) : null),
       h("ul", { class: "rows" }, group.map(rowFor))));
   }
   view.replaceChildren(...kids);
@@ -1334,6 +1334,8 @@ function watchSeen(key) {
   }, 250) : null;
 }
 async function sendSeen(key, explicit) {
+  // A read-only node refuses every action, seen receipts included: send nothing, record nothing.
+  if (readOnly()) return false;
   const item = visibleItems().find((i) => i.key === key);
   if (!item?.seen) return false;
   readResults.set(key, item);
