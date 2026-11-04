@@ -113,7 +113,7 @@ Rules:
 `acon serve` (H1) is the resident form of the console for a node behind a reverse tunnel or on an internal server. `acon ui` is unchanged.
 
 ```sh
-acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.com]... [--json]
+acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.com]... [--read-only] [--json]
 ```
 
 - No ticket link, no idle exit and no browser opening. The process stays up until it is stopped. `--port` defaults to `ACON_PORT`, or 8787 when that is unset.
@@ -121,15 +121,26 @@ acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.co
 - `GET /healthz` answers 204 with no body and no authentication. Every other route, the shell files included, needs authentication.
 - Authentication is required unless `--host` is a loopback address. Starting on another address without it is refused. There are two modes:
   - Cloudflare Access: set `ACON_ACCESS_TEAM` (the team domain, `<team>.cloudflareaccess.com`) and `ACON_ACCESS_AUD` (the Access application's AUD tag). Each request's `Cf-Access-Jwt-Assertion` must verify as RS256 against `https://<team>/cdn-cgi/access/certs`. The keys are cached and refetched on an unknown `kid`. The checks are `aud` contains the AUD, `iss` is `https://<team>`, `exp`/`nbf` hold with 60 s skew, and `sub` (or `email`) is present.
-  - Bearer token: set `ACON_TOKEN_FILE` to a file with mode 0600 holding one random token of at least 32 characters, for example from `openssl rand -hex 32`. Requests send `Authorization: Bearer <token>`. The comparison is constant-time. A file readable by group or others is refused.
+  - Bearer token: set `ACON_TOKEN_FILE` to a file with mode 0600 holding one random token of at least 32 characters. `acon token new [--file PATH] [--force]` writes one (32 random bytes, base64url) to `$AGENTHUB_HOME/console/token` by default. It creates the file exclusively with mode 0600, refuses an existing file unless `--force` is given, and prints only the path, never the token. Requests send `Authorization: Bearer <token>`. The comparison is constant-time. A file readable by group or others is refused.
 - The verified identity (the Access `sub`, or `bearer`) takes the place of the ticket session. Confirm tokens for destructive actions are bound to it, so a preview confirmed by another identity is refused. The page skips the ticket step because `/session` answers `{ok: true, mode: "serve"}`.
 - CSP, headers, plugins, the confirm path and the 32 KB body limit are the same as under `acon ui`.
+- Read-only node: `--read-only` or `ACON_READ_ONLY=1`. Every `/p/<tool>/action` answers 403 `{ok: false, error: "read-only node"}` before any confirm-token lookup, without calling the plugin and without issuing a confirm token. `/tools` reports `readOnly: true`, and the shell shows a "Read-only" chip and disables verb, answer and confirm buttons. Snapshots, search and assets are unchanged. Authentication rules do not change.
+
+### LaunchAgent (macOS)
+
+```sh
+acon setup launchd [--label acon.serve] [--apply] [--host H] [--port P] [--origin https://host]... [--read-only]
+```
+
+Prints a LaunchAgent plist that runs the absolute `bun` and this checkout's `bin/acon.js serve` with the given flags, with `RunAtLoad`, `KeepAlive` and logs in `$AGENTHUB_HOME/console/logs/<label>.{out,err}.log`. It applies the same refusals as `acon serve` first. Auth is copied as environment names that point to files or settings (`ACON_TOKEN_FILE` as an absolute path, `ACON_ACCESS_TEAM`, `ACON_ACCESS_AUD`, `ACON_ORIGINS`, `ACON_PORT`, `ACON_READ_ONLY`), never a token value. Without `--apply` nothing is written. `--apply` writes `~/Library/LaunchAgents/<label>.plist`, runs `launchctl bootout` then `bootstrap` in `gui/<uid>`, and prints `launchctl print`. A tunnel agent is not part of this.
 
 ### Versioned install
 
 From a checkout, `bun scripts/install-release.ts [--home DIR] [--json]` copies the committed package files (not uncommitted changes) into `$AGENTHUB_HOME/console/releases/<version>-<commit>/`, then points `console/current` at it by atomic rename and keeps `console/previous`. An existing release is reused, never changed. Start the resident console from `console/current/bin/acon.js`: an install leaves a running process on the release it started from, and a restart switches it. Roll back by pointing `current` at `previous` and restarting.
 
 ### Docker
+
+Tagged releases publish `ghcr.io/staixbwlb/agent-console:<version>` (and `latest` for stable versions) for `linux/amd64` and `linux/arm64`, with OCI `source` and `revision` labels, when the repository variable `IMAGE_PUBLISH_ENABLED` is `true`.
 
 The `Dockerfile` builds a pinned `oven/bun` image that runs `acon serve --host 0.0.0.0` as the non-root `bun` user. `AGENTHUB_HOME=/data` is a volume holding plugins, pets and asset packs, and a `HEALTHCHECK` probes `/healthz`. The image holds no credentials:
 

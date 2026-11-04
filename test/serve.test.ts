@@ -270,3 +270,47 @@ describe("action meta under serve (#27 AC2)", () => {
     expect(plugin.calls.at(-1)!.input.meta).toEqual(forged);
   });
 });
+
+describe("read-only node (#45 AC1)", () => {
+  test("ACON_READ_ONLY and --read-only set it; other values are refused", () => {
+    expect((serveConfig({ origins: [] }, { ACON_READ_ONLY: "1" }) as ServeOptions).readOnly).toBe(true);
+    expect((serveConfig({ origins: [], readOnly: true }, {}) as ServeOptions).readOnly).toBe(true);
+    expect((serveConfig({ origins: [] }, { ACON_READ_ONLY: "0" }) as ServeOptions).readOnly).toBeUndefined();
+    expect(serveConfig({ origins: [] }, { ACON_READ_ONLY: "yes" })).toContain("ACON_READ_ONLY");
+    // Read-only never relaxes authentication off loopback.
+    expect(serveConfig({ host: "0.0.0.0", origins: [ORIGIN], readOnly: true }, {})).toContain("without authentication");
+  });
+
+  test("every action, including a destructive verb with a replayed confirm token, is refused without calling the plugin", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    const entry: PluginEntry = { tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider };
+    // A writable node mints a real confirm token for the destructive verb.
+    const writable = startServer({ plugins: [entry], version: "t", pluginsDir: "/tmp/plugins", log: () => {}, serve: { ...accessServe(), port: 0 } });
+    running.push(writable);
+    const jwt = await sign(main, "k1", claims());
+    const preview = await (await call(writable, "/p/demo/action", { jwt, body: { action: "delete", id: "n1" } })).json() as { needsConfirm: boolean; confirmToken: string };
+    expect(preview.needsConfirm).toBe(true);
+    const before = plugin.calls.length;
+
+    const server = startServer({ plugins: [entry], version: "t", pluginsDir: "/tmp/plugins", log: () => {}, serve: { ...accessServe(), readOnly: true, port: 0 } });
+    running.push(server);
+    for (const body of [{ action: "delete", id: "n1" }, { action: "delete", id: "n1", confirmToken: preview.confirmToken }, { action: "approve", id: "n1" }, { action: "nope!" }]) {
+      const res = await call(server, "/p/demo/action", { jwt, body });
+      expect(res.status).toBe(403);
+      const data = await res.json() as Record<string, unknown>;
+      expect(data).toEqual({ ok: false, error: "read-only node", readOnly: true });
+      expect("confirmToken" in data).toBe(false);
+    }
+    expect(plugin.calls.length).toBe(before);
+    const tools = await (await call(server, "/tools", { jwt, body: {} })).json() as { readOnly?: boolean; node: { readOnly?: boolean } };
+    expect(tools.readOnly).toBe(true);
+    expect(tools.node.readOnly).toBe(true);
+    const snap = await call(server, "/p/demo/snapshot", { jwt, body: { panel: "notes" } });
+    expect(snap.status).toBe(200);
+    expect((await snap.json() as { ok?: boolean }).ok).not.toBe(false);
+    expect((await call(server, "/p/demo/asset?id=figure.png", { jwt })).status).toBe(200);
+    const writableTools = await (await call(writable, "/tools", { jwt, body: {} })).json() as { readOnly?: boolean };
+    expect(writableTools.readOnly).toBeUndefined();
+  });
+});

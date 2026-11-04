@@ -939,3 +939,18 @@ describe("ui.visual Codex fixes", () => {
     expect(frameJs).toContain("root.replaceChildren(img)");
   });
 });
+
+describe("read-only node in the shell (#45)", () => {
+  test("a Read-only chip is in the top bar, and verb, answer, Mini and confirm buttons follow node.readOnly", () => {
+    const html = shell("index.html");
+    expect(html).toMatch(/<span class="chip warn read-only" id="read-only"[^>]*hidden>Read-only<\/span>/);
+    const js = shell("shell.js");
+    expect(js).toContain("const readOnly = () => state.node?.readOnly === true;");
+    expect(js).toContain("$(\"read-only\").hidden = !readOnly();");
+    expect(js).toMatch(/v\.destructive \? " danger" : ""\}`, disabled: readOnly\(\)/);
+    expect(js.match(/answer-submit", disabled: readOnly\(\)/g)?.length).toBe(2);
+    expect(js).toContain("ok.disabled = readOnly() || expired()");
+    expect(js).toMatch(/async function runAction\(tool, input, opts\) \{\n  if \(readOnly\(\)\)/);
+    expect(js).toContain("\"data-fid\": `v:${item.key}`, disabled: readOnly()");
+  });
+});
