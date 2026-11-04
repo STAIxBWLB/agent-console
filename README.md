@@ -215,7 +215,7 @@ Versions and upgrades (#26):
 
 ### Panel kit
 
-Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/contract`. The kit returns DOM nodes and renders strings as text, including strings containing HTML. Use it through the host; panels do not import shell files.
+Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/contract`. The kit returns DOM nodes and renders strings as text, including strings containing HTML. Use it through the host; panels do not import shell files. The contract types those nodes structurally as `ConsoleNode` and `ConsoleElement`, so it compiles without the DOM lib; a panel typed with the DOM lib passes real elements in and narrows results with `as HTMLElement`.
 
 | Method | Result |
 |---|---|

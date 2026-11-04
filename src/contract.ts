@@ -1,4 +1,3 @@
-/// <reference lib="dom" />
 /**
  * Console plugin contract, api 1. Changes are additive only.
  * Plan of record: entelecheia/ai-workspace#60 §2.3; UX additions: STAIxBWLB/vault-mem#48.
@@ -217,50 +216,65 @@ export type VisualPayload =
   | { kind: "table"; caption?: string; columns: TableColumn[]; rows: Record<string, string | number>[] }
   | { kind: "beforeAfter"; caption?: string; before: VisualSide; after: VisualSide };
 
+/**
+ * The DOM shapes the panel kit hands out, declared structurally so this module compiles without the DOM lib
+ * (provider code imports it from Bun). In the browser they are real `Node` and `HTMLElement` objects: a panel
+ * typed with the DOM lib passes its own elements in and narrows results with `as HTMLElement`.
+ */
+export interface ConsoleNode { readonly nodeType: number }
+export interface ConsoleElement extends ConsoleNode {
+  readonly tagName: string;
+  textContent: string | null;
+  readonly dataset: Record<string, string | undefined>;
+  append(...nodes: (ConsoleNode | string)[]): void;
+  replaceChildren(...nodes: (ConsoleNode | string)[]): void;
+  remove(): void;
+}
+
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
 export interface ConsoleUi {
-  h(tag: string, props?: Record<string, unknown>, ...kids: (Node | string | null | false)[]): HTMLElement;
-  rows<T>(items: T[], render: (item: T) => HTMLElement): HTMLElement | null;
-  row(o: { title: string; sub?: string; onOpen?: () => void; chip?: { text: string; tone?: Tone }; verbs?: HTMLElement[] }): HTMLElement;
-  empty(title: string, hint?: string): HTMLElement;
-  chip(text: string, tone?: Tone): HTMLElement;
+  h(tag: string, props?: Record<string, unknown>, ...kids: (ConsoleNode | string | null | false)[]): ConsoleElement;
+  rows<T>(items: T[], render: (item: T) => ConsoleElement): ConsoleElement | null;
+  row(o: { title: string; sub?: string; onOpen?: () => void; chip?: { text: string; tone?: Tone }; verbs?: ConsoleElement[] }): ConsoleElement;
+  empty(title: string, hint?: string): ConsoleElement;
+  chip(text: string, tone?: Tone): ConsoleElement;
   /** A `button.btn` with `type="button"`; `tone` adds the `primary` or `danger` modifier. */
-  button(label: string, onClick: () => void, o?: { tone?: "primary" | "danger"; disabled?: boolean }): HTMLButtonElement;
+  button(label: string, onClick: () => void, o?: { tone?: "primary" | "danger"; disabled?: boolean }): ConsoleElement;
   /** `err` is announced assertively (`role="alert"`); other tones are polite (`role="status"`). */
-  notice(text: string, tone?: Tone): HTMLElement;
-  form(fields: { name: string; label: string; required?: boolean; value?: string }[], submit: { label: string; primary?: boolean }, onSubmit: (values: Record<string, string>) => void): HTMLFormElement;
+  notice(text: string, tone?: Tone): ConsoleElement;
+  form(fields: { name: string; label: string; required?: boolean; value?: string }[], submit: { label: string; primary?: boolean }, onSubmit: (values: Record<string, string>) => void): ConsoleElement;
   detail(o: {
     kind: string; title: string; state?: { text: string; tone?: Tone }; whoseMove?: "you" | "agent";
-    actions?: HTMLElement[]; summary?: string; provenance?: { label: string; value: string; at?: string }[];
-    sections?: { title: string; body: Node | string; open?: boolean }[]; footer?: string[];
-  }): HTMLElement;
+    actions?: ConsoleElement[]; summary?: string; provenance?: { label: string; value: string; at?: string }[];
+    sections?: { title: string; body: ConsoleNode | string; open?: boolean }[]; footer?: string[];
+  }): ConsoleElement;
   /** At most 500 rows and 12 columns; extra input is cut with a notice. Sortable unless `sortable: false`. */
-  table(o: { columns: TableColumn[]; rows: Record<string, string | number>[]; caption?: string; sortable?: boolean }): HTMLElement;
+  table(o: { columns: TableColumn[]; rows: Record<string, string | number>[]; caption?: string; sortable?: boolean }): ConsoleElement;
   /** Horizontal bars with an optional target marker per item; at most 50 items. */
-  bars(o: { items: { label: string; value: number; target?: number }[]; max?: number; caption: string }): HTMLElement;
+  bars(o: { items: { label: string; value: number; target?: number }[]; max?: number; caption: string }): ConsoleElement;
   /** A small line of the last 365 values at most. */
-  spark(o: { values: number[]; caption: string }): HTMLElement;
+  spark(o: { values: number[]; caption: string }): ConsoleElement;
   /** An image of this plugin's asset `id` (PNG or JPEG). Only asset ids are accepted, never URLs. */
-  img(o: { asset: string; alt: string }): HTMLElement;
+  img(o: { asset: string; alt: string }): ConsoleElement;
   /** A same-origin frame of this plugin's asset `id`, for PDF and text. */
-  frame(o: { asset: string; title: string }): HTMLElement;
+  frame(o: { asset: string; title: string }): ConsoleElement;
   /** A link to this plugin's asset or to one of its panels; any other target throws TypeError. */
-  link(to: { asset: string } | { panel: string; params?: Record<string, string> }, text: string): HTMLElement;
+  link(to: { asset: string } | { panel: string; params?: Record<string, string> }, text: string): ConsoleElement;
   /** Line-numbered review of a text, prose or diff document: select a range, comment on it, see placed and unplaced threads. */
   review(o: {
     doc: ReviewDoc; threads: ReviewThread[];
     onComment(c: { anchor: ReviewAnchor; body: string }): void | Promise<unknown>;
     onPlacement?(results: ReviewPlacement[]): void;
-  }): HTMLElement;
+  }): ConsoleElement;
   /** A diagram (sandboxed Mermaid frame), comparison cards, a table or a before/after pair; failures show the source. */
-  visual(payload: VisualPayload): HTMLElement;
+  visual(payload: VisualPayload): ConsoleElement;
 }
 
 /** Browser-side host each panel module receives. Declared for panel authors; the shell implements it. */
 export interface ConsoleHost {
   tool: string;
   node: string;
-  mount: HTMLElement;
+  mount: ConsoleElement;
   ui: ConsoleUi;
   theme: { mode: "light" | "dark"; tokens: Record<string, string> };
   snapshot(extra?: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -269,7 +283,7 @@ export interface ConsoleHost {
   onSnapshot(cb: (snapshot: Record<string, unknown>) => void): void;
   onTheme(cb: (theme: ConsoleHost["theme"]) => void): void;
   toast(text: string, options?: { undo?: () => void }): void;
-  sheet: { open(title: string): HTMLElement; close(): void };
+  sheet: { open(title: string): ConsoleElement; close(): void };
 }
 
 /** Manifest file written by a tool's setup under $AGENTHUB_HOME/console/plugins/<tool>.json. */

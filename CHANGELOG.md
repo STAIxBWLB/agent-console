@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The contract no longer references the DOM lib (#52). Panel-side types use the new structural `ConsoleNode` and `ConsoleElement`, so consumers compiled with `lib: ["ESNext"]` no longer get DOM globals such as `document`; `bun run check` typechecks `src/contract.ts` and `src/conformance.ts` without the DOM lib. Types only: a panel typed with the DOM lib narrows kit results with `as HTMLElement`.
+
 ## [0.1.1] - 2026-11-04
 
 ### Added
