@@ -193,7 +193,8 @@ Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/c
 | `row({title, sub?, onOpen?, chip?, verbs?})` | A row with an open control, optional subtitle, state chip and action nodes. |
 | `empty(title, hint?)` | An empty state with an optional hint. |
 | `chip(text, tone?)` | A compact state label. |
-| `notice(text, tone?)` | A status notice. |
+| `button(label, onClick, {tone?, disabled?}?)` | A `button.btn` with `type="button"`; `tone` is `"primary"` or `"danger"` and adds that modifier. |
+| `notice(text, tone?)` | A status notice. Tone `err` uses `role="alert"` (announced at once); other tones use `role="status"`. |
 | `form(fields, submit, onSubmit)` | A labeled form; fields are `{name, label, required?, value?}`, submit is `{label, primary?}`, and the callback receives string values by field name. |
 | `detail(options)` | The shared detail template: kind/title/state header, whose move, actions, summary, provenance, collapsible sections and mono footer. |
 | `table({columns, rows, caption?, sortable?})` | A table with text cells. A column is a `TableColumn`: `{key, label, align?: "start" \| "end", format?: "text" \| "number" \| "percent"}`. Header buttons sort stably (ascending, then descending) and set `aria-sort`; `sortable: false` turns this off. |
@@ -221,10 +222,7 @@ export default (host) => {
       title: note.title,
       sub: note.status,
       onOpen: () => host.navigate(host.tool, "notes", { id: note.id }),
-      verbs: [ui.h("button", {
-        type: "button", class: "btn danger", text: "Delete...",
-        onclick: () => host.action({ action: "delete", id: note.id }),
-      })],
+      verbs: [ui.button("Delete...", () => host.action({ action: "delete", id: note.id }), { tone: "danger" })],
     }));
     host.mount.replaceChildren(rows ?? ui.empty("No notes", "New notes will appear here."));
   });
@@ -272,7 +270,7 @@ The only CSP addition for visuals is the console's `frame-src 'self'`, shared wi
 Panels may use these classes. Modifiers apply only with their base class:
 
 - Lists and rows: `rows`, `row`, `row-main`, `row-text`, `row-title`, `row-sub`, `row-verbs`, `ui-rows`, `ui-row-open`.
-- Controls and status: `btn` with `primary` or `danger`; `chip` with `ok`, `warn`, `err` or `accent`; `notice`; `ui-notice` with `ok`, `warn` or `err`.
+- Controls and status: `btn` with `primary` or `danger` (what `ui.button` renders); `chip` with `ok`, `warn`, `err` or `accent`; `notice`; `ui-notice` with `ok`, `warn` or `err`.
 - Containers and text: `empty`, `card`, `mono`, `ui-form`, `ui-field`.
 - Details: `ui-detail`, `ui-detail-head`, `ui-detail-kind`, `ui-detail-move`, `ui-detail-actions`, `ui-detail-summary`, `ui-provenance`, `ui-detail-section`, `ui-detail-body`, `ui-detail-footer`.
 - Tables and charts: `ui-table-block`, `ui-table-wrap`, `ui-table`, `ui-sort`, `ui-chart`, `ui-bars`, `ui-bar`, `ui-bar-label`, `ui-bar-value`, `ui-bar-track`, `ui-bar-fill`, `ui-bar-target`, `ui-spark`, `ui-spark-summary`, `ui-spark-line`, `ui-sr` (visually hidden).

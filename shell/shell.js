@@ -107,8 +107,12 @@ const consoleUi = {
   chip(text, tone = "neutral") {
     return h("span", { class: `chip ${toneClass(tone)}`, text });
   },
+  button(label, onClick, o = {}) {
+    const tone = o.tone === "primary" || o.tone === "danger" ? ` ${o.tone}` : "";
+    return h("button", { type: "button", class: `btn${tone}`, disabled: Boolean(o.disabled), onclick: () => onClick(), text: label });
+  },
   notice(text, tone = "neutral") {
-    return h("p", { class: `notice ui-notice ${toneClass(tone)}`, role: "status", text });
+    return h("p", { class: `notice ui-notice ${toneClass(tone)}`, role: tone === "err" ? "alert" : "status", text });
   },
   form(fields, submit, onSubmit) {
     const inputs = fields.map((field) => h("input", { type: "text", name: field.name, required: field.required, value: field.value ?? "" }));

@@ -224,6 +224,9 @@ export interface ConsoleUi {
   row(o: { title: string; sub?: string; onOpen?: () => void; chip?: { text: string; tone?: Tone }; verbs?: HTMLElement[] }): HTMLElement;
   empty(title: string, hint?: string): HTMLElement;
   chip(text: string, tone?: Tone): HTMLElement;
+  /** A `button.btn` with `type="button"`; `tone` adds the `primary` or `danger` modifier. */
+  button(label: string, onClick: () => void, o?: { tone?: "primary" | "danger"; disabled?: boolean }): HTMLButtonElement;
+  /** `err` is announced assertively (`role="alert"`); other tones are polite (`role="status"`). */
   notice(text: string, tone?: Tone): HTMLElement;
   form(fields: { name: string; label: string; required?: boolean; value?: string }[], submit: { label: string; primary?: boolean }, onSubmit: (values: Record<string, string>) => void): HTMLFormElement;
   detail(o: {
