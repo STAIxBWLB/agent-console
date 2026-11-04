@@ -156,10 +156,18 @@ describe("acon setup launchd (#45 AC3)", () => {
     mkdirSync(other);
     writeFileSync(join(other, "bun"), "");
     const exec = join(cellar, "bun");
-    expect(stableBun(exec, ["relative", other, brewBin].join(":"))).toBe(join(brewBin, "bun"));
-    expect(stableBun(exec, other)).toBe(exec);
-    expect(stableBun(exec, "")).toBe(exec);
-    expect(stableBun(join(dir, "missing"), brewBin)).toBe(join(dir, "missing"));
+    // The fixture lives under the temp dir, so these calls pass no temp roots.
+    expect(stableBun(exec, ["relative", other, brewBin].join(":"), [])).toBe(join(brewBin, "bun"));
+    expect(stableBun(exec, other, [])).toBe(exec);
+    expect(stableBun(exec, "", [])).toBe(exec);
+    expect(stableBun(join(dir, "missing"), brewBin, [])).toBe(join(dir, "missing"));
+    // `bun run --bun` puts a per-run bun-node-<hex> shim first on PATH that links to the same binary (r57-f1).
+    const shim = join(dir, "bun-node-abc123");
+    mkdirSync(shim);
+    symlinkSync(join(cellar, "bun"), join(shim, "bun"));
+    expect(stableBun(exec, [shim, brewBin].join(":"), [])).toBe(join(brewBin, "bun"));
+    // Any directory under a temp root is skipped too.
+    expect(stableBun(exec, brewBin, [dir])).toBe(exec);
   });
 
   test("waits for bootout to finish before bootstrap, bounded, and reports a bootstrap failure (#56)", () => {
@@ -179,6 +187,8 @@ describe("acon setup launchd (#45 AC3)", () => {
     let waits = 0;
     expect(reloadAgent(stuck, "gui/501", "x", "/p.plist", 1_000, () => { waits++; })).toBe("launchctl bootstrap failed (5): Bootstrap failed: 5: Input/output error");
     expect(waits).toBe(5);
+    const silent = (...argv: string[]) => ({ exitCode: argv[0] === "bootstrap" ? 5 : 113, stderr: "" });
+    expect(reloadAgent(silent, "gui/501", "x", "/p.plist", 0, () => {})).toBe("launchctl bootstrap failed (5)");
   });
 
   test("refuses what serve would refuse, a bad label and a missing subcommand", async () => {

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, fchmodSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 
 /**
  * #45 follow-ups of `acon serve` (H1): a bearer token file and a macOS LaunchAgent.
@@ -40,11 +41,16 @@ export const LAUNCHD_ENV = ["ACON_TOKEN_FILE", "ACON_ACCESS_TEAM", "ACON_ACCESS_
  * The `bun` on PATH when it is the running binary, so a Homebrew `bin/bun` link survives `brew upgrade` (#56).
  * `process.execPath` is already resolved to the versioned Cellar file, which the next upgrade deletes.
  */
-export function stableBun(execPath: string, pathEnv = ""): string {
+export function stableBun(execPath: string, pathEnv = "", tempRoots = [tmpdir(), "/tmp", "/private/tmp"]): string {
   let real: string;
   try { real = realpathSync(execPath); } catch { return execPath; }
+  const temp = tempRoots.flatMap((root) => { try { return [realpathSync(root)]; } catch { return [root]; } });
   for (const dir of pathEnv.split(delimiter)) {
     if (!isAbsolute(dir)) continue;
+    // `bun run --bun` puts a per-run `bun-node-<hex>` shim first on PATH; it is deleted when the run ends (r57-f1).
+    let realDir = dir;
+    try { realDir = realpathSync(dir); } catch { continue; }
+    if (/[\\/]bun-node-[0-9a-f]+[\\/]?$/.test(dir) || temp.some((root) => realDir === root || realDir.startsWith(root + sep))) continue;
     const candidate = join(dir, "bun");
     try { if (realpathSync(candidate) === real) return candidate; } catch { /* not there */ }
   }
@@ -61,7 +67,7 @@ export function reloadAgent(run: Launchctl, domain: string, label: string, file:
   run("bootout", `${domain}/${label}`); // not loaded yet is fine
   for (let waited = 0; waited < timeoutMs && run("print", `${domain}/${label}`).exitCode === 0; waited += 200) sleep(200);
   const boot = run("bootstrap", domain, file);
-  return boot.exitCode === 0 ? undefined : `launchctl bootstrap failed (${boot.exitCode}): ${boot.stderr.trim()}`;
+  return boot.exitCode === 0 ? undefined : `launchctl bootstrap failed (${boot.exitCode})${boot.stderr.trim() ? `: ${boot.stderr.trim()}` : ""}`;
 }
 
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
