@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-04
+
 ### Compatibility
 
 Initial 0.1.x minor line: N-1 is not applicable because no previous minor has been published.

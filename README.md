@@ -2,17 +2,17 @@
 
 `acon` is a local web console for the agent tool family: agent-hub (agents and tasks), agent-mem (memory) and vault-mem (knowledge vault). Each tool contributes panels as a plugin. The console adds what no single tool has: one inbox of everything waiting for you, a command palette across tools, and one confirm dialog for every destructive action.
 
-Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). No tool ships its plugin yet; a fixture plugin in `test/fixtures/` shows the contract. The static multi-node shell (H2) is not implemented.
+Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). vault-mem and agent-hub register their plugins; a fixture plugin in `test/fixtures/` shows the contract. The static multi-node shell (H2) is not implemented.
 
 ## Use
 
-Requires Bun 1.4.2 or later. The package is not published yet; run it from a checkout:
+Requires Bun 1.4.2 or later. Install the published package, or run `bun install` and `bun bin/acon.js` from a checkout:
 
 ```sh
-bun install
-bun bin/acon.js ui            # opens the browser with a one-time link
-bun bin/acon.js ui --no-open --json
-bun bin/acon.js plugins       # registered plugins and their hash check
+bun add -g @staix/agent-console
+acon ui                       # opens the browser with a one-time link
+acon ui --no-open --json
+acon plugins                  # registered plugins and their hash check
 ```
 
 The server listens on 127.0.0.1 only and exits 5 minutes after the last request. The link works once and expires after 60 seconds.
@@ -314,5 +314,9 @@ Three.js is an exact build-time devDependency (`0.187.0`), not a runtime package
 `--space-motion-only` runs the focused Space motion regression context. It changes public fixture facts through intercepted snapshot responses, checks actual CSS transitions and message consumption, and holds responses until the real snapshot gap exceeds 3 seconds. The normal full run includes this check as well as the viewport matrix.
 
 Record a real macOS Safari/VoiceOver pass in the PR for inbox, peek, palette and confirm: focused element, announced role/name/state, keyboard result and any finding. DOM checks do not substitute for VoiceOver announcements; the owner decides whether a VoiceOver finding blocks merge.
+
+## Release
+
+A `v*` tag equal to `v` plus the `package.json` version publishes through `.github/workflows/release.yml`. The tag needs a dated `## [VERSION] - YYYY-MM-DD` section in `CHANGELOG.md`. Linux and macOS run `bun run check`, then stage one tarball, check its SHA-256 manifest and install it into a clean prefix. The publish job uploads that same Linux tarball with npm OIDC trusted publishing and provenance, and no npm token is used. It runs only when the repository variable `NPM_PUBLISH_ENABLED` is `true`, and only after a reviewer approves the `npm-production` environment. The trusted publisher is configured on npm for repository `STAIxBWLB/agent-console`, workflow `release.yml` and environment `npm-production`. A GitHub release with the CHANGELOG section and the tarball follows. Never move a release tag or reuse a published version.
 
 License: MIT
