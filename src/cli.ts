@@ -1,6 +1,7 @@
 import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
+import { buildStatic } from "./static.ts";
 import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
@@ -16,6 +17,8 @@ Usage:
   acon ui [--no-open] [--json]   serve the console on 127.0.0.1 and print a one-time link
   acon serve [--host H] [--port P] [--origin https://host]... [--read-only] [--json]
                                  resident console behind Cloudflare Access or a bearer token
+  acon build --static --nodes id=https://origin[,id=origin] [--out dist]
+                                 write the static multi-node shell (no credentials or plugin data)
   acon token new [--file PATH] [--force]
                                  write a 0600 bearer token file (default $AGENTHUB_HOME/console/token); prints the path only
   acon setup launchd [--label ID] [--apply] [serve flags]
@@ -32,8 +35,8 @@ serve auth: ACON_ACCESS_TEAM + ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN
 --read-only or ACON_READ_ONLY=1 refuses every plugin action; snapshots, search and assets keep working.
 The ui server exits 5 minutes after the last request; serve stays up.`;
 
-const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"] };
-const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"] };
+const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
+const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"], build: ["--nodes", "--out"] };
 const SUBCOMMANDS: Record<string, string> = { token: "new", setup: "launchd" };
 
 function parse(argv: string[]): { command: string; flags: Set<string>; args: string[]; values: Record<string, string[]> } | string {
@@ -52,7 +55,7 @@ function parse(argv: string[]): { command: string; flags: Set<string>; args: str
       (values[name] ??= []).push(value);
     } else rest.push(arg);
   }
-  for (const name of ["--host", "--port", "--file", "--label"]) if ((values[name]?.length ?? 0) > 1) return `${name} may be given once`;
+  for (const name of ["--host", "--port", "--file", "--label", "--nodes", "--out"]) if ((values[name]?.length ?? 0) > 1) return `${name} may be given once`;
   const sub = SUBCOMMANDS[command];
   if (sub && rest[0] !== sub) return `${command} takes the subcommand ${sub}: acon ${command} ${sub}`;
   if (sub) rest.shift();
@@ -63,6 +66,7 @@ function parse(argv: string[]): { command: string; flags: Set<string>; args: str
   if (command === "install") {
     if (flags.has("--list") ? args.length > 0 || flags.has("--force") : args.length !== 1) return "install takes one package name, https URL or directory, or --list";
   }
+  if (command === "build" && (!flags.has("--static") || !values["--nodes"])) return "build needs --static and --nodes id=https://origin; run acon build --static --nodes desk=https://node.example.com";
   return { command, flags, args, values };
 }
 
@@ -170,6 +174,16 @@ export async function main(argv: string[]): Promise<number> {
   const { command, flags, args, values } = parsed;
   if (["--version", "-v", "version"].includes(command)) { console.log(pkg.version); return 0; }
   if (["help", "--help", "-h"].includes(command)) { console.log(USAGE); return 0; }
+  if (command === "build") {
+    try {
+      const result = await buildStatic(values["--nodes"]![0]!, values["--out"]?.[0]);
+      console.log(`acon: static shell written to ${result.out}; serve that directory over https and allow its origin on each acon serve node`);
+      return 0;
+    } catch (error) {
+      console.error(`acon: static build failed: ${(error as Error).message}; check --nodes and choose an unused --out directory`);
+      return 2;
+    }
+  }
   const home = familyHome();
   if (command === "install") return await install(home, args[0], flags);
   if (command === "token") return token(home, values["--file"]?.[0], flags.has("--force"));

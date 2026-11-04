@@ -128,6 +128,7 @@ export function startServer(options: ServerOptions) {
   };
   const tickets = new Map<string, { expires: number }>();
   const sessions = new Map<string, { expires: number }>();
+  const resources = new Map<string, { expires: number; principal: string; origin: string }>();
   const confirms = new Map<string, { expires: number; session: string; tool: string; input: string; fingerprint: string }>();
   const errors: ConsoleError[] = [];
   let lastSeen = now();
@@ -257,15 +258,10 @@ export function startServer(options: ServerOptions) {
     return json(result);
   }
 
-  const server = Bun.serve({
-    hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",
-    port: serve?.port ?? 0,
-    maxRequestBodySize: 32 * 1024,
-    idleTimeout: 60,
-    async fetch(req): Promise<Response> {
+  async function handle(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const path = url.pathname;
-      // H1 health probe: no auth, no body, before every other check so container and tunnel probes work.
+      // H1 health probe stays public, including the opaque reachability probe used by H2.
       if (serve && path === "/healthz" && (req.method === "GET" || req.method === "HEAD")) return new Response(null, { status: 204, headers: HEADERS });
       lastSeen = now();
       if (!serve) armIdle();
@@ -273,8 +269,18 @@ export function startServer(options: ServerOptions) {
       const requestOrigin = req.headers.get("origin");
       const originOk = requestOrigin !== null && (serve ? serve.origins.includes(requestOrigin) : requestOrigin === origin);
       if (requestOrigin !== null && !originOk) return reject(403, "forbidden origin");
-      // Under serve the verified identity is the session: every route needs it, the shell files too.
-      const principal = serve ? await serve.authenticate(req) : null;
+      if (serve && req.method === "OPTIONS") {
+        const method = req.headers.get("access-control-request-method");
+        const headers = (req.headers.get("access-control-request-headers") ?? "").toLowerCase().split(",").map((h) => h.trim()).filter(Boolean);
+        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization/content-type only");
+        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Max-Age": "300" } });
+      }
+      prune(resources);
+      const grant = resources.get(url.searchParams.get("acon_resource") ?? "");
+      const resourcePath = /^\/(?:p\/[^/]+\/(?:panel\.js|panel\.css|asset)|pets\/[^/]+\/sheet|assets\/[^/]+\/[^/]+|models\/[^/]+\/[^/]+)$/.test(path);
+      const resourceGrant = serve && req.method === "GET" && resourcePath && grant && (!requestOrigin || requestOrigin === grant.origin) && serve.origins.includes(grant.origin) ? grant : undefined;
+      // A resource grant is GET-only. It cannot authenticate JSON, action or session requests.
+      const principal = serve ? (resourceGrant?.principal ?? await serve.authenticate(req)) : null;
       if (serve && principal === null) return reject(401, "authentication required");
       prune(tickets);
       prune(sessions);
@@ -303,7 +309,7 @@ export function startServer(options: ServerOptions) {
           if (!live) return reject(401, "session expired or missing; run acon ui");
           // Same-origin fetches and frames only; the SameSite=Strict cookie already keeps cross-site requests out.
           const site = req.headers.get("sec-fetch-site");
-          if (site !== null && site !== "same-origin" && site !== "none") return reject(403, "cross-site asset request");
+          if (!resourceGrant && !(serve && originOk) && site !== null && site !== "same-origin" && site !== "none") return reject(403, "cross-site asset request");
           const entry = pluginEntry();
           if (!entry) return unknownTool();
           return pluginAsset(entry, url.searchParams.get("id"));
@@ -354,7 +360,16 @@ export function startServer(options: ServerOptions) {
       // Every accepted body has a canonical form; this refuses numbers like 1e400 that would collide with null.
       try { canonical(input); } catch { return reject(400, "numbers must be finite"); }
       if (path === "/session") {
-        if (serve) return json({ ok: true, mode: "serve" });
+        if (serve) {
+          if (input.resources === true) {
+            if (!originOk) return reject(403, "resource grants need a configured browser --origin; add the static shell origin to acon serve");
+            cap(resources);
+            const resourceToken = secret();
+            resources.set(resourceToken, { expires: now() + SESSION_MS, principal: principal!, origin: requestOrigin! });
+            return json({ ok: true, mode: "serve", resourceToken, expiresIn: SESSION_MS });
+          }
+          return json({ ok: true, mode: "serve" });
+        }
         const ticket = typeof input.ticket === "string" ? input.ticket : "";
         if (!tickets.delete(ticket)) return reject(401, "this link was already used or has expired; run acon ui");
         cap(sessions);
@@ -370,10 +385,25 @@ export function startServer(options: ServerOptions) {
       const entry = pluginEntry();
       if (!entry) return unknownTool();
       return plugin![2] === "snapshot" ? snapshot(entry, input) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
-    },
-    error(error) {
-      log(`request failed: ${error.message}`);
-      return reject(500, "console request failed");
+  }
+  const server = Bun.serve({
+    hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",
+    port: serve?.port ?? 0,
+    maxRequestBodySize: 32 * 1024,
+    idleTimeout: 60,
+    async fetch(req): Promise<Response> {
+      let response: Response;
+      try { response = await handle(req); }
+      catch (error) { log(`request failed: ${(error as Error).message}`); response = reject(500, "console request failed"); }
+      if (serve) {
+        response.headers.set("Vary", "Origin");
+        const requestOrigin = req.headers.get("origin");
+        if (requestOrigin && serve.origins.includes(requestOrigin)) {
+          response.headers.set("Access-Control-Allow-Origin", requestOrigin);
+          response.headers.set("Access-Control-Allow-Credentials", "true");
+        }
+      }
+      return response;
     },
   });
   const host = `127.0.0.1:${server.port}`;
@@ -395,6 +425,7 @@ export function startServer(options: ServerOptions) {
     tickets.clear();
     sessions.clear();
     confirms.clear();
+    resources.clear();
     server.stop(true);
     // Each provider gets 5 s to close; a hanging one never keeps the process alive.
     await Promise.all([...refs.values()].map((entry) => withTimeout(Promise.resolve().then(() => entry.provider!.close?.()), 5_000, `${entry.tool} close`)

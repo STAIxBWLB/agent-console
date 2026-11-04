@@ -710,8 +710,8 @@ function visualView(payload, kit, frames, theme) {
 // `route` maps a plugin path to the load this page uses (#26), so assets come from the same version as the panel.
 // `o` holds shell hooks for kit parts that need them (review: openSheet, onError; visual: theme, onTheme).
 function kitFor(tool, hash, route = (path) => path, o = {}) {
-  const { openSheet, onError, theme = () => "light", onTheme = () => {} } = o;
-  const assetUrl = (id) => `${route(`/p/${tool}/asset`)}?id=${encodeURIComponent(id)}`;
+  const { openSheet, onError, frameAsset, theme = () => "light", onTheme = () => {} } = o;
+  const assetUrl = (id) => route(`/p/${tool}/asset?id=${encodeURIComponent(id)}`);
   let frames = null;
   // One theme subscription per kit: diagrams on screen redraw in the new theme.
   onTheme(() => { if (frames) for (const entry of [...frames.live]) entry.retheme(theme()); });
@@ -725,6 +725,7 @@ function kitFor(tool, hash, route = (path) => path, o = {}) {
     },
     frame(o) {
       const id = assetId(o);
+      if (frameAsset) return frameAsset(assetUrl(id), String(o.title ?? "Attachment"));
       return h("iframe", { class: "ui-frame", src: assetUrl(id), title: String(o.title ?? "Attachment"), referrerpolicy: "no-referrer" });
     },
     link(to, text) {
@@ -775,10 +776,17 @@ function store(key, value) {
 
 // ---------- network ----------
 // A page keeps the plugin load it first saw (#26): a version registered later serves pages opened after it.
+let staticTransport = null;
 const pinnedRefs = new Map();
-const pluginPath = (path) => path.replace(/^\/p\/([a-z][a-z0-9-]{1,15})\//, (whole, id) => (pinnedRefs.has(id) ? `/p/${pinnedRefs.get(id)}/` : whole));
+const pluginPath = (path) => staticTransport ? staticTransport.resource(path, pinnedRefs) : path.replace(/^\/p\/([a-z][a-z0-9-]{1,15})\//, (whole, id) => (pinnedRefs.has(id) ? `/p/${pinnedRefs.get(id)}/` : whole));
 
 async function post(path, body = {}) {
+  if (staticTransport) {
+    state.lastRequest = Date.now();
+    const response = await staticTransport.post(path, body, pinnedRefs);
+    if (response.status === 200) state.lastOk = Date.now();
+    return response;
+  }
   path = pluginPath(path);
   state.lastRequest = Date.now();
   let res;
@@ -856,6 +864,7 @@ function route() {
   const prev = state.route;
   state.route = parseRoute();
   const r = state.route;
+  $("read-only").hidden = !readOnly(r.tool);
   if (prev.tool && prev.tool !== r.tool) { const p = state.panels.get(prev.tool); if (p?.instance) safe(prev.tool, "hide", () => p.instance.hide?.()); }
   $("view-inbox").hidden = r.area !== "inbox";
   $("view-system").hidden = r.area !== "system";
@@ -949,6 +958,13 @@ function renderLive() {
   const el = $("live");
   const age = Math.round((Date.now() - state.lastOk) / 1000);
   const kind = state.offline ? "offline" : age > 15 ? "stale" : "live";
+  if (staticTransport) {
+    const online = staticTransport.nodes.filter((node) => node.status === "online").length;
+    el.className = `live ${online ? "live" : "offline"}`;
+    el.textContent = `${online}/${staticTransport.nodes.length} nodes online`;
+    el.title = "Open System for each node's status and authentication";
+    return;
+  }
   const text = kind === "offline" ? "Offline · retrying" : kind === "stale" ? `Stale ${age} s` : `Live · ${age} s ago`;
   el.className = `live ${kind}`;
   if (el.dataset.text !== text) { el.dataset.text = text; el.replaceChildren(h("span", { class: "dot", "aria-hidden": "true" }), h("span", { text })); }
@@ -1054,12 +1070,12 @@ function subline(item) {
   return [item.kind, item.project, item.actor ? `from ${item.actor}` : "", toolById(item.tool)?.title, ago(item.at)].filter(Boolean).join(" · ");
 }
 // #45: a read-only node refuses every action; verbs and confirm stay visible but disabled.
-const readOnly = () => state.readOnly === true;
+const readOnly = (tool = state.route.tool) => state.readOnly === true || Boolean(tool && state.tools.find((t) => t.tool === tool)?.readOnly === true);
 const RO_TITLE = "This console is read-only";
 function verbButtons(item, max) {
   const verbs = [...item.verbs].sort((a, b) => Number(Boolean(b.primary)) - Number(Boolean(a.primary))).slice(0, max);
   return verbs.map((v, i) => h("button", {
-    type: "button", class: `btn${v.primary ? " primary" : ""}${v.destructive ? " danger" : ""}`, disabled: readOnly(), title: readOnly() ? RO_TITLE : undefined,
+    type: "button", class: `btn${v.primary ? " primary" : ""}${v.destructive ? " danger" : ""}`, disabled: readOnly(item.tool), title: readOnly(item.tool) ? RO_TITLE : undefined,
     onclick: (e) => { e.stopPropagation(); runVerb(item, v); },
   }, h("span", { text: v.label }), max <= 2 ? h("kbd", { "aria-hidden": "true", text: String(i + 1) }) : null));
 }
@@ -1229,7 +1245,7 @@ function answerForm(item, verb, draft, submit, redraw) {
         str(draft.reason).trim() ? [h("dt", { text: "Reason" }), h("dd", { text: str(draft.reason).trim() })] : []),
       error,
       h("div", { class: "sheet-verbs" },
-        h("button", { type: "button", class: "btn primary answer-submit", disabled: readOnly(), onclick: () => submit(r.answers), text: `Submit: ${verb.label}` }),
+        h("button", { type: "button", class: "btn primary answer-submit", disabled: readOnly(item.tool), onclick: () => submit(r.answers), text: `Submit: ${verb.label}` }),
         h("button", { type: "button", class: "btn", onclick: () => { draft.step = "edit"; redraw(true); }, text: "Back" })));
     return el;
   }
@@ -1266,7 +1282,7 @@ function answerForm(item, verb, draft, submit, redraw) {
   verb.reason ? h("label", { class: "answer-opt answer-other" }, h("span", { class: "answer-label", text: `Reason${verb.reason === "required" ? " (required)" : " (optional)"}` }),
     h("input", { type: "text", class: "answer-other-text answer-reason", maxlength: "500", autocomplete: "off", value: str(draft.reason), oninput: (e) => { draft.reason = e.target.value; } })) : null,
   error,
-  h("div", { class: "sheet-verbs" }, h("button", { type: "submit", class: "btn primary answer-submit", disabled: readOnly(), text: form.questions.length > 1 ? "Review answers" : `Submit: ${verb.label}` })));
+  h("div", { class: "sheet-verbs" }, h("button", { type: "submit", class: "btn primary answer-submit", disabled: readOnly(item.tool), text: form.questions.length > 1 ? "Review answers" : `Submit: ${verb.label}` })));
   return el;
 }
 function openAnswer(item, verb) {
@@ -1335,8 +1351,8 @@ function watchSeen(key) {
 }
 async function sendSeen(key, explicit) {
   // A read-only node refuses every action, seen receipts included: send nothing, record nothing.
-  if (readOnly()) return false;
   const item = visibleItems().find((i) => i.key === key);
+  if (readOnly(item?.tool)) return false;
   if (!item?.seen) return false;
   readResults.set(key, item);
   const r = await post(`/p/${item.tool}/action`, { action: item.seen.action, id: item.id, seenAt: new Date().toISOString(), ...(explicit ? { explicit: true } : {}) });
@@ -1345,7 +1361,7 @@ async function sendSeen(key, explicit) {
   return true;
 }
 async function markAllRead(group) {
-  const items = group.filter((i) => i.seen);
+  const items = group.filter((i) => i.seen && !readOnly(i.tool));
   const sent = await Promise.all(items.map((i) => { seen.done.add(i.key); return sendSeen(i.key, true); }));
   await pollInbox();
   toast(`Marked ${plural(sent.filter(Boolean).length, "result")} read`);
@@ -1443,16 +1459,50 @@ function renderPeek() {
 function safe(tool, where, run) {
   try { return run(); } catch (error) { clientError(tool, where, error); return undefined; }
 }
+function staticAssetFrame(url, title) {
+  const frame = h("iframe", { class: "ui-frame", src: "/asset-viewer.html", sandbox: "allow-scripts", title, referrerpolicy: "no-referrer" });
+  const status = h("p", { class: "sub", role: "status", text: "Loading attachment..." });
+  const wrapper = h("div", {}, frame, status, h("a", { class: "ui-link", href: url, target: "_blank", rel: "noopener noreferrer", text: "Open attachment" }));
+  const receive = async (event) => {
+    if (event.source !== frame.contentWindow || event.data?.kind !== "acon-asset-ready") return;
+    window.removeEventListener("message", receive);
+    try {
+      const response = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(10000), redirect: "error" });
+      const mime = response.headers.get("content-type")?.split(";")[0];
+      if (!response.ok || !["application/pdf", "image/png", "image/jpeg", "text/plain", "text/csv"].includes(mime)) throw new Error("unavailable attachment");
+      const chunks = [];
+      let length = 0;
+      const reader = response.body.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        length += value.byteLength;
+        if (length > 32 * 1024 * 1024) { await reader.cancel(); throw new Error("oversized attachment"); }
+        chunks.push(value);
+      }
+      const bytes = new Uint8Array(length);
+      let at = 0;
+      for (const chunk of chunks) { bytes.set(chunk, at); at += chunk.byteLength; }
+      frame.contentWindow.postMessage({ kind: "acon-asset", mime, bytes: bytes.buffer }, "*", [bytes.buffer]);
+      status.textContent = "";
+    } catch { status.textContent = "Attachment unavailable; check this node's authentication in System or use Open attachment."; }
+  };
+  window.addEventListener("message", receive);
+  setTimeout(() => window.removeEventListener("message", receive), 15000);
+  frame.addEventListener("load", () => { if (!frame.isConnected) window.removeEventListener("message", receive); });
+  return wrapper;
+}
+
 function hostFor(tool, p) {
   return {
-    tool: tool.tool,
-    node: NODE,
+    tool: tool.rawTool ?? tool.tool,
+    node: tool.node ?? NODE,
     mount: p.body,
-    ui: kitFor(tool.tool, hashFor, pluginPath, { openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error), theme: () => currentTheme().mode, onTheme: (cb) => { p.themeListeners.push(cb); } }),
+    ui: kitFor(tool.tool, hashFor, pluginPath, { frameAsset: staticTransport ? staticAssetFrame : undefined, openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error), theme: () => currentTheme().mode, onTheme: (cb) => { p.themeListeners.push(cb); } }),
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),
-    navigate: (t, panel, params) => navigate(t, panel, params),
+    navigate: (t, panel, params) => navigate(tool.node && !t.includes(":") ? `${tool.node}:${t}` : t, panel, params),
     onSnapshot: (cb) => { p.snapListeners.push(cb); },
     onTheme: (cb) => { p.themeListeners.push(cb); },
     toast: (text, options = {}) => toast(String(text), options),
@@ -1468,8 +1518,8 @@ async function showTool(r) {
     p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0, lastSig: "" };
     state.panels.set(tool.tool, p);
     $("main").append(p.mount);
-    document.head.append(h("link", { rel: "stylesheet", href: pluginPath(`/p/${tool.tool}/panel.css`) }));
-    p.loading = import(pluginPath(`/p/${tool.tool}/panel.js`)).then((mod) => {
+    const styleReady = staticTransport ? staticTransport.loadStyle(`/p/${tool.tool}/panel.css`, pinnedRefs) : Promise.resolve(document.head.append(h("link", { rel: "stylesheet", href: pluginPath(`/p/${tool.tool}/panel.css`) })));
+    p.loading = styleReady.then(() => import(pluginPath(`/p/${tool.tool}/panel.js`))).then((mod) => {
       if (typeof mod.default !== "function") throw new Error("panel.js has no default export");
       p.instance = mod.default(hostFor(tool, p));
     }).catch((error) => {
@@ -1518,7 +1568,7 @@ async function pollPanel() {
 
 // ---------- actions and confirm ----------
 async function runAction(tool, input, opts) {
-  if (readOnly()) { toast("This console is read-only; actions are turned off.", { tone: "err" }); return { ok: false, readOnly: true }; }
+  if (readOnly(tool)) { toast("This console is read-only; actions are turned off.", { tone: "err" }); return { ok: false, readOnly: true }; }
   const r = await post(`/p/${tool}/action`, input);
   const d = r.data;
   if (d?.needsConfirm) {
@@ -1592,7 +1642,7 @@ function showConfirm(tool, d, note, opts) {
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       validity.className = `validity${expired() ? " expired" : ""}`;
       validity.textContent = expired() ? `Preview of version ${shortFp(str(d.fingerprint))} expired.` : `Preview of version ${shortFp(str(d.fingerprint))} · valid ${left} s`;
-      ok.disabled = readOnly() || expired() || (typed && typedInput.value !== typed);
+      ok.disabled = readOnly(tool) || expired() || (typed && typedInput.value !== typed);
       refresh.hidden = !expired();
     };
     function finish(choice) {
@@ -1672,7 +1722,7 @@ function commandOptions(q) {
   const add = (title, sub, run, iconName = "go") => { if (matches(q, title, sub)) out.push({ title, sub, run, icon: iconName }); };
   add("Go to Inbox", "Everything waiting for you", () => navigate("inbox"), "inbox");
   for (const t of readyTools()) {
-    if (q.tool && q.tool !== t.tool) continue;
+    if ((q.tool && q.tool !== t.tool && q.tool !== t.rawTool) || (q.node && q.node !== (t.node ?? NODE))) continue;
     for (const p of panelsOf(t)) add(`Go to ${t.title} / ${p.title}`, t.tool, () => navigate(t.tool, p.id), toolIcon(t));
   }
   if (!q.tool) {
@@ -1686,15 +1736,15 @@ function commandOptions(q) {
 }
 // Plugin commands run through action(), so a destructive one gets the same confirm dialog as a verb.
 function pluginCommandSections(q) {
-  if (q.needsMe || q.id || (q.node && q.node !== NODE)) return [];
-  return readyTools().filter((t) => !q.tool || q.tool === t.tool).map((t) => [`${t.title} commands`,
+  if (q.needsMe || q.id || (!staticTransport && q.node && q.node !== NODE)) return [];
+  return readyTools().filter((t) => (!q.tool || q.tool === t.tool || q.tool === t.rawTool) && (!q.node || q.node === (t.node ?? NODE))).map((t) => [`${t.title} commands`,
     (Array.isArray(t.commands) ? t.commands : []).filter((c) => c && str(c.id) && str(c.title) && str(c.action) && matches(q, c.title, c.hint, t.title))
       .map((c) => ({ title: c.title, sub: [t.title, str(c.hint)].filter(Boolean).join(" · "), icon: toolIcon(t),
         run: () => runAction(t.tool, { ...(c.input && typeof c.input === "object" ? c.input : {}), action: c.action }, { label: c.title }) }))]);
 }
 function inboxOptions(q) {
-  if (q.node && q.node !== NODE) return [];
-  return sortedItems().filter((i) => (!q.tool || q.tool === i.tool) && (!q.needsMe || NEEDS_ME.has(i.group)) && (!q.id || i.id === q.id) && matches(q, i.title, i.kind, i.project, i.actor))
+  if (!staticTransport && q.node && q.node !== NODE) return [];
+  return sortedItems().filter((i) => (!q.node || q.node === (toolById(i.tool)?.node ?? NODE)) && (!q.tool || q.tool === i.tool || q.tool === toolById(i.tool)?.rawTool) && (!q.needsMe || NEEDS_ME.has(i.group)) && (!q.id || i.id === q.id) && matches(q, i.title, i.kind, i.project, i.actor))
     .slice(0, 8).map((i) => ({ title: i.title, sub: subline(i), icon: i.group === "alert" ? "alert" : i.group === "decision" ? "you" : i.group, run: () => { navigate("inbox", undefined, { id: i.key }); }, peek: () => { navigate("inbox"); selectKey(i.key); openPeek(i.key); } }));
 }
 function renderPalette(searchGroups) {
@@ -1730,7 +1780,7 @@ async function searchPalette() {
   const seq = ++palSeq;
   const q = parseQuery($("palette-input").value);
   const text = q.words.join(" ");
-  const tools = readyTools().filter((t) => t.capabilities?.search && (!q.tool || q.tool === t.tool) && !q.needsMe && !q.id && (!q.node || q.node === NODE));
+  const tools = readyTools().filter((t) => t.capabilities?.search && (!q.tool || q.tool === t.tool) && !q.needsMe && !q.id && (!q.node || q.node === (t.node ?? NODE)));
   if (text.length < 2 || !tools.length) { renderPalette([]); return; }
   renderPalette([]);
   const groups = await Promise.all(tools.map(async (t) => {
@@ -1884,7 +1934,7 @@ function renderMini(force = false) {
       return h("li", { class: "mini-item" },
         h("span", { class: "row-text" }, h("span", { class: "row-title", text: item.title }), h("span", { class: "row-sub", text: [toolById(item.tool)?.title ?? item.tool, ago(item.at)].join(" · ") })),
         h("span", { class: "mini-verbs" },
-          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, disabled: readOnly(), onclick: () => runVerb(item, verb, undefined, { mini: true }), text: verb.label }) : null,
+          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, disabled: readOnly(item.tool), onclick: () => runVerb(item, verb, undefined, { mini: true }), text: verb.label }) : null,
           h("button", { type: "button", class: "btn", "data-fid": `o:${item.key}`, "aria-label": `Open ${item.title}`, onclick: () => openInConsole(item), text: "Open" })));
     })) : null,
     items.length > shown.length ? h("p", { class: "sub", text: `${items.length - shown.length} more in the inbox.` }) : null,
@@ -1936,8 +1986,31 @@ async function popOutMini() {
 
 // ---------- system ----------
 let systemSig = "";
+function staticNodeCards() {
+  return staticTransport.nodes.map((node) => {
+    const input = h("input", { type: "password", autocomplete: "off", "data-fid": `token-${node.id}`, "aria-label": `Bearer token for ${node.id}`, oninput: (event) => { node.draft = event.target.value; } });
+    input.value = node.draft ?? "";
+    const reconnect = async (token) => {
+      staticTransport.setToken(node.id, token);
+      node.draft = "";
+      await loadTools();
+      route();
+      await pollInbox();
+    };
+    return h("section", { class: "card", "data-node": node.id },
+      h("h2", { text: node.id }),
+      h("p", { class: "mono", text: node.url }),
+      h("p", { role: "status", "data-node-status": node.id, text: `${node.status}: ${node.detail}` }),
+      h("form", { class: "ui-form", onsubmit: (event) => { event.preventDefault(); void reconnect(input.value); } },
+        h("label", {}, `Bearer token for ${node.id} (this tab only)`, input),
+        h("button", { type: "submit", class: "btn primary", text: "Connect with token" })),
+      h("p", {}, h("a", { href: node.url, target: "_blank", rel: "noopener noreferrer", text: "Open node to sign in with Access" })),
+      h("button", { type: "button", class: "btn", onclick: () => { void reconnect(""); }, text: "Reconnect with Access cookies" }));
+  });
+}
+
 function renderSystem(force = false) {
-  const sig = JSON.stringify([state.node, state.tools, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off"]);
+  const sig = JSON.stringify([state.node, state.tools, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off", staticTransport?.nodes.map((n) => [n.id, n.status, n.detail])]);
   if (!force && sig === systemSig && $("view-system").childElementCount) return;
   systemSig = sig;
   // Keep keyboard focus on the same control across re-renders.
@@ -1951,7 +2024,8 @@ function renderSystem(force = false) {
     h("dt", { text: "Plugins" }), h("dd", { class: "mono", text: str(node.pluginsDir) }));
   $("view-system").replaceChildren(
     h("h1", { class: "lead", id: "system-title", text: "System" }),
-    h("p", { class: "sub", text: "The console runs on this computer and stops 5 minutes after the last open tab goes away." }),
+    h("p", { class: "sub", text: staticTransport ? "This static shell connects directly to each node. Credentials stay in this tab; actions run on their owner node." : "The console runs on this computer and stops 5 minutes after the last open tab goes away." }),
+    ...(staticTransport ? staticNodeCards() : []),
     h("div", { class: "cards" },
       h("section", { class: "card" }, h("h2", { text: "Node" }), dl),
       h("section", { class: "card" }, h("h2", { text: "Appearance" }),
@@ -2093,6 +2167,24 @@ function tick() {
 
 async function boot() {
   applyTheme();
+  if (document.documentElement.dataset.static === "true") {
+    try {
+      const response = await fetch("/config.json", { cache: "no-store", credentials: "omit" });
+      if (!response.ok) throw new Error("config.json could not load; rebuild and upload the complete static output.");
+      const { createStaticTransport } = await import("./static.js");
+      staticTransport = createStaticTransport(await response.json(), () => { if (state.route.area === "system") renderSystem(true); });
+    } catch (error) { endSession(String(error.message)); return; }
+    state.serve = true;
+    await loadTools();
+    if (!readyTools().length) location.hash = hashFor("system");
+    route();
+    state.nextTools = Date.now() + TOOLS_MS;
+    state.nextInbox = Date.now() + INBOX_MS;
+    setInterval(tick, 1000);
+    await pollInbox();
+    renderLive();
+    return;
+  }
   const m = /^#([0-9a-f]{64})$/.exec(location.hash);
   if (m) {
     history.replaceState(null, "", "/#/local/inbox");

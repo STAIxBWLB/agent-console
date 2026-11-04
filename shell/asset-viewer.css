@@ -1,0 +1,5 @@
+:root { color-scheme: light dark; font: 1rem system-ui, sans-serif; }
+body { margin: 0; }
+img, iframe { display: block; width: 100%; border: 0; }
+iframe { height: 90vh; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; }

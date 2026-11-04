@@ -7,16 +7,18 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runStaticCheck } from "./ui-check-static.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, spaceMotionOnly: false, spaceViewsOnly: false, artRoot: null };
+const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, staticOnly: false, spaceMotionOnly: false, spaceViewsOnly: false, artRoot: null };
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
   if (arg === "--help") {
-    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only] [--space-views-only] [--art-root DIR]\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
+    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only] [--space-views-only] [--static-only] [--art-root DIR]\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
     process.exit(0);
   }
-  if (arg === "--force-overflow") options.forceOverflow = true;
+  if (arg === "--static-only") options.staticOnly = true;
+  else if (arg === "--force-overflow") options.forceOverflow = true;
   else if (arg === "--space-motion-only") options.spaceMotionOnly = true;
   else if (arg === "--space-views-only") options.spaceViewsOnly = true;
   else if (arg === "--art-root" && process.argv[i + 1]) options.artRoot = resolve(process.argv[++i]);
@@ -24,7 +26,7 @@ for (let i = 2; i < process.argv.length; i += 1) {
   else throw new Error(`Unknown or incomplete argument: ${arg}`);
 }
 
-if (options.spaceMotionOnly && options.spaceViewsOnly) throw new Error("Choose only one focused probe mode");
+if ([options.spaceMotionOnly, options.spaceViewsOnly, options.staticOnly].filter(Boolean).length > 1) throw new Error("Choose only one focused probe mode");
 if (options.artRoot && !options.spaceViewsOnly) throw new Error("--art-root requires --space-views-only");
 
 async function findPlaywright() {
@@ -173,7 +175,7 @@ async function cleanup() {
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { void cleanup().finally(() => process.exit(signal === "SIGINT" ? 130 : 143)); });
 
 const report = {
-  schema: 1, mode: options.spaceMotionOnly ? "space-motion-only" : "full", startedAt: new Date().toISOString(), matrix: { widths: [375, 768, 1024, 1440], themes: ["light", "dark"], textPercent: [100, 200] },
+  schema: 1, mode: options.staticOnly ? "static-only" : options.spaceMotionOnly ? "space-motion-only" : "full", startedAt: new Date().toISOString(), matrix: { widths: [375, 768, 1024, 1440], themes: ["light", "dark"], textPercent: [100, 200] },
   supplementalMatrix: { widths: [320], themes: ["light", "dark"], textPercent: [100], view: "space-fallback" },
   miniPopout: { width: 320, height: 440, themes: ["light", "dark"], textPercent: [100, 200] }, miniFallback: { width: 375, theme: "light", textPercent: 100, pet: "off", pack: false },
   forceOverflow: options.forceOverflow, baseline: options.baseline, captures: [], findings: [], spaceChecks: [],
@@ -1158,14 +1160,15 @@ try {
   process.env.TMPDIR = env.TMPDIR;
   browser = await chromium.launch({ headless: true, env, ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
   report.browserVersion = browser.version();
-  if (!options.spaceMotionOnly && !options.spaceViewsOnly) {
+  if (!options.staticOnly && !options.spaceMotionOnly && !options.spaceViewsOnly) {
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
     for (const theme of report.miniPopout.themes) for (const textPercent of report.miniPopout.textPercent) await runMini(ticket, { width: report.miniPopout.width, theme, textPercent }, "mini-popout", report.miniPopout.height, true);
     await runMini(ticket, { width: 375, theme: "light", textPercent: 100 }, "mini-fallback", 1000, false);
   }
-  if (!options.spaceViewsOnly) await runSpaceMotion(ticket);
-  if (!options.spaceMotionOnly) await runSpaceViews(ticket);
+  if (!options.staticOnly && !options.spaceViewsOnly) await runSpaceMotion(ticket);
+  if (!options.staticOnly && !options.spaceMotionOnly) await runSpaceViews(ticket);
+  if (!options.spaceMotionOnly && !options.spaceViewsOnly) await runStaticCheck({ browser, root, capture, report, output: options.output, forceOverflow: options.forceOverflow });
 } catch (error) {
   report.findings.push({ kind: "setup-error", detail: error.message.slice(0, 1500) });
 } finally {
