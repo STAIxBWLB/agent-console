@@ -172,6 +172,26 @@ describe("public panel kit", () => {
     expect(node(ui.notice("Offline", "err")).className).toContain("err");
   });
 
+  test("#43: button renders btn type=button with tone and disabled; err notices are assertive", () => {
+    const ui = kit();
+    let clicks = 0;
+    const plain = node(ui.button("<b>Save</b>", () => clicks++));
+    expect(plain.tagName).toBe("BUTTON");
+    expect(plain.getAttribute("type")).toBe("button");
+    expect(plain.className).toBe("btn");
+    expect(plain.textContent).toBe("<b>Save</b>");
+    expect(plain.getAttribute("disabled")).toBeNull();
+    plain.listeners.get("click")!({ preventDefault() {} });
+    expect(clicks).toBe(1);
+    expect(node(ui.button("Go", () => {}, { tone: "primary" })).className).toBe("btn primary");
+    const danger = node(ui.button("Delete...", () => {}, { tone: "danger", disabled: true }));
+    expect(danger.className).toBe("btn danger");
+    expect(danger.getAttribute("disabled")).toBe("");
+    expect(node(ui.button("X", () => {}, { tone: "bogus" as "primary" })).className).toBe("btn");
+    expect(node(ui.notice("Read refused", "err")).getAttribute("role")).toBe("alert");
+    for (const tone of ["ok", "warn", "neutral", undefined] as const) expect(node(ui.notice("Fine", tone)).getAttribute("role")).toBe("status");
+  });
+
   test("h attaches functions, renders text and rejects executable elements or attributes", () => {
     const ui = kit();
     let clicked = false;
