@@ -6,7 +6,7 @@ import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
 import { serveConfig, type ServeArgs, type ServeOptions } from "./serve.ts";
-import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, tokenPath } from "./setup.ts";
+import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, reloadAgent, stableBun, tokenPath } from "./setup.ts";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
@@ -134,7 +134,7 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
     ...(values["--host"] ? ["--host", values["--host"][0]!] : []), ...(values["--port"] ? ["--port", values["--port"][0]!] : []),
     ...(values["--origin"] ?? []).flatMap((o) => ["--origin", o]), ...(flags.has("--read-only") ? ["--read-only"] : []),
   ];
-  const bun = process.execPath;
+  const bun = stableBun(process.execPath, process.env.PATH);
   if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`);
   const plist = launchdPlist({ label, bun, script: launchScript(resolve(home)), args, env, logDir: join(resolve(home), "console", "logs") });
   if (!flags.has("--apply")) { process.stdout.write(plist); return 0; }
@@ -147,9 +147,8 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   const file = join(dir, `${label}.plist`);
   writeFileSync(file, plist, { mode: 0o644 });
   const run = (...argv: string[]) => Bun.spawnSync(["launchctl", ...argv], { stdout: "pipe", stderr: "pipe" });
-  run("bootout", `gui/${uid}/${label}`); // not loaded yet is fine
-  const boot = run("bootstrap", `gui/${uid}`, file);
-  if (boot.exitCode !== 0) return fail(`launchctl bootstrap failed (${boot.exitCode}): ${boot.stderr.toString().trim()}`);
+  const failed = reloadAgent((...argv) => { const r = run(...argv); return { exitCode: r.exitCode, stderr: r.stderr.toString() }; }, `gui/${uid}`, label, file);
+  if (failed) return fail(failed);
   const print = run("print", `gui/${uid}/${label}`);
   console.log(`acon: wrote ${file} and loaded gui/${uid}/${label}`);
   process.stdout.write(print.stdout.toString());

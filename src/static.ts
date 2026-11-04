@@ -90,8 +90,9 @@ export async function buildStatic(raw: string, out = "dist"): Promise<StaticBuil
       ...frameDocuments.map((path) => ({ source: path, headers: [{ key: "Content-Security-Policy", value: FRAME_CSP }, { key: "X-Frame-Options", value: "SAMEORIGIN" }] })),
       ...viewerDocuments.map((path) => ({ source: path, headers: [{ key: "Content-Security-Policy", value: VIEWER_CSP }, { key: "X-Frame-Options", value: "SAMEORIGIN" }] })),
     ] }, null, 2)}\n`);
-    await writeFile(join(stage, "wrangler.jsonc"), `${JSON.stringify({ name: "acon-static-shell", compatibility_date: "2026-11-04", assets: { directory: ".", html_handling: "auto-trailing-slash", not_found_handling: "none" } }, null, 2)}\n`);
-    await writeFile(join(stage, ".assetsignore"), "vercel.json\nwrangler.jsonc\n.assetsignore\n");
+    await writeFile(join(stage, "wrangler.jsonc"), `${JSON.stringify({ name: "acon-static-shell", compatibility_date: "2026-10-01", assets: { directory: ".", html_handling: "auto-trailing-slash", not_found_handling: "none" } }, null, 2)}\n`);
+    await writeFile(join(stage, ".assetsignore"), "vercel.json\n.vercelignore\nwrangler.jsonc\n.assetsignore\n");
+    await writeFile(join(stage, ".vercelignore"), "wrangler.jsonc\n.assetsignore\n_headers\n");
     // rename refuses a nonempty directory, file or symlink that appeared while staging; no existing content is removed.
     await rename(stage, destination);
     return { out: destination, config };

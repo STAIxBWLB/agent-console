@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { launchScript } from "../src/cli.ts";
 import { bearerVerifier, serveConfig } from "../src/serve.ts";
+import { reloadAgent, stableBun } from "../src/setup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -108,7 +109,7 @@ describe("acon setup launchd (#45 AC3)", () => {
     const r = await runCli(["setup", "launchd", "--host", "0.0.0.0", "--origin", "https://console.example.com", "--read-only"], { AGENTHUB_HOME: home, HOME: fakeHome, ACON_TOKEN_FILE: tokenFile });
     expect(r.code).toBe(0);
     expect(r.out).toContain("<key>Label</key>\n\t<string>acon.serve</string>");
-    expect(r.out).toContain(`<string>${process.execPath}</string>`);
+    expect(r.out).toContain(`<string>${stableBun(process.execPath, process.env.PATH)}</string>`);
     expect(r.out).toContain(`<string>${join(import.meta.dir, "..", "bin", "acon.js")}</string>`);
     expect(r.out).toContain("<string>serve</string>\n\t\t<string>--host</string>\n\t\t<string>0.0.0.0</string>");
     expect(r.out).toContain("<string>--read-only</string>");
@@ -141,6 +142,53 @@ describe("acon setup launchd (#45 AC3)", () => {
     // Without a matching current link the checkout path stays.
     const other = mkdtempSync(join(tmpdir(), "acon-launchd-other-"));
     expect(launchScript(other, root)).toBe(join(root, "bin", "acon.js"));
+  });
+
+  test("keeps the PATH link to the running bun, not the versioned file it resolves to (#56)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "acon-bun-"));
+    const cellar = join(dir, "Cellar", "bun", "1.0.0", "bin");
+    mkdirSync(cellar, { recursive: true });
+    writeFileSync(join(cellar, "bun"), "");
+    const brewBin = join(dir, "bin");
+    mkdirSync(brewBin);
+    symlinkSync(join(cellar, "bun"), join(brewBin, "bun"));
+    const other = join(dir, "other");
+    mkdirSync(other);
+    writeFileSync(join(other, "bun"), "");
+    const exec = join(cellar, "bun");
+    // The fixture lives under the temp dir, so these calls pass no temp roots.
+    expect(stableBun(exec, ["relative", other, brewBin].join(":"), [])).toBe(join(brewBin, "bun"));
+    expect(stableBun(exec, other, [])).toBe(exec);
+    expect(stableBun(exec, "", [])).toBe(exec);
+    expect(stableBun(join(dir, "missing"), brewBin, [])).toBe(join(dir, "missing"));
+    // `bun run --bun` puts a per-run bun-node-<hex> shim first on PATH that links to the same binary (r57-f1).
+    const shim = join(dir, "bun-node-abc123");
+    mkdirSync(shim);
+    symlinkSync(join(cellar, "bun"), join(shim, "bun"));
+    expect(stableBun(exec, [shim, brewBin].join(":"), [])).toBe(join(brewBin, "bun"));
+    // Any directory under a temp root is skipped too.
+    expect(stableBun(exec, brewBin, [dir])).toBe(exec);
+  });
+
+  test("waits for bootout to finish before bootstrap, bounded, and reports a bootstrap failure (#56)", () => {
+    const calls: string[] = [];
+    let alive = 3;
+    const run = (...argv: string[]) => {
+      calls.push(argv[0]!);
+      if (argv[0] === "print") return { exitCode: alive-- > 0 ? 0 : 113, stderr: "" };
+      return { exitCode: 0, stderr: "" };
+    };
+    const slept: number[] = [];
+    expect(reloadAgent(run, "gui/501", "x", "/p.plist", 10_000, (ms) => slept.push(ms))).toBeUndefined();
+    expect(calls).toEqual(["bootout", "print", "print", "print", "print", "bootstrap"]);
+    expect(slept).toEqual([200, 200, 200]);
+    // A service that never goes away stops waiting at the bound, and the bootstrap error is passed on.
+    const stuck = (...argv: string[]) => argv[0] === "bootstrap" ? { exitCode: 5, stderr: "Bootstrap failed: 5: Input/output error\n" } : { exitCode: 0, stderr: "" };
+    let waits = 0;
+    expect(reloadAgent(stuck, "gui/501", "x", "/p.plist", 1_000, () => { waits++; })).toBe("launchctl bootstrap failed (5): Bootstrap failed: 5: Input/output error");
+    expect(waits).toBe(5);
+    const silent = (...argv: string[]) => ({ exitCode: argv[0] === "bootstrap" ? 5 : 113, stderr: "" });
+    expect(reloadAgent(silent, "gui/501", "x", "/p.plist", 0, () => {})).toBe("launchctl bootstrap failed (5)");
   });
 
   test("refuses what serve would refuse, a bad label and a missing subcommand", async () => {

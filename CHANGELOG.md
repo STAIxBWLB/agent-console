@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `acon setup launchd --apply` waits up to 10 s for `launchctl bootout` to finish before `bootstrap`, which failed with error 5 when it replaced a running agent (#56).
+- The plist keeps the PATH `bun` link (such as `/opt/homebrew/bin/bun`) when it is the running binary instead of the versioned Cellar file that `brew upgrade` removes (#56).
+- `acon build --static` writes `compatibility_date` 2026-10-01, which recent wranglers support (2026-11-04 was refused). It also adds `.vercelignore`, so Vercel no longer serves `wrangler.jsonc`, `.assetsignore` or `_headers` (#55).
+- The README notes that the first Vercel or Workers deploy of a new project can be a production deployment (#55).
+
 ## [0.1.2] - 2026-11-04
 
 ### Fixed
