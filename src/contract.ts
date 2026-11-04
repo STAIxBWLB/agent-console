@@ -231,7 +231,10 @@ export interface ConsoleElement extends ConsoleNode {
 }
 // A DOM type when the consumer's compilation has the DOM lib, otherwise the structural fallback: panel authors keep
 // the exact `HTMLElement` types api 1 promised, and DOM-less consumers get no DOM globals.
-type DomOr<K extends string, Fallback> = typeof globalThis extends { [P in K]: { prototype: infer T } } ? T : Fallback;
+// A shimmed global (`var HTMLElement: any`, or a partial fake) falls back too, so it never yields `unknown`.
+type DomOr<K extends string, Fallback> = typeof globalThis extends { [P in K]: { prototype: infer T } }
+  ? (unknown extends T ? Fallback : T extends Fallback ? T : Fallback)
+  : Fallback;
 export type PanelNode = DomOr<"Node", ConsoleNode>;
 export type PanelElement = DomOr<"HTMLElement", ConsoleElement>;
 export type PanelButton = DomOr<"HTMLButtonElement", ConsoleElement>;
