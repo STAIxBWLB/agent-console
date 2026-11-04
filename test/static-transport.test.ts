@@ -106,7 +106,7 @@ describe("H2 browser transport", () => {
         if (path.endsWith("/snapshot")) { snapshot++; return Response.json({ ok: true }); }
         actions++;
         signal = init?.signal ?? undefined;
-        if (failure === "body") return { status: 200, json: async () => { throw new DOMException("fixture interrupted body", "TimeoutError"); } } as Response;
+        if (failure === "body") return new Response(new ReadableStream({ start(controller) { controller.error(new DOMException("fixture interrupted body", "TimeoutError")); } }), { status: 200 });
         throw new DOMException("fixture action deadline", "TimeoutError");
       }) as typeof fetch, { timeout(ms) { deadlines.push(ms); return new AbortController().signal; } });
       const client = make({ api: 1, nodes: [config.nodes[0]] });
