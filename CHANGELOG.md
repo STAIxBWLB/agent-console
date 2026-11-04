@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-04
+
 ### Fixed
 
 - `acon setup launchd --apply` waits up to 10 s for `launchctl bootout` to finish before `bootstrap`, which failed with error 5 when it replaced a running agent (#56).
