@@ -1054,7 +1054,7 @@ function subline(item) {
   return [item.kind, item.project, item.actor ? `from ${item.actor}` : "", toolById(item.tool)?.title, ago(item.at)].filter(Boolean).join(" · ");
 }
 // #45: a read-only node refuses every action; verbs and confirm stay visible but disabled.
-const readOnly = () => state.node?.readOnly === true;
+const readOnly = () => state.readOnly === true;
 const RO_TITLE = "This console is read-only";
 function verbButtons(item, max) {
   const verbs = [...item.verbs].sort((a, b) => Number(Boolean(b.primary)) - Number(Boolean(a.primary))).slice(0, max);
@@ -1984,6 +1984,7 @@ async function loadTools() {
     return kept ? { ...kept, update: str(t.version) } : t;
   });
   state.node = r.data.node ?? null;
+  state.readOnly = r.data.readOnly === true;
   $("read-only").hidden = !readOnly();
   state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
   state.assetPacks = Array.isArray(r.data.assetPacks) ? r.data.assetPacks.filter((p) => p && PET_ID.test(str(p.id)) && Array.isArray(p.images) && p.images.every((id) => PET_ID.test(str(id))) && Array.isArray(p.tile) && p.tile.length === 2 && p.tile.every((n) => Number.isSafeInteger(n) && n > 0)) : [];

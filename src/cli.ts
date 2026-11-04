@@ -8,7 +8,7 @@ import { serveConfig, type ServeArgs, type ServeOptions } from "./serve.ts";
 import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, tokenPath } from "./setup.ts";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 
 const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem and vault-mem
 
@@ -132,7 +132,7 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   ];
   const bun = process.execPath;
   if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`);
-  const plist = launchdPlist({ label, bun, script: resolve(import.meta.dir, "..", "bin", "acon.js"), args, env, logDir: join(resolve(home), "console", "logs") });
+  const plist = launchdPlist({ label, bun, script: launchScript(resolve(home)), args, env, logDir: join(resolve(home), "console", "logs") });
   if (!flags.has("--apply")) { process.stdout.write(plist); return 0; }
   if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)");
   const uid = process.getuid?.();
@@ -150,6 +150,16 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   console.log(`acon: wrote ${file} and loaded gui/${uid}/${label}`);
   process.stdout.write(print.stdout.toString());
   return print.exitCode === 0 ? 0 : 1;
+}
+
+/**
+ * Bun resolves symlinks in import.meta.dir, so a run through the versioned install's `console/current` link reports the
+ * release directory. Pin the link itself in that case, so the agent follows `install-release.ts` to the next release.
+ */
+export function launchScript(home: string, packageRoot = resolve(import.meta.dir, "..")): string {
+  const current = join(home, "console", "current");
+  try { if (realpathSync(current) === realpathSync(packageRoot)) return join(current, "bin", "acon.js"); } catch { /* no versioned install */ }
+  return join(packageRoot, "bin", "acon.js");
 }
 
 const fail = (message: string): number => { console.error(`acon: ${message}`); return 2; };

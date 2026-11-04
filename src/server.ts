@@ -365,7 +365,7 @@ export function startServer(options: ServerOptions) {
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
         await refresh();
-        return json({ ok: true, ...(serve?.readOnly ? { readOnly: true } : {}), node: { id: "local", version: options.version, startedAt, ...(serve?.readOnly ? { readOnly: true } : {}), pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images, models }) => ({ id, name, version, tile, images: Object.keys(images), ...(models ? { models: Object.keys(models) } : {}) })), errors });
+        return json({ ok: true, ...(serve?.readOnly ? { readOnly: true } : {}), node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images, models }) => ({ id, name, version, tile, images: Object.keys(images), ...(models ? { models: Object.keys(models) } : {}) })), errors });
       }
       const entry = pluginEntry();
       if (!entry) return unknownTool();

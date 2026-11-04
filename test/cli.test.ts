@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { launchScript } from "../src/cli.ts";
 import { bearerVerifier, serveConfig } from "../src/serve.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -125,6 +126,21 @@ describe("acon setup launchd (#45 AC3)", () => {
       const lint = Bun.spawnSync(["plutil", "-lint", plist]);
       expect(lint.exitCode).toBe(0);
     }
+  });
+
+  test("a run through the versioned install's console/current link pins the link, not the release it resolves to", async () => {
+    const home = mkdtempSync(join(tmpdir(), "acon-launchd-current-"));
+    const root = join(import.meta.dir, "..");
+    mkdirSync(join(home, "console"));
+    symlinkSync(root, join(home, "console", "current"));
+    const viaLink = Bun.spawn(["bun", join(home, "console", "current", "bin", "acon.js"), "setup", "launchd"], { env: { ...env(), AGENTHUB_HOME: home }, stdout: "pipe", stderr: "pipe" });
+    const [code, out] = await Promise.all([viaLink.exited, new Response(viaLink.stdout).text()]);
+    expect(code).toBe(0);
+    expect(out).toContain(`<string>${join(home, "console", "current", "bin", "acon.js")}</string>`);
+    expect(launchScript(home, root)).toBe(join(home, "console", "current", "bin", "acon.js"));
+    // Without a matching current link the checkout path stays.
+    const other = mkdtempSync(join(tmpdir(), "acon-launchd-other-"));
+    expect(launchScript(other, root)).toBe(join(root, "bin", "acon.js"));
   });
 
   test("refuses what serve would refuse, a bad label and a missing subcommand", async () => {

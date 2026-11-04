@@ -941,11 +941,12 @@ describe("ui.visual Codex fixes", () => {
 });
 
 describe("read-only node in the shell (#45)", () => {
-  test("a Read-only chip is in the top bar, and verb, answer, Mini and confirm buttons follow node.readOnly", () => {
+  test("a Read-only chip is in the top bar, and verb, answer, Mini and confirm buttons follow /tools readOnly", () => {
     const html = shell("index.html");
     expect(html).toMatch(/<span class="chip warn read-only" id="read-only"[^>]*hidden>Read-only<\/span>/);
     const js = shell("shell.js");
-    expect(js).toContain("const readOnly = () => state.node?.readOnly === true;");
+    expect(js).toContain("const readOnly = () => state.readOnly === true;");
+    expect(js).toContain("state.readOnly = r.data.readOnly === true;");
     expect(js).toContain("$(\"read-only\").hidden = !readOnly();");
     expect(js).toMatch(/v\.destructive \? " danger" : ""\}`, disabled: readOnly\(\)/);
     expect(js.match(/answer-submit", disabled: readOnly\(\)/g)?.length).toBe(2);

@@ -305,7 +305,7 @@ describe("read-only node (#45 AC1)", () => {
     expect(plugin.calls.length).toBe(before);
     const tools = await (await call(server, "/tools", { jwt, body: {} })).json() as { readOnly?: boolean; node: { readOnly?: boolean } };
     expect(tools.readOnly).toBe(true);
-    expect(tools.node.readOnly).toBe(true);
+    expect(tools.node.readOnly).toBeUndefined();
     const snap = await call(server, "/p/demo/snapshot", { jwt, body: { panel: "notes" } });
     expect(snap.status).toBe(200);
     expect((await snap.json() as { ok?: boolean }).ok).not.toBe(false);

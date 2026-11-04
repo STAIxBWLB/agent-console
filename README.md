@@ -140,8 +140,6 @@ From a checkout, `bun scripts/install-release.ts [--home DIR] [--json]` copies t
 
 ### Docker
 
-Tagged releases publish `ghcr.io/staixbwlb/agent-console:<version>` (and `latest` for stable versions) for `linux/amd64` and `linux/arm64`, with OCI `source` and `revision` labels, when the repository variable `IMAGE_PUBLISH_ENABLED` is `true`.
-
 The `Dockerfile` builds a pinned `oven/bun` image that runs `acon serve --host 0.0.0.0` as the non-root `bun` user. `AGENTHUB_HOME=/data` is a volume holding plugins, pets and asset packs, and a `HEALTHCHECK` probes `/healthz`. The image holds no credentials:
 
 ```sh
