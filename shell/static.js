@@ -38,7 +38,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
       try { data = await response.json(); }
       catch { if (action && response.status !== 401 && response.status !== 403) return uncertain(); }
     } catch { return action ? uncertain() : failed(node); }
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401 || (response.status === 403 && data?.readOnly !== true)) {
       node.grant = '';
       notify(node, 'unauthorized', 'Authentication refused; enter this node\'s bearer token or sign in to its Access application, then reconnect.');
     } else notify(node, 'online', 'Connected');

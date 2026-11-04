@@ -91,6 +91,30 @@ describe("H2 browser transport", () => {
     expect(actions).toBe(4);
   });
 
+  test("read-only 403 preserves online state and resource grant; auth 403 clears it", async () => {
+    let denyAuth = false;
+    const { make } = transport((async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+      if (path === "/tools") return Response.json({ tools: [] });
+      if (path.endsWith("/snapshot")) return Response.json({ ok: true });
+      return Response.json(denyAuth ? { ok: false, error: "authentication required" } : { ok: false, readOnly: true, error: "read-only node" }, { status: 403 });
+    }) as typeof fetch);
+    const client = make({ api: 1, nodes: [config.nodes[0]] });
+    await client.tools();
+    const before = client.resource("/p/a:demo/asset?id=figure.png");
+    const refused = await client.post("/p/a:demo/action", { action: "probe" });
+    expect(refused.status).toBe(403);
+    expect(refused.data.readOnly).toBe(true);
+    expect(client.nodes[0]!.status).toBe("online");
+    expect(client.resource("/p/a:demo/asset?id=figure.png")).toBe(before);
+    expect((await client.post("/p/a:demo/snapshot", { panel: "inbox" })).status).toBe(200);
+    denyAuth = true;
+    expect((await client.post("/p/a:demo/action", { action: "probe" })).status).toBe(403);
+    expect(client.nodes[0]!.status).toBe("unauthorized");
+    expect(new URL(client.resource("/p/a:demo/asset?id=figure.png")).searchParams.get("acon_resource")).toBe("");
+  });
+
   test("actions have server-deadline margin; an interrupted response is uncertain without disabling the node or retrying", async () => {
     for (const failure of ["fetch", "body"] as const) {
       const deadlines: number[] = [];

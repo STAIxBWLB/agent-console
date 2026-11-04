@@ -146,7 +146,9 @@ Build into a new output directory (an existing destination is refused):
 acon build --static --nodes desk=https://desk.example.com,dgx=https://dgx.example.com --out dist
 ```
 
-Each URL must be an exact HTTPS origin, without credentials, paths, queries or fragments. HTTP is allowed only for loopback development. Configure each H1 node with both its public origin and the shell origin, for example `acon serve --origin https://desk.example.com --origin https://console.example.com`, and its own bearer token file or Cloudflare Access application. The node origin also registers its public Host value; the shell origin permits CORS. Keep authentication enabled off loopback. The static shell imports code from these configured nodes, so configure only nodes you trust.
+Each URL must be an exact HTTPS origin, without credentials, paths, queries or fragments. HTTP is allowed only for loopback development. Configure each H1 node with both its public origin and the shell origin, for example `acon serve --origin https://desk.example.com --origin https://console.example.com`, and its own bearer token file or Cloudflare Access application. The node origin also registers its public Host value; the shell origin permits CORS. Keep authentication enabled off loopback.
+
+Build one static shell only over equally trusted nodes (such as your own nodes). Each node's panel modules execute with the shell's authority; a compromised node or plugin can use every node's credentials in that tab while it is open. Use separate builds for nodes with different trust.
 
 The output contains fixed shell/vendor files, public `config.json`, `_headers`, `vercel.json`, an assets-only `wrangler.jsonc` and `.assetsignore`. It contains no plugin data or credentials. Upload the complete directory to a preview with the supplied header configuration. Main-document CSP permits connections, scripts and images only from self and the configured node origins; plugin styles are fetched with node auth into constructed stylesheets, and attachments use a local sandboxed viewer. The sandboxed visual/attachment documents have separate header policies.
 
