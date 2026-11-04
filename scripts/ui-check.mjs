@@ -175,6 +175,7 @@ for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { void cl
 const report = {
   schema: 1, mode: options.spaceMotionOnly ? "space-motion-only" : "full", startedAt: new Date().toISOString(), matrix: { widths: [375, 768, 1024, 1440], themes: ["light", "dark"], textPercent: [100, 200] },
   supplementalMatrix: { widths: [320], themes: ["light", "dark"], textPercent: [100], view: "space-fallback" },
+  miniPopout: { width: 320, height: 440, themes: ["light", "dark"], textPercent: [100, 200] }, miniFallback: { width: 375, theme: "light", textPercent: 100, pet: "off", pack: false },
   forceOverflow: options.forceOverflow, baseline: options.baseline, captures: [], findings: [], spaceChecks: [],
   screenReader: { status: "not_run", reason: "This browser probe does not run VoiceOver or establish screen-reader announcements. Record the separate macOS Safari pass in the PR." },
 };
@@ -322,6 +323,96 @@ async function checkTabs(page, requireLast = false) {
     }
     return findings;
   }, requireLast);
+}
+
+/** Mini checks: pet sprite presence, Tab reaches every item verb/Open and footer button with visible focus, no /pets/ request without a pet. */
+async function checkMini(page, resources, withPet) {
+  await page.evaluate(() => { location.hash = "#/local/mini"; });
+  await page.locator("#view-mini:not([hidden]) #mini-lead").waitFor();
+  await settle(page);
+  const findings = await page.locator("#view-mini").evaluate((view, expectPet) => {
+    const out = [];
+    const sprite = view.querySelector(".mini-head .pet-sprite");
+    if (expectPet) {
+      // Shown means painted: a box, the sheet as its computed background, and no ancestor hiding, clipping to zero or fading it out.
+      const problems = [];
+      if (!sprite) problems.push("no sprite");
+      else {
+        sprite.scrollIntoView({ block: "nearest" });
+        const box = sprite.getBoundingClientRect();
+        const css = getComputedStyle(sprite);
+        if (!(box.width >= 8 && box.height >= 8)) problems.push(`box ${box.width}x${box.height}`);
+        if (!css.backgroundImage.includes("/pets/fixture-pet/sheet")) problems.push(`background ${css.backgroundImage.slice(0, 120)}`);
+        if (css.visibility !== "visible" || sprite.checkVisibility?.({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true }) === false) problems.push("not visible");
+        for (let node = sprite; node && node !== document.documentElement; node = node.parentElement) {
+          const s = getComputedStyle(node);
+          if (Number(s.opacity) < 0.5) problems.push(`opacity ${s.opacity} on ${node.className || node.tagName}`);
+          if (s.filter !== "none" && /opacity\(0|brightness\(0/.test(s.filter)) problems.push(`filter ${s.filter}`);
+          if (s.clipPath !== "none") problems.push(`clip-path ${s.clipPath}`);
+        }
+        const x = box.left + box.width / 2, y = box.top + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && hit !== sprite && !sprite.contains(hit) && !(css.pointerEvents === "none" && hit.contains(sprite))) problems.push(`covered by ${hit.tagName.toLowerCase()}.${hit.className}`);
+      }
+      if (problems.length) out.push({ kind: "mini-pet", detail: `Mini does not show the fixture pet sprite: ${problems.join("; ")}` });
+    } else if (sprite || document.querySelector(".pet-sprite")) out.push({ kind: "mini-no-pet", detail: "Mini without a pet still renders a sprite" });
+    if (!view.querySelector(".mini-item")) out.push({ kind: "mini-items", detail: "Fixture inbox items that need the person are missing from Mini" });
+    return out;
+  }, withPet);
+  const targets = await page.locator("#view-mini .mini-verbs button, #view-mini .mini-foot button").evaluateAll((nodes) => nodes.map((n) => n.dataset.fid));
+  if (!targets.length) findings.push({ kind: "mini-buttons", detail: "Mini has no item or footer buttons" });
+  const reached = new Set();
+  const unfocused = [];
+  await page.locator("#mini-lead").evaluate((el) => { el.tabIndex = -1; el.focus(); el.removeAttribute("tabindex"); });
+  for (let i = 0; i < targets.length + 4 && reached.size < targets.length; i += 1) {
+    await page.keyboard.press("Tab");
+    const now = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el?.closest("#view-mini") || !el.dataset.fid) return null;
+      const css = getComputedStyle(el);
+      return { fid: el.dataset.fid, visible: el.matches(":focus-visible") && css.outlineStyle !== "none" && Number.parseFloat(css.outlineWidth) > 0 };
+    });
+    if (!now) continue;
+    reached.add(now.fid);
+    if (!now.visible) unfocused.push(now.fid);
+  }
+  const missed = targets.filter((fid) => !reached.has(fid));
+  if (missed.length) findings.push({ kind: "mini-keyboard", detail: `Tab did not reach: ${missed.join(", ")}` });
+  if (unfocused.length) findings.push({ kind: "mini-focus-visible", detail: `No visible focus on: ${unfocused.join(", ")}` });
+  if (withPet && !resources.some((entry) => entry.path === "/pets/fixture-pet/sheet" && entry.status === 200)) findings.push({ kind: "mini-pet", detail: "No successful /pets/fixture-pet/sheet response for the Mini sprite" });
+  if (!withPet && resources.some((entry) => entry.path.startsWith("/pets/"))) findings.push({ kind: "mini-pet-request", detail: "Mini without a pet requested a /pets/ resource" });
+  await page.evaluate(() => { document.activeElement?.blur(); document.querySelector("#view-mini .mini-head")?.scrollIntoView({ block: "start" }); });
+  return findings;
+}
+
+/** Mini at the pop-out size popOutMini requests (320x440), rendered in the page; packed (with pet) or no-pack with the pet off. */
+async function runMini(ticket, scenario, view, height, withPet) {
+  const context = await browser.newContext({ viewport: { width: scenario.width, height }, colorScheme: scenario.theme, reducedMotion: "reduce" });
+  const page = await context.newPage();
+  page.setDefaultTimeout(8000);
+  const errors = [];
+  const resources = [];
+  page.on("pageerror", (error) => errors.push({ kind: "page-error", detail: error.message.slice(0, 500) }));
+  page.on("console", (message) => { if (message.type() === "error") errors.push({ kind: "console-error", detail: message.text().slice(0, 500) }); });
+  page.on("request", (request) => { const path = new URL(request.url()).pathname; if (path.startsWith("/pets/")) resources.push({ path }); });
+  page.on("response", (response) => { const path = new URL(response.url()).pathname; if (path.startsWith("/pets/")) resources.push({ path, status: response.status() }); });
+  const label = `${scenario.width}-${scenario.theme}-${scenario.textPercent}-${view}`;
+  try {
+    if (!withPet) await page.addInitScript(() => localStorage.setItem("acon.pet", JSON.stringify("off")));
+    await page.goto((await ticket(!withPet)).url, { waitUntil: "networkidle" });
+    await page.locator("#view-inbox .row-main").first().waitFor();
+    await page.evaluate(({ theme, textPercent, force }) => {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.fontSize = `${textPercent}%`;
+      if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
+    }, { ...scenario, force: options.forceOverflow });
+    await capture(page, scenario, view, await checkMini(page, resources, withPet));
+  } catch (error) {
+    report.findings.push({ capture: label, kind: "probe-error", detail: error.message.slice(0, 1000) });
+  } finally {
+    report.findings.push(...errors.map((error) => ({ capture: label, ...error })));
+    await context.close();
+  }
 }
 
 async function capture(page, scenario, view, extra = []) {
@@ -529,6 +620,7 @@ async function runScenario(ticket, scenario, fallback = false) {
     await settle(page);
     await capture(page, scenario, "last-tab", await checkTabs(page, true));
     await checkSpace(page, scenario, resources, true);
+    await capture(page, scenario, "mini", await checkMini(page, resources, true));
   } catch (error) {
     report.findings.push({ capture: `${scenario.width}-${scenario.theme}-${scenario.textPercent}`, kind: "probe-error", detail: error.message.slice(0, 1000) });
     await page.screenshot({ path: join(options.output, `${scenario.width}-${scenario.theme}-${scenario.textPercent}-error.png`), fullPage: true }).catch(() => {});
@@ -1069,6 +1161,8 @@ try {
   if (!options.spaceMotionOnly && !options.spaceViewsOnly) {
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
+    for (const theme of report.miniPopout.themes) for (const textPercent of report.miniPopout.textPercent) await runMini(ticket, { width: report.miniPopout.width, theme, textPercent }, "mini-popout", report.miniPopout.height, true);
+    await runMini(ticket, { width: 375, theme: "light", textPercent: 100 }, "mini-fallback", 1000, false);
   }
   if (!options.spaceViewsOnly) await runSpaceMotion(ticket);
   if (!options.spaceMotionOnly) await runSpaceViews(ticket);
