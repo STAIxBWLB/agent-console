@@ -4,9 +4,11 @@
 
 ### Compatibility
 
-- N-1 (#27): a plugin that checks `ctx.features` sends no forms or `result` items to a console before this release, which would report them as malformed; plugins that ignore `meta` are unaffected.
+Initial 0.1.x minor line: N-1 is not applicable because no previous minor has been published.
 
-- N-1: plugins registered for api 1 with a single `<tool>.json` and a plain `"api": 1` load unchanged; `/p/<tool>/...` routes keep working beside the new `/p/<tool>@<hash>/...` refs. Consoles before this release refuse `apiMin`/`apiMax` keys and ignore `<tool>@<version>.json` files (they fail the tool-id check), so a tool that needs both should keep writing `<tool>.json`.
+- Plugin API (#27): a plugin that checks `ctx.features` sends no forms or `result` items to a console before this release, which would report them as malformed; plugins that ignore `meta` are unaffected.
+
+- Plugin API, routes and manifest files (#26): plugins registered for api 1 with a single `<tool>.json` and a plain `"api": 1` load unchanged; `/p/<tool>/...` routes keep working beside the new `/p/<tool>@<hash>/...` refs. Consoles before this release refuse `apiMin`/`apiMax` keys and ignore `<tool>@<version>.json` files (they fail the tool-id check), so a tool that needs both should keep writing `<tool>.json`.
 
 ### Fixed
 
