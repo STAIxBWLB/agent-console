@@ -2,7 +2,7 @@
 
 `acon` is a local web console for the agent tool family: agent-hub (agents and tasks), agent-mem (memory) and vault-mem (knowledge vault). Each tool contributes panels as a plugin. The console adds what no single tool has: one inbox of everything waiting for you, a command palette across tools, and one confirm dialog for every destructive action.
 
-Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). vault-mem and agent-hub register their plugins; a fixture plugin in `test/fixtures/` shows the contract. The static multi-node shell (H2) is not implemented.
+Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). vault-mem and agent-hub register their plugins; a fixture plugin in `test/fixtures/` shows the contract. H2 (`acon build --static`) serves a credential-free shell over independently authenticated H1 nodes.
 
 ## Use
 
@@ -137,6 +137,26 @@ Prints a LaunchAgent plist that runs the absolute `bun` and this checkout's `bin
 ### Versioned install
 
 From a checkout, `bun scripts/install-release.ts [--home DIR] [--json]` copies the committed package files (not uncommitted changes) into `$AGENTHUB_HOME/console/releases/<version>-<commit>/`, then points `console/current` at it by atomic rename and keeps `console/previous`. An existing release is reused, never changed. Start the resident console from `console/current/bin/acon.js`: an install leaves a running process on the release it started from, and a restart switches it. Roll back by pointing `current` at `previous` and restarting.
+
+### Static multi-node shell (H2)
+
+Build into a new output directory (an existing destination is refused):
+
+```sh
+acon build --static --nodes desk=https://desk.example.com,dgx=https://dgx.example.com --out dist
+```
+
+Each URL must be an exact HTTPS origin, without credentials, paths, queries or fragments. HTTP is allowed only for loopback development. Configure each H1 node with both its public origin and the shell origin, for example `acon serve --origin https://desk.example.com --origin https://console.example.com`, and its own bearer token file or Cloudflare Access application. The node origin also registers its public Host value; the shell origin permits CORS. Keep authentication enabled off loopback.
+
+Build one static shell only over equally trusted nodes (such as your own nodes). Each node's panel modules execute with the shell's authority; a compromised node or plugin can use every node's credentials in that tab while it is open. Use separate builds for nodes with different trust.
+
+The output contains fixed shell/vendor files, public `config.json`, `_headers`, `vercel.json`, an assets-only `wrangler.jsonc` and `.assetsignore`. It contains no plugin data or credentials. Upload the complete directory to a preview with the supplied header configuration. Main-document CSP permits connections, scripts and images only from self and the configured node origins; plugin styles are fetched with node auth into constructed stylesheets, and attachments use a local sandboxed viewer. The sandboxed visual/attachment documents have separate header policies.
+
+In System, each node has its own bearer-token form and Access sign-in/reconnect controls. Bearer tokens stay in that tab's `sessionStorage`; Access uses that node's cookies with credentialed requests. Access CORS/cookie policy must also permit the shell origin. Authenticated nodes issue short-lived GET-only resource grants for panel modules and attachments because native module/image requests cannot carry bearer headers. These runtime grants are node-specific, contain no bearer token and never authorize actions. Keep node access logs private, since runtime resource URLs contain these grants. The "Open attachment" link also includes a GET-only grant and can leave it in browser history for its remaining lifetime (at most 1 hour); keep that history private too.
+
+Tools are namespaced `node:tool`; panel `host.node` identifies the owner and `host.tool` keeps its original tool id. All actions, confirmations and read-only restrictions stay on that owner. System distinguishes online, offline, unauthorized and `refused (origin)` nodes. A bounded opaque health probe distinguishes an unreachable node from a reachable node blocked by CORS; persistent failures refresh at most once per tool-list interval, without repeated prompts. Use System to reconnect after fixing a URL, token or `--origin`.
+
+Vercel and Workers preview URL/CSP readback is **unverified** until the person supplies logins. No production deployment or Access application configuration is performed by the build command.
 
 ### Docker
 
@@ -315,6 +335,8 @@ bun run check   # typecheck, boundary, tests, pack dry-run
 ```
 
 Before UI PRs, run `node scripts/ui-check.mjs`. It finds an existing Playwright install at run time, starts isolated fixture servers and writes screenshots plus `ui-check/report.json`. It checks 375/768/1024/1440 px, both themes and 100%/200% text, including Space with two tools, an explicit synthetic pet/pack and a no-pack fallback. Mini (`#/local/mini`) is captured in every cell, at the 320x440 pop-out size (light and dark, 100% and 200% text, rendered in the page, not a Picture-in-Picture window) and once with no pack and the pet off; it checks the pet sprite, Tab order with visible focus over item and footer buttons, and that a pet-less Mini requests nothing under `/pets/`. It checks namespace keys, roster parity, navigation and unchanged-poll DOM writes. It exits non-zero on browser errors, text clipping (including the search label), overlap or horizontal overflow. It also checks that the skip link is completely offscreen until focused, reachable by keyboard and moves focus to main when activated. Playwright is a development tool supplied by the person running the check, not a package dependency or CI gate.
+
+The full probe also runs a two-node static-shell matrix at 375/1440 px in both themes and text sizes, checking node ownership, auth, offline and origin-refused states. `--static-only` runs that focused matrix.
 
 Use `PLAYWRIGHT_MODULE` for an absolute Playwright or playwright-core module path, `PLAYWRIGHT_EXECUTABLE_PATH` for an existing Chromium executable, and `BUN_BIN` for Bun when it is not on PATH. `--output <dir>` changes the artifact directory; `--baseline <report.json>` compares 100% text metrics against an earlier run (1 px tolerance). `--force-overflow` is a negative control and must exit non-zero. Use the workspace's remote runner when local browser workloads are deferred.
 

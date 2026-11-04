@@ -4,6 +4,8 @@
 
 ### Added
 
+- H2 static shell (#46): `acon build --static --nodes id=https://origin[,id=origin] [--out dist]`, fixed credential-free assets and Vercel/Workers static config, per-node bearer/Access auth, namespaced tools, node-owned actions and allowlisted credentialed CORS. Node-specific expiring GET-only grants serve authenticated modules/assets without exposing bearer tokens in URLs. Two-node ui-check covers ownership and distinct offline/origin-refused states. Hosted preview readback remains unverified.
+
 - H1 follow-ups (#45): `acon serve --read-only` / `ACON_READ_ONLY=1` refuses every plugin action (403 `read-only node`, no plugin call, no confirm token, a replayed token is not honoured), reports `readOnly: true` in `/tools`, and the shell shows a Read-only chip with verb, answer and confirm buttons disabled. `acon token new [--file] [--force]` writes a 0600 base64url bearer token and prints only its path. `acon setup launchd [--label] [--apply]` prints (or installs) a LaunchAgent for `acon serve` with auth passed as env names and file paths. The Dockerfile carries OCI `source` and `revision` labels.
 - Release images (#45): behind `IMAGE_PUBLISH_ENABLED`, tagged releases push multi-arch (`linux/amd64`, `linux/arm64`) images to `ghcr.io/staixbwlb/agent-console:<version>` (and `latest` for stable versions) with OCI labels, read the manifest back and run `--version` on amd64.
 
