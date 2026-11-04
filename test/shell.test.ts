@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
-import type { ConsoleUi, ReviewThread } from "../src/contract.ts";
+import type { ConsoleElement, ConsoleUi, ReviewThread } from "../src/contract.ts";
 
 const shell = (name: string) => readFileSync(join(import.meta.dir, "..", "shell", name), "utf8");
 
@@ -131,7 +131,7 @@ function kit(): ConsoleUi {
     Node: KitNode, document: { createElement: (tag: string) => new KitNode(tag), createElementNS: (_ns: string, tag: string) => { const n = new KitNode(tag); n.namespaced = true; return n; } },
   }) as ConsoleUi;
 }
-const node = (el: HTMLElement) => el as unknown as KitNode;
+const node = (el: ConsoleElement) => el as unknown as KitNode;
 
 describe("public panel kit", () => {
   test("detail builds the shared template and treats HTML-looking data as text", () => {

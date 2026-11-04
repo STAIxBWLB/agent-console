@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The contract no longer references the DOM lib (#52), so consumers compiled with `lib: ["ESNext"]` no longer get DOM globals such as `document`. Panel-side types resolve to the exact DOM types (`HTMLElement`, `HTMLButtonElement`, `HTMLFormElement`, `Node`) when the consumer has the DOM lib, and to the new structural `ConsoleElement` and `ConsoleNode` otherwise. `bun run check` typechecks the contract and conformance without the DOM lib. Types only, with no change for DOM-typed panels.
+
 ## [0.1.1] - 2026-11-04
 
 ### Added
