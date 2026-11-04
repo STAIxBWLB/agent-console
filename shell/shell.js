@@ -1014,7 +1014,7 @@ function renderInbox(force = false) {
   const view = $("view-inbox");
   const items = sortedItems();
   const failed = [...state.inbox].filter(([, e]) => e.failed).map(([t]) => toolById(t)?.title ?? t);
-  const sig = JSON.stringify([items, failed, state.selectedKey, readyTools().length]);
+  const sig = JSON.stringify([items, failed, state.selectedKey, readyTools().length, readOnly()]);
   if (!force && sig === state.inboxSig) return;
   state.inboxSig = sig;
   const focusRow = document.activeElement?.closest?.(".row");
@@ -1035,7 +1035,7 @@ function renderInbox(force = false) {
     if (!group.length) continue;
     kids.push(h("section", { class: "group", "aria-labelledby": `g-${g}` },
       h("h2", { id: `g-${g}` }, h("span", { text: label }), h("span", { class: "badge", text: String(group.length) }),
-        g === "result" && group.some((i) => i.seen) ? h("button", { type: "button", class: "btn group-command", onclick: () => markAllRead(group), text: "Mark all read" }) : null),
+        g === "result" && group.some((i) => i.seen) ? h("button", { type: "button", class: "btn group-command", disabled: readOnly(), title: readOnly() ? RO_TITLE : undefined, onclick: () => markAllRead(group), text: "Mark all read" }) : null),
       h("ul", { class: "rows" }, group.map(rowFor))));
   }
   view.replaceChildren(...kids);
@@ -1053,10 +1053,13 @@ function whose(item) {
 function subline(item) {
   return [item.kind, item.project, item.actor ? `from ${item.actor}` : "", toolById(item.tool)?.title, ago(item.at)].filter(Boolean).join(" · ");
 }
+// #45: a read-only node refuses every action; verbs and confirm stay visible but disabled.
+const readOnly = () => state.readOnly === true;
+const RO_TITLE = "This console is read-only";
 function verbButtons(item, max) {
   const verbs = [...item.verbs].sort((a, b) => Number(Boolean(b.primary)) - Number(Boolean(a.primary))).slice(0, max);
   return verbs.map((v, i) => h("button", {
-    type: "button", class: `btn${v.primary ? " primary" : ""}${v.destructive ? " danger" : ""}`,
+    type: "button", class: `btn${v.primary ? " primary" : ""}${v.destructive ? " danger" : ""}`, disabled: readOnly(), title: readOnly() ? RO_TITLE : undefined,
     onclick: (e) => { e.stopPropagation(); runVerb(item, v); },
   }, h("span", { text: v.label }), max <= 2 ? h("kbd", { "aria-hidden": "true", text: String(i + 1) }) : null));
 }
@@ -1226,7 +1229,7 @@ function answerForm(item, verb, draft, submit, redraw) {
         str(draft.reason).trim() ? [h("dt", { text: "Reason" }), h("dd", { text: str(draft.reason).trim() })] : []),
       error,
       h("div", { class: "sheet-verbs" },
-        h("button", { type: "button", class: "btn primary answer-submit", onclick: () => submit(r.answers), text: `Submit: ${verb.label}` }),
+        h("button", { type: "button", class: "btn primary answer-submit", disabled: readOnly(), onclick: () => submit(r.answers), text: `Submit: ${verb.label}` }),
         h("button", { type: "button", class: "btn", onclick: () => { draft.step = "edit"; redraw(true); }, text: "Back" })));
     return el;
   }
@@ -1263,7 +1266,7 @@ function answerForm(item, verb, draft, submit, redraw) {
   verb.reason ? h("label", { class: "answer-opt answer-other" }, h("span", { class: "answer-label", text: `Reason${verb.reason === "required" ? " (required)" : " (optional)"}` }),
     h("input", { type: "text", class: "answer-other-text answer-reason", maxlength: "500", autocomplete: "off", value: str(draft.reason), oninput: (e) => { draft.reason = e.target.value; } })) : null,
   error,
-  h("div", { class: "sheet-verbs" }, h("button", { type: "submit", class: "btn primary answer-submit", text: form.questions.length > 1 ? "Review answers" : `Submit: ${verb.label}` })));
+  h("div", { class: "sheet-verbs" }, h("button", { type: "submit", class: "btn primary answer-submit", disabled: readOnly(), text: form.questions.length > 1 ? "Review answers" : `Submit: ${verb.label}` })));
   return el;
 }
 function openAnswer(item, verb) {
@@ -1331,6 +1334,8 @@ function watchSeen(key) {
   }, 250) : null;
 }
 async function sendSeen(key, explicit) {
+  // A read-only node refuses every action, seen receipts included: send nothing, record nothing.
+  if (readOnly()) return false;
   const item = visibleItems().find((i) => i.key === key);
   if (!item?.seen) return false;
   readResults.set(key, item);
@@ -1393,7 +1398,7 @@ function renderPeek() {
   const live = sortedItems().find((i) => i.key === key);
   // A result that was just marked seen stays readable in the open peek.
   const item = live ?? readResults.get(key);
-  const sig = JSON.stringify([key, item ?? null, Boolean(live)]);
+  const sig = JSON.stringify([key, item ?? null, Boolean(live), readOnly()]);
   if (sig === peekSig && !$("sheet").hidden) return;
   peekSig = sig;
   // Keep keyboard focus on the same control when the data changes under it.
@@ -1513,6 +1518,7 @@ async function pollPanel() {
 
 // ---------- actions and confirm ----------
 async function runAction(tool, input, opts) {
+  if (readOnly()) { toast("This console is read-only; actions are turned off.", { tone: "err" }); return { ok: false, readOnly: true }; }
   const r = await post(`/p/${tool}/action`, input);
   const d = r.data;
   if (d?.needsConfirm) {
@@ -1586,7 +1592,7 @@ function showConfirm(tool, d, note, opts) {
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
       validity.className = `validity${expired() ? " expired" : ""}`;
       validity.textContent = expired() ? `Preview of version ${shortFp(str(d.fingerprint))} expired.` : `Preview of version ${shortFp(str(d.fingerprint))} · valid ${left} s`;
-      ok.disabled = expired() || (typed && typedInput.value !== typed);
+      ok.disabled = readOnly() || expired() || (typed && typedInput.value !== typed);
       refresh.hidden = !expired();
     };
     function finish(choice) {
@@ -1864,7 +1870,7 @@ let miniSig = "";
 function renderMini(force = false) {
   if (miniView.hidden && !pip) return;
   const pet = petChoice(), pose = petState(), items = needsMe(), shown = items.slice(0, 5);
-  const sig = JSON.stringify([pet?.id, pose, shown, items.length, Boolean(pip)]);
+  const sig = JSON.stringify([pet?.id, pose, shown, items.length, Boolean(pip), readOnly()]);
   if (!force && sig === miniSig) return;
   miniSig = sig;
   const fkey = miniView.contains(miniView.ownerDocument.activeElement) ? miniView.ownerDocument.activeElement.dataset.fid : undefined;
@@ -1878,7 +1884,7 @@ function renderMini(force = false) {
       return h("li", { class: "mini-item" },
         h("span", { class: "row-text" }, h("span", { class: "row-title", text: item.title }), h("span", { class: "row-sub", text: [toolById(item.tool)?.title ?? item.tool, ago(item.at)].join(" · ") })),
         h("span", { class: "mini-verbs" },
-          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, onclick: () => runVerb(item, verb, undefined, { mini: true }), text: verb.label }) : null,
+          verb ? h("button", { type: "button", class: "btn primary", "data-fid": `v:${item.key}`, disabled: readOnly(), onclick: () => runVerb(item, verb, undefined, { mini: true }), text: verb.label }) : null,
           h("button", { type: "button", class: "btn", "data-fid": `o:${item.key}`, "aria-label": `Open ${item.title}`, onclick: () => openInConsole(item), text: "Open" })));
     })) : null,
     items.length > shown.length ? h("p", { class: "sub", text: `${items.length - shown.length} more in the inbox.` }) : null,
@@ -1980,6 +1986,8 @@ async function loadTools() {
     return kept ? { ...kept, update: str(t.version) } : t;
   });
   state.node = r.data.node ?? null;
+  state.readOnly = r.data.readOnly === true;
+  $("read-only").hidden = !readOnly();
   state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
   state.assetPacks = Array.isArray(r.data.assetPacks) ? r.data.assetPacks.filter((p) => p && PET_ID.test(str(p.id)) && Array.isArray(p.images) && p.images.every((id) => PET_ID.test(str(id))) && Array.isArray(p.tile) && p.tile.length === 2 && p.tile.every((n) => Number.isSafeInteger(n) && n > 0)) : [];
   state.serverErrors = Array.isArray(r.data.errors) ? r.data.errors : [];

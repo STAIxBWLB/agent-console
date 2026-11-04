@@ -16,6 +16,8 @@ export interface ServeOptions {
   /** Returns the verified principal (the session key confirm tokens bind to) or null for 401. */
   authenticate: Authenticate;
   mode: "access" | "bearer" | "loopback";
+  /** #45: every plugin action is refused without calling the plugin; snapshots, search and assets are unchanged. */
+  readOnly?: boolean;
 }
 
 const SKEW_S = 60;
@@ -131,10 +133,17 @@ export function bearerVerifier(file: string): ((header: string | null) => boolea
   };
 }
 
-export interface ServeArgs { host?: string; port?: string; origins: string[] }
+export interface ServeArgs { host?: string; port?: string; origins: string[]; readOnly?: boolean }
 
 /** Builds the serve options from flags and the environment; a string is a refusal to print. */
 export function serveConfig(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | string {
+  const raw = env.ACON_READ_ONLY;
+  if (raw !== undefined && raw !== "" && raw !== "0" && raw !== "1") return "ACON_READ_ONLY must be 1 (read-only) or 0";
+  const config = authConfig(args, env, certsUrl);
+  return typeof config === "string" || !(args.readOnly || raw === "1") ? config : { ...config, readOnly: true };
+}
+
+function authConfig(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | string {
   const hostname = args.host ?? "127.0.0.1";
   if (!/^[A-Za-z0-9.:[\]-]+$/.test(hostname)) return `--host ${hostname} is not a host name or address`;
   const port = Number(args.port ?? (env.ACON_PORT || "8787"));

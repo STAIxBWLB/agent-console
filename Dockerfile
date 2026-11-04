@@ -2,6 +2,15 @@
 # or a mounted ACON_TOKEN_FILE, and the browser origin with ACON_ORIGINS or --origin.
 FROM oven/bun:1.4.3
 
+# Set by the release workflow (#45); a local build leaves revision empty.
+ARG OCI_REVISION=""
+ARG OCI_VERSION=""
+LABEL org.opencontainers.image.source="https://github.com/STAIxBWLB/agent-console" \
+      org.opencontainers.image.revision="${OCI_REVISION}" \
+      org.opencontainers.image.version="${OCI_VERSION}" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.title="agent-console"
+
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --production --frozen-lockfile

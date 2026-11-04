@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- H1 follow-ups (#45): `acon serve --read-only` / `ACON_READ_ONLY=1` refuses every plugin action (403 `read-only node`, no plugin call, no confirm token, a replayed token is not honoured), reports `readOnly: true` in `/tools`, and the shell shows a Read-only chip with verb, answer and confirm buttons disabled. `acon token new [--file] [--force]` writes a 0600 base64url bearer token and prints only its path. `acon setup launchd [--label] [--apply]` prints (or installs) a LaunchAgent for `acon serve` with auth passed as env names and file paths. The Dockerfile carries OCI `source` and `revision` labels.
+
 ## [0.1.0] - 2026-11-04
 
 ### Compatibility
