@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- H1 follow-ups (#45): `acon serve --read-only` / `ACON_READ_ONLY=1` refuses every plugin action (403 `read-only node`, no plugin call, no confirm token, a replayed token is not honoured), reports `readOnly: true` in `/tools`, and the shell shows a Read-only chip with verb, answer and confirm buttons disabled. `acon token new [--file] [--force]` writes a 0600 base64url bearer token and prints only its path. `acon setup launchd [--label] [--apply]` prints (or installs) a LaunchAgent for `acon serve` with auth passed as env names and file paths. The Dockerfile carries OCI `source` and `revision` labels.
+
 ## [0.1.0] - 2026-11-04
 
 ### Compatibility
@@ -18,7 +22,6 @@ Initial 0.1.x minor line: N-1 is not applicable because no previous minor has be
 
 ### Added
 
-- H1 follow-ups (#45): `acon serve --read-only` / `ACON_READ_ONLY=1` refuses every plugin action (403 `read-only node`, no plugin call, no confirm token, a replayed token is not honoured), reports `readOnly: true` in `/tools`, and the shell shows a Read-only chip with verb, answer and confirm buttons disabled. `acon token new [--file] [--force]` writes a 0600 base64url bearer token and prints only its path. `acon setup launchd [--label] [--apply]` prints (or installs) a LaunchAgent for `acon serve` with auth passed as env names and file paths. The Dockerfile carries OCI `source` and `revision` labels.
 - `host.ui.button(label, onClick, {tone?, disabled?})` (api 1, additive): a `button.btn` with `type="button"` and the `primary` or `danger` modifier. `host.ui.notice` with tone `err` now uses `role="alert"` so errors are announced assertively; other tones keep `role="status"` (#43).
 - `host.ui.visual` (api 1, additive): Mermaid diagrams in a `sandbox="allow-scripts"` frame with its own CSP (no `connect-src`), lazy and reused per panel, falling back to the source text on error, over 20 KB or after 5 s; comparison cards; tables through `ui.table`; before/after with text or asset sides. Mermaid is vendored from `@mermaid-js/tiny` 12.2.0 (2.8 MB) with a hash manifest and `scripts/vendor-mermaid.ts --check` (#29).
 - `host.ui.review` (api 1, additive): text, prose and diff review with range selection by pointer or keyboard, anchors with `lineRange`, `textQuote` and (diffs) `diffHunk`/`side`, placement by hash then unique quote, an unplaced strip and chunked rendering up to 20,000 lines. Contract types `ReviewSelector`, `ReviewAnchor`, `ReviewThread`, `ReviewDoc`; conformance `reviewProblems`; shared cases in `test/fixtures/review/` ship with the package (#28).
