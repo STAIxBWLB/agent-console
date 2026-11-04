@@ -10,7 +10,7 @@ export type Authenticate = (req: Request) => Promise<string | null>;
 export interface ServeOptions {
   hostname: string;
   port: number;
-  /** Exact browser origins allowed for POST; their hosts (plus the bind address) are the allowed Host values. */
+  /** Exact browser origins allowed for POST and credentialed CORS; include the node public origin too, since their hosts (plus the bind address) are the allowed Host values. */
   origins: string[];
   hosts: string[];
   /** Returns the verified principal (the session key confirm tokens bind to) or null for 401. */

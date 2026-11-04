@@ -62,6 +62,8 @@ describe("H2 browser transport", () => {
       await client.tools();
       expect(client.nodes[0]!.status).toBe(mode === "origin" ? "refused (origin)" : mode);
       expect(calls).toBe(mode === "unauthorized" ? 1 : 2);
+      await client.post("/p/a:demo/snapshot", { panel: "inbox" });
+      expect(calls).toBe(mode === "unauthorized" ? 1 : 2);
     }
   });
 
@@ -71,4 +73,22 @@ describe("H2 browser transport", () => {
     expect(() => make({ api: 1, nodes: [null] })).toThrow();
     expect(() => make({ api: 1, nodes: [config.nodes[0], config.nodes[0]] })).toThrow();
   });
+});
+
+
+test("static palette searches accept raw tool names with an independent node filter", async () => {
+  const source = readFileSync(new URL("../shell/shell.js", import.meta.url), "utf8");
+  const begin = source.indexOf("async function searchPalette() {");
+  const end = source.indexOf('$("palette-input").addEventListener', begin);
+  for (const node of [null, "a"]) {
+    const calls: string[] = [];
+    await runInNewContext(`let palSeq = 0; ${source.slice(begin, end)}\nsearchPalette()`, {
+      parseQuery: () => ({ words: ["keyword"], tool: "demo", node }),
+      $: () => ({ value: "", open: false }),
+      readyTools: () => ["a", "b"].map((id) => ({ tool: `${id}:demo`, rawTool: "demo", node: id, title: id, capabilities: { search: true } })),
+      renderPalette: () => {},
+      post: async (url: string) => { calls.push(url); return { status: 200, data: { hits: [], total: 0 } }; },
+    });
+    expect(calls).toEqual(node ? ["/p/a:demo/snapshot"] : ["/p/a:demo/snapshot", "/p/b:demo/snapshot"]);
+  }
 });

@@ -77,6 +77,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
       if (path === '/ping') return { status: 200, data: { ok: true } };
       const route = resolve(path, refs);
       if (!route) return { status: 404, data: { ok: false, error: 'Unknown node/tool route; reload the static console.' } };
+      if (route.node.status !== "online") return { status: 0, data: { ok: false, error: route.node.detail } };
       return request(route.node, route.path, body);
     },
     resource(path, refs) {

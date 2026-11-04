@@ -1780,7 +1780,7 @@ async function searchPalette() {
   const seq = ++palSeq;
   const q = parseQuery($("palette-input").value);
   const text = q.words.join(" ");
-  const tools = readyTools().filter((t) => t.capabilities?.search && (!q.tool || q.tool === t.tool) && !q.needsMe && !q.id && (!q.node || q.node === (t.node ?? NODE)));
+  const tools = readyTools().filter((t) => t.capabilities?.search && (!q.tool || q.tool === t.tool || q.tool === t.rawTool) && !q.needsMe && !q.id && (!q.node || q.node === (t.node ?? NODE)));
   if (text.length < 2 || !tools.length) { renderPalette([]); return; }
   renderPalette([]);
   const groups = await Promise.all(tools.map(async (t) => {
