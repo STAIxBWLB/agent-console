@@ -142,6 +142,64 @@ jobs:
       - name: Publish the exact validated artifact
         run: npm publish "$RUNNER_TEMP/publish-package/package.tgz" --registry https://registry.npmjs.org --provenance --access public --tag "$NPM_DIST_TAG" --ignore-scripts
 
+
+  image:
+    name: Publish multi-arch image to GHCR
+    needs: publish
+    # Off unless the repository variable is set; npm publish must have succeeded first.
+    if: github.repository == 'STAIxBWLB/agent-console' && vars.IMAGE_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/staixbwlb/agent-console
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Version and tags from the validated package
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          test "$RELEASE_TAG" = "v$version"
+          tags="$IMAGE:$version"
+          case "$version" in *-*) ;; *) tags="$tags,$IMAGE:latest" ;; esac
+          { echo "VERSION=$version"; echo "TAGS=$tags"; } >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push linux/amd64 and linux/arm64
+        run: |
+          args=()
+          IFS=, read -ra list <<< "$TAGS"
+          for t in "${list[@]}"; do args+=(--tag "$t"); done
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
+            --build-arg OCI_REVISION="$GITHUB_SHA" --build-arg OCI_VERSION="$VERSION" \
+            --label org.opencontainers.image.source="https://github.com/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            "${args[@]}" .
+      - name: Read the manifest back and run --version on amd64
+        run: |
+          docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > "$RUNNER_TEMP/manifest.json"
+          node - "$RUNNER_TEMP/manifest.json" <<'NODE'
+          const m = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+          const have = (m.manifests ?? []).map((x) => `${x.platform?.os}/${x.platform?.architecture}`);
+          for (const want of ['linux/amd64', 'linux/arm64']) if (!have.includes(want)) throw new Error(`manifest lacks ${want}: ${have.join(', ')}`);
+          console.log(have.join(', '));
+          NODE
+          docker pull --platform linux/amd64 "$IMAGE:$VERSION"
+          revision="$(docker image inspect --format "{{ index .Config.Labels \"org.opencontainers.image.revision\" }}" "$IMAGE:$VERSION")"
+          test "$revision" = "$GITHUB_SHA"
+          test "$(docker run --rm --platform linux/amd64 "$IMAGE:$VERSION" --version)" = "$VERSION"
+
   github-release:
     name: Publish the GitHub release
     needs: publish
