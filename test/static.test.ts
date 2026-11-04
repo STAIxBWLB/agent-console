@@ -48,7 +48,7 @@ describe("H2 static build (#46)", () => {
     expect(html).toContain(`content="${staticCsp(result.config).replace("; frame-ancestors 'none'", "")}"`);
     expect(html).not.toMatch(/<script\b[^>]*>\s*[^\s<]/i);
     expect(html).not.toMatch(/<style\b|\sstyle\s*=|\son[a-z]+\s*=/i);
-    for (const file of ["shell.js", "static.js", "shell.css", "vendor/three.module.js", "visual/frame.html", "visual/frame.js", "visual/mermaid.js", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css", "_headers", "vercel.json", "wrangler.jsonc", ".assetsignore"]) expect(existsSync(join(out, file))).toBe(true);
+    for (const file of ["shell.js", "static.js", "shell.css", "vendor/three.module.js", "visual/frame.html", "visual/frame.js", "visual/mermaid.js", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css", "_headers", "vercel.json", "wrangler.jsonc", ".assetsignore", ".vercelignore"]) expect(existsSync(join(out, file))).toBe(true);
     const headers = readFileSync(join(out, "_headers"), "utf8");
     const broad = headers.split("\n\n")[0]!;
     expect(broad).toStartWith("/*\n");
@@ -65,7 +65,10 @@ describe("H2 static build (#46)", () => {
     const wrangler = JSON.parse(readFileSync(join(out, "wrangler.jsonc"), "utf8"));
     expect(wrangler).not.toHaveProperty("main");
     expect(wrangler.assets.directory).toBe(".");
-    expect(readFileSync(join(out, ".assetsignore"), "utf8")).toContain("vercel.json");
+    // An older wrangler refuses a date newer than its workerd; an assets-only Worker needs no newer flags (#55).
+    expect(wrangler.compatibility_date).toBe("2026-10-01");
+    expect(readFileSync(join(out, ".assetsignore"), "utf8").split("\n")).toEqual(expect.arrayContaining(["vercel.json", ".vercelignore"]));
+    expect(readFileSync(join(out, ".vercelignore"), "utf8").split("\n")).toEqual(expect.arrayContaining(["wrangler.jsonc", ".assetsignore", "_headers"]));
     const files = allFiles(out);
     expect(files.some((file) => /\/p\/|\/plugins\/|\/pets\/|\/assets\/|\/node_modules\//.test(file))).toBe(false);
     for (const file of files) expect(readFileSync(file, "utf8")).not.toMatch(/private-marker|fixture-pet|Set-Cookie:|Bearer [A-Za-z0-9_-]{32,}/);

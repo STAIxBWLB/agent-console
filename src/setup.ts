@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { closeSync, fchmodSync, mkdirSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { closeSync, fchmodSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 
 /**
  * #45 follow-ups of `acon serve` (H1): a bearer token file and a macOS LaunchAgent.
@@ -35,6 +35,34 @@ export function newTokenFile(path: string, force: boolean): void {
 export const LABEL = /^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$/;
 /** Environment names `setup launchd` copies into the plist. ACON_TOKEN_FILE is a path; no token value is ever copied. */
 export const LAUNCHD_ENV = ["ACON_TOKEN_FILE", "ACON_ACCESS_TEAM", "ACON_ACCESS_AUD", "ACON_ORIGINS", "ACON_PORT", "ACON_READ_ONLY"] as const;
+
+/**
+ * The `bun` on PATH when it is the running binary, so a Homebrew `bin/bun` link survives `brew upgrade` (#56).
+ * `process.execPath` is already resolved to the versioned Cellar file, which the next upgrade deletes.
+ */
+export function stableBun(execPath: string, pathEnv = ""): string {
+  let real: string;
+  try { real = realpathSync(execPath); } catch { return execPath; }
+  for (const dir of pathEnv.split(delimiter)) {
+    if (!isAbsolute(dir)) continue;
+    const candidate = join(dir, "bun");
+    try { if (realpathSync(candidate) === real) return candidate; } catch { /* not there */ }
+  }
+  return execPath;
+}
+
+export type Launchctl = (...argv: string[]) => { exitCode: number; stderr: string };
+
+/**
+ * `bootout` returns before a running agent is gone, and a `bootstrap` then fails with error 5 (#56):
+ * wait until `print` no longer finds the service (at most `timeoutMs`) before loading the new plist.
+ */
+export function reloadAgent(run: Launchctl, domain: string, label: string, file: string, timeoutMs = 10_000, sleep = (ms: number) => Bun.sleepSync(ms)): string | undefined {
+  run("bootout", `${domain}/${label}`); // not loaded yet is fine
+  for (let waited = 0; waited < timeoutMs && run("print", `${domain}/${label}`).exitCode === 0; waited += 200) sleep(200);
+  const boot = run("bootstrap", domain, file);
+  return boot.exitCode === 0 ? undefined : `launchctl bootstrap failed (${boot.exitCode}): ${boot.stderr.trim()}`;
+}
 
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const str = (s: string) => `<string>${xml(s)}</string>`;
