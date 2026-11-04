@@ -334,8 +334,27 @@ async function checkMini(page, resources, withPet) {
     const out = [];
     const sprite = view.querySelector(".mini-head .pet-sprite");
     if (expectPet) {
-      const box = sprite?.getBoundingClientRect();
-      if (!sprite || !(box.width > 0 && box.height > 0) || !getComputedStyle(sprite).getPropertyValue("--pet-sheet").includes("/pets/fixture-pet/sheet")) out.push({ kind: "mini-pet", detail: "Mini does not show the fixture pet sprite" });
+      // Shown means painted: a box, the sheet as its computed background, and no ancestor hiding, clipping to zero or fading it out.
+      const problems = [];
+      if (!sprite) problems.push("no sprite");
+      else {
+        sprite.scrollIntoView({ block: "nearest" });
+        const box = sprite.getBoundingClientRect();
+        const css = getComputedStyle(sprite);
+        if (!(box.width >= 8 && box.height >= 8)) problems.push(`box ${box.width}x${box.height}`);
+        if (!css.backgroundImage.includes("/pets/fixture-pet/sheet")) problems.push(`background ${css.backgroundImage.slice(0, 120)}`);
+        if (css.visibility !== "visible" || sprite.checkVisibility?.({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true }) === false) problems.push("not visible");
+        for (let node = sprite; node && node !== document.documentElement; node = node.parentElement) {
+          const s = getComputedStyle(node);
+          if (Number(s.opacity) < 0.5) problems.push(`opacity ${s.opacity} on ${node.className || node.tagName}`);
+          if (s.filter !== "none" && /opacity\(0|brightness\(0/.test(s.filter)) problems.push(`filter ${s.filter}`);
+          if (s.clipPath !== "none") problems.push(`clip-path ${s.clipPath}`);
+        }
+        const x = box.left + box.width / 2, y = box.top + box.height / 2;
+        const hit = document.elementFromPoint(x, y);
+        if (hit && hit !== sprite && !sprite.contains(hit) && !(css.pointerEvents === "none" && hit.contains(sprite))) problems.push(`covered by ${hit.tagName.toLowerCase()}.${hit.className}`);
+      }
+      if (problems.length) out.push({ kind: "mini-pet", detail: `Mini does not show the fixture pet sprite: ${problems.join("; ")}` });
     } else if (sprite || document.querySelector(".pet-sprite")) out.push({ kind: "mini-no-pet", detail: "Mini without a pet still renders a sprite" });
     if (!view.querySelector(".mini-item")) out.push({ kind: "mini-items", detail: "Fixture inbox items that need the person are missing from Mini" });
     return out;
@@ -360,6 +379,7 @@ async function checkMini(page, resources, withPet) {
   const missed = targets.filter((fid) => !reached.has(fid));
   if (missed.length) findings.push({ kind: "mini-keyboard", detail: `Tab did not reach: ${missed.join(", ")}` });
   if (unfocused.length) findings.push({ kind: "mini-focus-visible", detail: `No visible focus on: ${unfocused.join(", ")}` });
+  if (withPet && !resources.some((entry) => entry.path === "/pets/fixture-pet/sheet" && entry.status === 200)) findings.push({ kind: "mini-pet", detail: "No successful /pets/fixture-pet/sheet response for the Mini sprite" });
   if (!withPet && resources.some((entry) => entry.path.startsWith("/pets/"))) findings.push({ kind: "mini-pet-request", detail: "Mini without a pet requested a /pets/ resource" });
   await page.evaluate(() => { document.activeElement?.blur(); document.querySelector("#view-mini .mini-head")?.scrollIntoView({ block: "start" }); });
   return findings;
@@ -375,6 +395,7 @@ async function runMini(ticket, scenario, view, height, withPet) {
   page.on("pageerror", (error) => errors.push({ kind: "page-error", detail: error.message.slice(0, 500) }));
   page.on("console", (message) => { if (message.type() === "error") errors.push({ kind: "console-error", detail: message.text().slice(0, 500) }); });
   page.on("request", (request) => { const path = new URL(request.url()).pathname; if (path.startsWith("/pets/")) resources.push({ path }); });
+  page.on("response", (response) => { const path = new URL(response.url()).pathname; if (path.startsWith("/pets/")) resources.push({ path, status: response.status() }); });
   const label = `${scenario.width}-${scenario.theme}-${scenario.textPercent}-${view}`;
   try {
     if (!withPet) await page.addInitScript(() => localStorage.setItem("acon.pet", JSON.stringify("off")));
