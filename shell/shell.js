@@ -959,9 +959,10 @@ function renderLive() {
   const age = Math.round((Date.now() - state.lastOk) / 1000);
   const kind = state.offline ? "offline" : age > 15 ? "stale" : "live";
   if (staticTransport) {
-    const online = staticTransport.nodes.filter((node) => node.status === "online").length;
+    const slow = staticTransport.nodes.filter((node) => node.status === "slow").length;
+    const online = staticTransport.nodes.filter((node) => node.status === "online").length + slow;
     el.className = `live ${online ? "live" : "offline"}`;
-    el.textContent = `${online}/${staticTransport.nodes.length} nodes online`;
+    el.textContent = `${online}/${staticTransport.nodes.length} nodes online${slow ? ` · ${slow} slow` : ""}`;
     el.title = "Open System for each node's status and authentication";
     return;
   }
@@ -990,28 +991,39 @@ function validItem(i) {
 }
 let inboxSeq = 0;
 const inboxApplied = new Map();
-async function pollInbox() {
+// #60: at most one inbox snapshot in flight per tool. A tick shares a slow tool's pending request; an explicit refresh
+// waits for it, then polls once (shared by every caller waiting on the same request).
+const inboxFlight = new Map();
+function inboxOnce(t, fresh) {
+  const flight = inboxFlight.get(t.tool);
+  if (flight) return fresh ? (flight.follow ??= flight.done.catch(() => {}).then(() => inboxOnce(t, false))) : flight.done;
   const seq = ++inboxSeq;
+  const done = inboxFetch(t, seq).finally(() => inboxFlight.delete(t.tool));
+  inboxFlight.set(t.tool, { done });
+  return done;
+}
+async function pollInbox(fresh = true) {
   const tools = readyTools().filter((t) => t.capabilities?.inbox);
-  await Promise.all(tools.map(async (t) => {
-    const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox" });
-    // An older response that arrives late never overwrites a newer one.
-    if ((inboxApplied.get(t.tool) ?? 0) > seq) return;
-    inboxApplied.set(t.tool, seq);
-    if (r.status === 200 && Array.isArray(r.data.items)) {
-      const items = r.data.items.filter(validItem);
-      if (items.length !== r.data.items.length) clientError(t.tool, "inbox", new Error(`${r.data.items.length - items.length} malformed inbox items were skipped`));
-      state.inbox.set(t.tool, { items, failed: false });
-    } else {
-      const old = state.inbox.get(t.tool);
-      state.inbox.set(t.tool, { items: old?.items ?? [], failed: true });
-    }
-  }));
+  await Promise.all(tools.map((t) => inboxOnce(t, fresh)));
   for (const tool of [...state.inbox.keys()]) if (!tools.some((t) => t.tool === tool)) state.inbox.delete(tool);
   renderRail();
   renderMini();
   if (state.route.area === "inbox") renderInbox();
   if (state.peekKey?.startsWith("item:")) renderPeek();
+}
+async function inboxFetch(t, seq) {
+  const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox" });
+  // An older response that arrives late never overwrites a newer one.
+  if ((inboxApplied.get(t.tool) ?? 0) > seq) return;
+  inboxApplied.set(t.tool, seq);
+  if (r.status === 200 && Array.isArray(r.data.items)) {
+    const items = r.data.items.filter(validItem);
+    if (items.length !== r.data.items.length) clientError(t.tool, "inbox", new Error(`${r.data.items.length - items.length} malformed inbox items were skipped`));
+    state.inbox.set(t.tool, { items, failed: false });
+  } else {
+    const old = state.inbox.get(t.tool);
+    state.inbox.set(t.tool, { items: old?.items ?? [], failed: true });
+  }
 }
 function sortedItems() {
   const items = visibleItems();
@@ -2166,8 +2178,9 @@ function tick() {
   // A Mini in Picture-in-Picture stays live while this tab is hidden.
   if (document.visibilityState === "visible" || pip) {
     renderLive();
-    if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox().catch((error) => clientError("acon", "inbox", error)); }
-    if (now >= state.nextTools) { state.nextTools = now + TOOLS_MS; loadTools(); }
+    if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox(false).catch((error) => clientError("acon", "inbox", error)); }
+    // #60: a slow /tools is not stacked by the next tick.
+    if (now >= state.nextTools && !state.toolsBusy) { state.nextTools = now + TOOLS_MS; state.toolsBusy = true; loadTools().finally(() => { state.toolsBusy = false; }); }
     pollPanel();
     pollSpace();
   } else if (now - state.lastRequest >= PING_MS) post("/ping");

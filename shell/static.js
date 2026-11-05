@@ -29,7 +29,8 @@ export function createStaticTransport(config, onStatus = () => {}) {
   };
   const request = async (node, path, body) => {
     const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
-    const signal = AbortSignal.timeout(action ? 35000 : 8000);
+    const deadline = action ? 35000 : 8000;
+    const signal = AbortSignal.timeout(deadline);
     const uncertain = () => ({ status: 0, data: { ok: false, uncertain: true, error: 'The action outcome is unknown because its response was interrupted or invalid; check the node System log and current result before repeating the action.' } });
     let response;
     let data = null;
@@ -37,7 +38,15 @@ export function createStaticTransport(config, onStatus = () => {}) {
       response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: headersFor(node, body !== undefined), ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal, redirect: 'error' });
       try { data = await response.json(); }
       catch { if (action && response.status !== 401 && response.status !== 403) return uncertain(); }
-    } catch { return action ? uncertain() : failed(node); }
+    } catch (error) {
+      if (action) return uncertain();
+      // Our own deadline is a busy node, not a refused origin: skip the CORS probe and keep the node usable (#59).
+      if (signal.aborted && (error?.name === 'TimeoutError' || error?.name === 'AbortError')) {
+        notify(node, 'slow', `${path} took over ${deadline / 1000} s; the node is reachable but busy. Its tools retry on their next poll.`);
+        return { status: 0, data: { ok: false, error: node.detail } };
+      }
+      return failed(node);
+    }
     if (response.status === 401 || (response.status === 403 && data?.readOnly !== true)) {
       node.grant = '';
       notify(node, 'unauthorized', 'Authentication refused; enter this node\'s bearer token or sign in to its Access application, then reconnect.');
@@ -72,7 +81,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
     async tools() {
       // One bounded refresh per node, with no nested retry loop or repeated auth prompt.
       await Promise.all(nodes.map((node) => node.busy ??= connect(node).finally(() => { node.busy = null; })));
-      const tools = nodes.flatMap((node) => (node.data?.tools ?? []).filter((tool) => TOOL_ID.test(tool?.tool)).map((tool) => ({ ...tool, tool: `${node.id}:${tool.tool}`, rawTool: tool.tool, node: node.id, title: `${node.id}: ${tool.title ?? tool.tool}`, readOnly: node.data.readOnly === true, ...(node.status === 'online' ? {} : { status: 'offline', reason: node.detail }) })));
+      const tools = nodes.flatMap((node) => (node.data?.tools ?? []).filter((tool) => TOOL_ID.test(tool?.tool)).map((tool) => ({ ...tool, tool: `${node.id}:${tool.tool}`, rawTool: tool.tool, node: node.id, title: `${node.id}: ${tool.title ?? tool.tool}`, readOnly: node.data.readOnly === true, ...(node.status === 'online' || node.status === 'slow' ? {} : { status: 'offline', reason: node.detail }) })));
       return { status: 200, data: { tools, pets: [], assetPacks: [], node: { id: 'static', version: 'H2' }, errors: [], readOnly: false } };
     },
     async post(path, body, refs) {
@@ -80,7 +89,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
       if (path === '/ping') return { status: 200, data: { ok: true } };
       const route = resolve(path, refs);
       if (!route) return { status: 404, data: { ok: false, error: 'Unknown node/tool route; reload the static console.' } };
-      if (route.node.status !== "online") return { status: 0, data: { ok: false, error: route.node.detail } };
+      if (route.node.status !== "online" && route.node.status !== "slow") return { status: 0, data: { ok: false, error: route.node.detail } };
       return request(route.node, route.path, body);
     },
     resource(path, refs) {

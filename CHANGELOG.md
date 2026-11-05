@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- The static shell reports a request that hits its own deadline as **slow** ("the node is reachable but busy"), not as "refused (origin)". A slow node stays usable: it counts as online, with a "slow" note in the status chip, and its next request is still sent. Only a network failure with a reachable health probe is reported as "refused (origin)" (#59).
+- Inbox polling keeps at most one snapshot in flight per tool. A tick shares a slow tool's pending request. An explicit refresh waits for it and then polls once, and every caller waiting on the same request shares that poll. Slow providers no longer pile up requests every 5 s (#60).
+
 ## [0.1.3] - 2026-11-04
 
 ### Fixed
