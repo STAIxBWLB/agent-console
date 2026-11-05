@@ -29,7 +29,8 @@ export function createStaticTransport(config, onStatus = () => {}) {
   };
   const request = async (node, path, body) => {
     const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
-    const signal = AbortSignal.timeout(action ? 35000 : 8000);
+    const deadline = action ? 35000 : 8000;
+    const signal = AbortSignal.timeout(deadline);
     const uncertain = () => ({ status: 0, data: { ok: false, uncertain: true, error: 'The action outcome is unknown because its response was interrupted or invalid; check the node System log and current result before repeating the action.' } });
     let response;
     let data = null;
@@ -40,8 +41,8 @@ export function createStaticTransport(config, onStatus = () => {}) {
     } catch (error) {
       if (action) return uncertain();
       // Our own deadline is a busy node, not a refused origin: skip the CORS probe and keep the node usable (#59).
-      if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
-        notify(node, 'slow', `${path} took over 8 s; the node is reachable but busy. Its tools retry on their next poll.`);
+      if (signal.aborted && (error?.name === 'TimeoutError' || error?.name === 'AbortError')) {
+        notify(node, 'slow', `${path} took over ${deadline / 1000} s; the node is reachable but busy. Its tools retry on their next poll.`);
         return { status: 0, data: { ok: false, error: node.detail } };
       }
       return failed(node);

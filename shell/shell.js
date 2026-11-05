@@ -2179,7 +2179,8 @@ function tick() {
   if (document.visibilityState === "visible" || pip) {
     renderLive();
     if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox(false).catch((error) => clientError("acon", "inbox", error)); }
-    if (now >= state.nextTools) { state.nextTools = now + TOOLS_MS; loadTools(); }
+    // #60: a slow /tools is not stacked by the next tick.
+    if (now >= state.nextTools && !state.toolsBusy) { state.nextTools = now + TOOLS_MS; state.toolsBusy = true; loadTools().finally(() => { state.toolsBusy = false; }); }
     pollPanel();
     pollSpace();
   } else if (now - state.lastRequest >= PING_MS) post("/ping");

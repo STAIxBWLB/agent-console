@@ -162,7 +162,7 @@ describe("H2 browser transport", () => {
       snapshots++;
       if (slow) throw new DOMException("fixture snapshot deadline", "TimeoutError");
       return Response.json({ ok: true });
-    }) as typeof fetch);
+    }) as typeof fetch, { timeout() { const c = new AbortController(); c.abort(new DOMException("fixture deadline", "TimeoutError")); return c.signal; } });
     const client = make({ api: 1, nodes: [config.nodes[0]] });
     await client.tools();
     const result = await client.post("/p/a:demo/snapshot", { panel: "inbox" });
@@ -177,17 +177,19 @@ describe("H2 browser transport", () => {
     expect(snapshots).toBe(2);
   });
 
-  test("a network failure with a reachable health probe is still refused (origin) (#59)", async () => {
-    let health = 0;
-    const { make } = transport((async (input) => {
-      const path = new URL(String(input)).pathname;
-      if (path === "/healthz") { health++; return new Response(null, { status: 204 }); }
-      throw new TypeError("Failed to fetch");
-    }) as typeof fetch);
-    const client = make({ api: 1, nodes: [config.nodes[0]] });
-    await client.tools();
-    expect(client.nodes[0]!.status).toBe("refused (origin)");
-    expect(health).toBe(1);
+  test("a network failure, or a timeout not raised by the request's own deadline, is still refused (origin) (#59)", async () => {
+    for (const thrown of [new TypeError("Failed to fetch"), new DOMException("someone else's signal", "TimeoutError")]) {
+      let health = 0;
+      const { make } = transport((async (input) => {
+        const path = new URL(String(input)).pathname;
+        if (path === "/healthz") { health++; return new Response(null, { status: 204 }); }
+        throw thrown;
+      }) as typeof fetch, { timeout() { return new AbortController().signal; } });
+      const client = make({ api: 1, nodes: [config.nodes[0]] });
+      await client.tools();
+      expect(client.nodes[0]!.status).toBe("refused (origin)");
+      expect(health).toBe(1);
+    }
   });
 
   test("malformed and credential-bearing config cannot direct requests", () => {
