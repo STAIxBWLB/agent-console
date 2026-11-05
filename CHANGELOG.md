@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-11-05
+
 ### Fixed
 
 - The static shell reports a request that hits its own deadline as **slow** ("the node is reachable but busy"), not as "refused (origin)". A slow node stays usable: it counts as online, with a "slow" note in the status chip, and its next request is still sent. Only a network failure with a reachable health probe is reported as "refused (origin)" (#59).
