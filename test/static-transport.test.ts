@@ -150,6 +150,46 @@ describe("H2 browser transport", () => {
     }
   });
 
+  test("a request that hits its own deadline marks the node slow, not refused (origin), and keeps it usable (#59)", async () => {
+    let health = 0;
+    let slow = true;
+    let snapshots = 0;
+    const { make } = transport((async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+      if (path === "/tools") return Response.json({ tools: [{ tool: "demo", ref: "demo@123456789abc", status: "ready" }] });
+      if (path === "/healthz") { health++; return new Response(null, { status: 204 }); }
+      snapshots++;
+      if (slow) throw new DOMException("fixture snapshot deadline", "TimeoutError");
+      return Response.json({ ok: true });
+    }) as typeof fetch);
+    const client = make({ api: 1, nodes: [config.nodes[0]] });
+    await client.tools();
+    const result = await client.post("/p/a:demo/snapshot", { panel: "inbox" });
+    expect(result.status).toBe(0);
+    expect(client.nodes[0]!.status).toBe("slow");
+    expect(String(result.data.error)).toContain("busy");
+    expect(health).toBe(0);
+    // A slow node's next request is still sent; the old code answered it locally with the stored error.
+    slow = false;
+    expect((await client.post("/p/a:demo/snapshot", { panel: "inbox" })).status).toBe(200);
+    expect(client.nodes[0]!.status).toBe("online");
+    expect(snapshots).toBe(2);
+  });
+
+  test("a network failure with a reachable health probe is still refused (origin) (#59)", async () => {
+    let health = 0;
+    const { make } = transport((async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/healthz") { health++; return new Response(null, { status: 204 }); }
+      throw new TypeError("Failed to fetch");
+    }) as typeof fetch);
+    const client = make({ api: 1, nodes: [config.nodes[0]] });
+    await client.tools();
+    expect(client.nodes[0]!.status).toBe("refused (origin)");
+    expect(health).toBe(1);
+  });
+
   test("malformed and credential-bearing config cannot direct requests", () => {
     const { make } = transport(fetch);
     for (const url of ["http://public.example", "https://user:pass@node.example", "https://node.example/path", "not-a-url"]) expect(() => make({ api: 1, nodes: [{ id: "a", url }] })).toThrow();
@@ -174,4 +214,43 @@ test("static palette searches accept raw tool names with an independent node fil
     });
     expect(calls).toEqual(node ? ["/p/a:demo/snapshot"] : ["/p/a:demo/snapshot", "/p/b:demo/snapshot"]);
   }
+});
+
+test("inbox polling keeps one snapshot in flight per tool; an explicit refresh waits, then polls once (#60)", async () => {
+  const source = readFileSync(new URL("../shell/shell.js", import.meta.url), "utf8");
+  const begin = source.indexOf("let inboxSeq = 0;");
+  const end = source.indexOf("function sortedItems() {", begin);
+  const pending: Record<string, (() => void)[]> = { slow: [], fast: [] };
+  const started: string[] = [];
+  let inFlight = 0, peak = 0;
+  const ctx = {
+    state: { inbox: new Map(), route: { area: "system" }, peekKey: null },
+    readyTools: () => [{ tool: "slow", capabilities: { inbox: true } }, { tool: "fast", capabilities: { inbox: true } }],
+    validItem: () => true, clientError: () => {}, renderRail: () => {}, renderMini: () => {}, renderInbox: () => {}, renderPeek: () => {},
+    post: (url: string) => {
+      const tool = url.split("/")[2]!;
+      started.push(tool);
+      if (tool === "fast") return Promise.resolve({ status: 200, data: { items: [] } });
+      inFlight++; peak = Math.max(peak, inFlight);
+      return new Promise((resolve) => pending.slow!.push(() => { inFlight--; resolve({ status: 200, data: { items: [] } }); }));
+    },
+  };
+  const pollInbox = runInNewContext(`${source.slice(begin, end)}\npollInbox`, ctx) as (fresh?: boolean) => Promise<void>;
+  // Three ticks while the slow tool's first snapshot is still running.
+  const ticks = [pollInbox(false), pollInbox(false), pollInbox(false)];
+  await Promise.resolve();
+  expect(started.filter((t) => t === "slow").length).toBe(1);
+  expect(started.filter((t) => t === "fast").length).toBe(1);
+  // Two explicit refreshes during the same flight share one follow-up poll.
+  const explicit = [pollInbox(), pollInbox()];
+  await Promise.resolve();
+  expect(started.filter((t) => t === "slow").length).toBe(1);
+  pending.slow!.shift()!();
+  await Promise.all(ticks);
+  for (let i = 0; i < 5; i++) await Promise.resolve();
+  expect(started.filter((t) => t === "slow").length).toBe(2);
+  pending.slow!.shift()!();
+  await Promise.all(explicit);
+  expect(peak).toBe(1);
+  expect(started.filter((t) => t === "slow").length).toBe(2);
 });
