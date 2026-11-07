@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "documents": {
     "CHANGELOG.md": {
-      "verifiedAgainst": "a074bb197bc3f497a7304fb4957ef169659fb390",
+      "verifiedAgainst": "e7e2d4bf21eb74a6e3c9318a3031562ba37c394b",
       "paths": [
         "src/",
         "shell/",
@@ -10,7 +10,7 @@
       ]
     },
     "README.md": {
-      "verifiedAgainst": "a074bb197bc3f497a7304fb4957ef169659fb390",
+      "verifiedAgainst": "e7e2d4bf21eb74a6e3c9318a3031562ba37c394b",
       "paths": [
         "src/",
         "shell/",
@@ -19,6 +19,7 @@
         "test/fixtures/",
         "scripts/install-release.ts",
         "scripts/ui-check.mjs",
+        "scripts/vendor-icons.ts",
         "scripts/vendor-mermaid.ts",
         "scripts/vendor-three.ts",
         ".github/workflows/release.yml"
