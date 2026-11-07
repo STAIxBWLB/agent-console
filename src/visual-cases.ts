@@ -17,7 +17,7 @@ const valid = (id: string, payload: VisualPayload): VisualCase => ({ id, payload
 const invalid = (id: string, payload: unknown, field: string): VisualCase => ({ id, payload, expected: { valid: false, field } });
 const options = (count: number) => Array.from({ length: count }, (_, i) => ({ title: `Option ${i}` }));
 const columns = (count: number) => Array.from({ length: count }, (_, i) => ({ key: `k${i}`, label: `Column ${i}` }));
-const table = (columnCount: number, rowCount: number): VisualPayload => ({
+const table = (columnCount: number, rowCount: number): Extract<VisualPayload, { kind: "table" }> => ({
   kind: "table", columns: columns(columnCount), rows: Array.from({ length: rowCount }, (_, i) => ({ k0: i })),
 });
 const pair = (before: unknown, after: unknown = { text: "After" }) => ({ kind: "beforeAfter", before, after });
@@ -54,13 +54,15 @@ export const VISUAL_CASES: readonly VisualCase[] = [
   ].map((column, i) => invalid(`table-column-invalid-${i}`, { kind: "table", columns: [column], rows: [] }, `columns[0].${["key", "label", "align", "format"][i]}`)),
   invalid("table-column-duplicate", { kind: "table", columns: [{ key: "k0", label: "One" }, { key: "k0", label: "Two" }], rows: [] }, "columns[1].key"),
   valid("table-column-formats", { kind: "table", columns: [{ key: "t", label: "Text", format: "text", align: "start" }, { key: "n", label: "Number", format: "number", align: "end" }, { key: "p", label: "Percent", format: "percent" }], rows: [{ t: "Text", n: 2, p: 0.5 }] }),
-  valid("table-caption-unbounded", { ...table(1, 1), kind: "table", caption: "c".repeat(4097) } as VisualPayload),
+  valid("table-caption-unbounded", { ...table(1, 1), caption: "c".repeat(4097) }),
   valid("before-after-text", { kind: "beforeAfter", before: { text: "Before" }, after: { text: "After" } }),
   valid("before-after-assets", { kind: "beforeAfter", before: { asset: "before.png", alt: "Before" }, after: { asset: "after.png", alt: "After" } }),
   valid("before-after-empty-text-alt", { kind: "beforeAfter", before: { text: "" }, after: { asset: "figure.png", alt: "" } }),
   valid("before-after-caption-unbounded", { kind: "beforeAfter", before: { text: "Before" }, after: { text: "After" }, caption: "c".repeat(4097) }),
   invalid("before-asset-empty", pair({ asset: "", alt: "Before" }), "before.asset"),
   invalid("before-asset-non-string", pair({ asset: 1, alt: "Before" }), "before.asset"),
+  invalid("before-asset-missing-alt", pair({ asset: "before.png" }), "before.alt"),
+  invalid("after-asset-non-string-alt", pair({ text: "Before" }, { asset: "after.png", alt: 1 }), "after.alt"),
   invalid("after-asset-empty", pair({ text: "Before" }, { asset: "", alt: "After" }), "after.asset"),
   invalid("unknown-kind", { kind: "html", source: "<b>Text</b>" }, "kind"),
 ];

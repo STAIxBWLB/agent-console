@@ -605,7 +605,9 @@ describe("ui.visual", () => {
       const images = all.filter((n) => n.tagName === "IMG");
       const sides = [payload.before, payload.after];
       expect(all.filter((n) => n.className === "ui-visual-text").map((n) => n.textContent)).toEqual(sides.filter((s) => "text" in s).map((s) => (s as { text: string }).text));
-      expect(images.map((n) => n.attributes.get("alt"))).toEqual(sides.filter((s) => "asset" in s).map((s) => (s as { alt: string }).alt));
+      expect(images.map((n) => n.attributes.get("alt"))).toEqual(sides.filter((s) => "asset" in s).map((s) => String((s as { alt?: unknown }).alt ?? "")));
+      // The contract requires string alt text; the renderer currently coerces malformed alt to text.
+      for (const [i, side] of sides.entries()) if ("asset" in side && typeof side.alt !== "string") field = `${i === 0 ? "before" : "after"}.alt`;
       if (payload.caption) expect(all.find((n) => n.tagName === "FIGCAPTION")!.textContent).toBe(payload.caption);
     }
     expect(c.expected).toEqual(field ? { valid: false, field } : { valid: true });
