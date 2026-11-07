@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "documents": {
     "CHANGELOG.md": {
-      "verifiedAgainst": "e77b88968689bbdd83373e2450dd9dd0fedfbf96",
+      "verifiedAgainst": "e7e2d4bf21eb74a6e3c9318a3031562ba37c394b",
       "paths": [
         "src/",
         "shell/",
@@ -10,7 +10,7 @@
       ]
     },
     "README.md": {
-      "verifiedAgainst": "e77b88968689bbdd83373e2450dd9dd0fedfbf96",
+      "verifiedAgainst": "e7e2d4bf21eb74a6e3c9318a3031562ba37c394b",
       "paths": [
         "src/",
         "shell/",
