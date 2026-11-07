@@ -5,6 +5,7 @@
 ### Changed
 
 - Scope the zero-dependency import rule to `src/` and document the browser vendoring policy (#72). The boundary check now validates every vendor manifest's exact devDependency pin, allowed license and adjacent NOTICE. The shipped `shell/vendor/` files and total size are unchanged.
+- Review selections use an equal thin outline and row fill; thread marks include an icon and comment count, and review quotes have no side band (#71, PR 1). New additive control-boundary, motion and theme-aware scrim tokens improve contrast and consistency, with a documented radius rule, private layer scale and a regression design guard. Existing public tokens/classes and reduced motion remain supported.
 
 ## [0.1.5] - 2026-11-07
 

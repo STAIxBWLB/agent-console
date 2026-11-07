@@ -3,7 +3,7 @@ const NODE = "local";
 const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["result", "Results"], ["candidate", "Candidates"], ["alert", "Alerts"]];
 const NEEDS_ME = new Set(["decision", "review", "candidate"]);
 const TOOL_ORDER = ["ahub", "amem", "vmem"];
-const TOKENS = ["bg", "surface", "surface-2", "line", "line-2", "text", "text-2", "accent", "accent-soft", "accent-text", "on-accent", "ok", "ok-soft", "warn", "warn-soft", "err", "err-soft", "focus"].map((t) => `--acon-${t}`);
+const TOKENS = ["bg", "surface", "surface-2", "line", "line-2", "line-control", "scrim", "text", "text-2", "accent", "accent-soft", "accent-text", "on-accent", "ok", "ok-soft", "warn", "warn-soft", "err", "err-soft", "focus"].map((t) => `--acon-${t}`);
 const INBOX_MS = 5000;
 const TOOLS_MS = 30000;
 const PING_MS = 60000;
@@ -337,7 +337,7 @@ function reviewAnchor(doc, rows, sides, a, b, startChar, endChar) {
     selectors,
   };
 }
-function reviewView(o, openSheet, onError) {
+function reviewView(o, openSheet, onError, markIcon = () => null) {
   const doc = o?.doc ?? {};
   if (!["text", "prose", "diff"].includes(doc.kind)) throw new TypeError("ui.review doc.kind must be text, prose or diff");
   const { rows, notes } = reviewRows(doc);
@@ -404,7 +404,7 @@ function reviewView(o, openSheet, onError) {
   function threadsButton(k) {
     const list = marks.get(k);
     if (!list) return null;
-    return h("button", { type: "button", class: "ui-review-mark", text: list.length === 1 ? "1 comment" : `${list.length} comments`, onclick: () => showThreads(list) });
+    return h("button", { type: "button", class: "ui-review-mark", onclick: () => showThreads(list) }, markIcon(), h("span", { text: list.length === 1 ? "1 comment" : `${list.length} comments` }));
   }
   function showThreads(list) {
     const body = openSheet?.(list.length === 1 ? "Comment" : `${list.length} comments`);
@@ -708,16 +708,16 @@ function visualView(payload, kit, frames, theme) {
 }
 // ---------- end visuals ----------
 // `route` maps a plugin path to the load this page uses (#26), so assets come from the same version as the panel.
-// `o` holds shell hooks for kit parts that need them (review: openSheet, onError; visual: theme, onTheme).
+// `o` holds shell hooks for kit parts that need them (review: openSheet, onError, markIcon; visual: theme, onTheme).
 function kitFor(tool, hash, route = (path) => path, o = {}) {
-  const { openSheet, onError, frameAsset, theme = () => "light", onTheme = () => {} } = o;
+  const { openSheet, onError, markIcon, frameAsset, theme = () => "light", onTheme = () => {} } = o;
   const assetUrl = (id) => route(`/p/${tool}/asset?id=${encodeURIComponent(id)}`);
   let frames = null;
   // One theme subscription per kit: diagrams on screen redraw in the new theme.
   onTheme(() => { if (frames) for (const entry of [...frames.live]) entry.retheme(theme()); });
   const kit = Object.freeze({
     ...consoleUi,
-    review: (o) => reviewView(o, openSheet, onError),
+    review: (o) => reviewView(o, openSheet, onError, markIcon),
     visual: (payload) => visualView(payload, kit, frames ??= visualFrames(), theme),
     img(o) {
       const id = assetId(o);
@@ -1518,7 +1518,7 @@ function hostFor(tool, p) {
     tool: tool.rawTool ?? tool.tool,
     node: tool.node ?? NODE,
     mount: p.body,
-    ui: kitFor(tool.tool, hashFor, pluginPath, { frameAsset: staticTransport ? staticAssetFrame : undefined, openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error), theme: () => currentTheme().mode, onTheme: (cb) => { p.themeListeners.push(cb); } }),
+    ui: kitFor(tool.tool, hashFor, pluginPath, { markIcon: () => icon("review"), frameAsset: staticTransport ? staticAssetFrame : undefined, openSheet: (title) => { peekSig = ""; const b = showSheet(String(title), `panel:${tool.tool}`, true); b.replaceChildren(); return b; }, onError: (error) => clientError(tool.tool, "review comment", error), theme: () => currentTheme().mode, onTheme: (cb) => { p.themeListeners.push(cb); } }),
     get theme() { return currentTheme(); },
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),

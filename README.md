@@ -366,12 +366,14 @@ Panels may use these classes. Modifiers apply only with their base class:
 
 The public CSS tokens are:
 
-- Surfaces and text: `--acon-bg`, `--acon-surface`, `--acon-surface-2`, `--acon-line`, `--acon-line-2`, `--acon-text`, `--acon-text-2`.
+- Surfaces and text: `--acon-bg`, `--acon-surface`, `--acon-surface-2`, `--acon-line`, `--acon-line-2`, `--acon-line-control`, `--acon-text`, `--acon-text-2`.
 - Accent and status: `--acon-accent`, `--acon-accent-soft`, `--acon-accent-text`, `--acon-on-accent`, `--acon-ok`, `--acon-ok-soft`, `--acon-warn`, `--acon-warn-soft`, `--acon-err`, `--acon-err-soft`, `--acon-focus`.
 - Spacing: `--acon-space-1`, `--acon-space-2`, `--acon-space-3`, `--acon-space-4`, `--acon-space-5`, `--acon-space-6`.
-- Shape and motion: `--acon-radius-1`, `--acon-radius-2`, `--acon-radius-3`, `--acon-shadow`, `--acon-ease`.
+- Shape and motion: `--acon-radius-1`, `--acon-radius-2`, `--acon-radius-3`, `--acon-shadow`, `--acon-ease`, `--acon-ease-out`, `--acon-duration-fast` (160 ms), `--acon-duration-normal` (300 ms), `--acon-duration-slow` (800 ms), `--acon-scrim`.
 - Fonts: `--acon-font-ui`, `--acon-font-mono`.
 - Type sizes: `--acon-text-2xs` (11), `--acon-text-xs` (12), `--acon-text-sm` (13), `--acon-text-md` (14), `--acon-text-base` (15), `--acon-text-lg` (16), `--acon-text-xl` (17), `--acon-text-2xl` (22). Values are rem, with the listed pixel equivalents at the default 16 px browser font size; spacing stays in px.
+
+Radius rule: chips and `kbd` use `--acon-radius-1`; controls and rows use `--acon-radius-2`; sheets, dialogs and cards use `--acon-radius-3`. Counts are pills; circles and the 2 px stale-status dot are shape cues. `--acon-line-control` provides at least 3:1 contrast against the control surfaces in both themes; `--acon-line` and `--acon-line-2` retain their divider values. `--acon-scrim` adapts the modal backdrop to the theme. `--acon-ease` retains its existing combined duration/curve; new motion can use a duration token plus `--acon-ease-out`. Private `--shell-z-*` layer tokens are not part of this public contract.
 
 Use the tokens in a plugin's own CSS for light and dark themes. `host.theme.tokens` exposes the color tokens; other tokens are available as CSS custom properties. Shell selectors outside the documented public classes are private and may change.
 

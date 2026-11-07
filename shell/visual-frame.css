@@ -1,5 +1,6 @@
 /* acon visual frame (#29): the frame's own styles, selected by the light/dark class on <html>. No inline styles. */
-html.light { color-scheme: light; background: #ffffff; }
-html.dark { color-scheme: dark; background: #16181d; }
+:root { --frame-bg-light: #ffffff; --frame-bg-dark: #16181d; }
+html.light { color-scheme: light; background: var(--frame-bg-light); }
+html.dark { color-scheme: dark; background: var(--frame-bg-dark); }
 body { margin: 0; padding: 8px; background: inherit; }
 #diagram img { display: block; max-width: 100%; height: auto; margin: 0 auto; }
