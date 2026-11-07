@@ -3,7 +3,7 @@ const NODE = "local";
 const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["result", "Results"], ["candidate", "Candidates"], ["alert", "Alerts"]];
 const NEEDS_ME = new Set(["decision", "review", "candidate"]);
 const TOOL_ORDER = ["ahub", "amem", "vmem"];
-const TOKENS = ["bg", "surface", "surface-2", "line", "line-2", "text", "text-2", "accent", "accent-soft", "accent-text", "on-accent", "ok", "ok-soft", "warn", "warn-soft", "err", "err-soft", "focus"].map((t) => `--acon-${t}`);
+const TOKENS = ["bg", "surface", "surface-2", "line", "line-2", "line-control", "scrim", "text", "text-2", "accent", "accent-soft", "accent-text", "on-accent", "ok", "ok-soft", "warn", "warn-soft", "err", "err-soft", "focus"].map((t) => `--acon-${t}`);
 const INBOX_MS = 5000;
 const TOOLS_MS = 30000;
 const PING_MS = 60000;
@@ -404,7 +404,7 @@ function reviewView(o, openSheet, onError) {
   function threadsButton(k) {
     const list = marks.get(k);
     if (!list) return null;
-    return h("button", { type: "button", class: "ui-review-mark", text: list.length === 1 ? "1 comment" : `${list.length} comments`, onclick: () => showThreads(list) });
+    return h("button", { type: "button", class: "ui-review-mark", onclick: () => showThreads(list) }, icon("review"), h("span", { text: list.length === 1 ? "1 comment" : `${list.length} comments` }));
   }
   function showThreads(list) {
     const body = openSheet?.(list.length === 1 ? "Comment" : `${list.length} comments`);
