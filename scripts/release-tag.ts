@@ -9,9 +9,9 @@ import { spawnSync } from "node:child_process";
 import { checkRelease } from "./release-gate.ts";
 
 const root = join(import.meta.dir, "..");
-const git = (...args: string[]): { ok: boolean; out: string } => {
+const git = (...args: string[]): { ok: boolean; out: string; err: string } => {
   const r = spawnSync("git", args, { cwd: root, encoding: "utf8" });
-  return { ok: r.status === 0, out: (r.stdout ?? "").trim() };
+  return { ok: r.status === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? r.error?.message ?? "").trim() };
 };
 
 export function bumpChangelog(changelog: string, version: string, date: string): string {
@@ -34,7 +34,8 @@ function main(argv: string[]): number {
   }
   if (cmd === "tag") {
     if (git("status", "--porcelain").out) { console.error("release-tag: the working tree is not clean"); return 1; }
-    if (!git("fetch", "--quiet", "origin", "main", "--tags").ok) { console.error("release-tag: git fetch failed"); return 1; }
+    const fetched = git("fetch", "--quiet", "origin", "main", "--tags");
+    if (!fetched.ok) { console.error(`release-tag: git fetch failed: ${fetched.err || "no output"}`); return 1; }
     const head = git("rev-parse", "HEAD").out;
     if (head !== git("rev-parse", "origin/main").out) { console.error("release-tag: HEAD must be origin/main (pull first)"); return 1; }
     const { version } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string };
@@ -43,9 +44,15 @@ function main(argv: string[]): number {
     const problems = checkRelease({ tag, version, changelog: readFileSync(logPath, "utf8"), onMain: true });
     for (const p of problems) console.error(`release-tag: ${p}`);
     if (problems.length) return 1;
-    if (!git("tag", "-a", tag, "-m", tag, head).ok) return 1;
+    const made = git("tag", "-a", tag, "-m", tag, head);
+    if (!made.ok) { console.error(`release-tag: git tag ${tag} failed: ${made.err || "no output"}`); return 1; }
     console.log(`release-tag: created ${tag} at ${head}`);
-    if (argv.includes("--push")) return git("push", "origin", `refs/tags/${tag}`).ok ? 0 : 1;
+    if (argv.includes("--push")) {
+      const pushed = git("push", "origin", `refs/tags/${tag}`);
+      if (!pushed.ok) { console.error(`release-tag: git push of ${tag} failed: ${pushed.err || "no output"}; the local tag stays, retry with git push origin refs/tags/${tag}`); return 1; }
+      console.log(`release-tag: pushed ${tag}`);
+      return 0;
+    }
     console.log(`release-tag: push with git push origin refs/tags/${tag}`);
     return 0;
   }
