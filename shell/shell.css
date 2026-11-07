@@ -532,8 +532,29 @@ body.pip { margin: 0; overflow-y: auto; }
   .palette { margin-top: 8px; }
 }
 
+/* Touch targets: 44 px on coarse pointers at any width (tablets in landscape included). */
+@media (pointer: coarse) {
+  .btn, .areas a, .search-open, .tab, .pet, .reason-row input, .typed input, .palette-field input, #palette-list [role="option"] { min-height: 44px; }
+  .icon-btn, #mini-open { width: 44px; height: 44px; }
+}
+
+/* Long-form reading: bodies and prose at the base size with a comfortable line height; UI chrome stays at 14 px. */
+.ui-detail-body, .sheet-body .detail, .ui-review-thread-body, .ui-review-prose .ui-review-src { font-size: var(--acon-text-base); line-height: 1.65; }
+
+.btn:active:not(:disabled) { transform: translateY(1px); transition: transform var(--acon-duration-fast) var(--acon-ease-out), background-color var(--acon-ease), border-color var(--acon-ease); }
+
+::selection { background: var(--acon-accent-soft); color: var(--acon-accent-text); }
+
+/* Forced colors: fills disappear, so chips, badges and notices keep their shape with a transparent border the system paints. */
+@media (forced-colors: active) {
+  .chip, .badge, .notice, .ui-review-mark { border: 1px solid transparent; }
+  :focus-visible { outline-color: Highlight; }
+  ::selection { background: Highlight; color: HighlightText; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+  .btn:active:not(:disabled) { transform: none; }
 }
 
 /* Private shell Space cameras. Room uses a real transform hierarchy, without WebGL. */

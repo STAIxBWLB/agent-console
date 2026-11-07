@@ -549,6 +549,41 @@ async function checkSpace(page, scenario, resources, packed) {
 }
 
 let baseline;
+/** Tablet landscape (#71): a touch context at 1024 px must give every control a 44 px target at any width. */
+const COARSE_TARGETS = ".btn, .areas a, .search-open, .tab, .icon-btn, #mini-open, .pet, #palette-input, .reason-row input, .typed input";
+async function measureCoarse(page) {
+  return page.evaluate((selector) => {
+    if (!matchMedia("(pointer: coarse)").matches) return [{ kind: "coarse-media", detail: "The touch context does not match (pointer: coarse)" }];
+    return [...document.querySelectorAll(selector)].flatMap((el) => {
+      const box = el.getBoundingClientRect();
+      if (!box.width || !box.height || box.height >= 43.5) return [];
+      return [{ kind: "coarse-target", detail: `${el.id ? `#${el.id}` : el.className}: ${Math.round(box.height)}px tall` }];
+    });
+  }, COARSE_TARGETS);
+}
+async function runCoarse(ticket, theme) {
+  const scenario = { width: 1024, theme, textPercent: 100 };
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: theme, reducedMotion: "reduce", hasTouch: true });
+  const page = await context.newPage();
+  page.setDefaultTimeout(8000);
+  const label = `1024-${theme}-100-coarse`;
+  try {
+    await page.goto((await ticket(false)).url, { waitUntil: "networkidle" });
+    await page.locator("#view-inbox .row-main").first().waitFor();
+    await page.evaluate((t) => { localStorage.setItem("acon.theme", JSON.stringify(t)); document.documentElement.dataset.theme = t; }, theme);
+    await capture(page, scenario, "coarse-inbox", await measureCoarse(page));
+    await page.keyboard.press("Control+k");
+    await page.locator("#palette[open]").waitFor();
+    await capture(page, scenario, "coarse-palette", await measureCoarse(page));
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => { location.hash = "#/local/demo/notes"; });
+    await page.locator(".panel-mount:not([hidden]) .ui-row-open").first().waitFor();
+    await capture(page, scenario, "coarse-panel", await measureCoarse(page));
+  } catch (error) {
+    report.findings.push({ capture: label, kind: "probe-error", detail: error.message.slice(0, 1000) });
+  } finally { await context.close(); }
+}
+
 async function runScenario(ticket, scenario, fallback = false) {
   const context = await browser.newContext({ viewport: { width: scenario.width, height: 1000 }, colorScheme: scenario.theme, reducedMotion: "reduce" });
   const page = await context.newPage();
@@ -1166,6 +1201,7 @@ try {
   if (!focused) {
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
+    for (const theme of report.matrix.themes) await runCoarse(ticket, theme);
     for (const theme of report.miniPopout.themes) for (const textPercent of report.miniPopout.textPercent) await runMini(ticket, { width: report.miniPopout.width, theme, textPercent }, "mini-popout", report.miniPopout.height, true);
     await runMini(ticket, { width: 375, theme: "light", textPercent: 100 }, "mini-fallback", 1000, false);
   }
