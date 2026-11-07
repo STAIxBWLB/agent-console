@@ -39,6 +39,8 @@ export interface ConsoleError { at: string; tool: string; where: string; message
 
 const TICKET_MS = 60_000;
 const SESSION_MS = 60 * 60_000;
+/** #65: a browser signed in to a bearer node at /login stays signed in this long. */
+const LOGIN_MS = 12 * 60 * 60_000;
 const CONFIRM_MS = 60_000;
 // The process exits within 5 minutes of the last request: 4 min 55 s idle plus at most 5 s of provider close().
 const IDLE_MS = 5 * 60_000 - 5_000;
@@ -66,6 +68,16 @@ const fileName = (name: string) => codePoints(name.replace(/[^A-Za-z0-9._ -]/gu,
  * 901 vs 918 px for the demo flowchart). The frame's own code sets no inline styles (test/shell.test.ts asserts it).
  */
 export const FRAME_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+// #65: the sign-in form posts to itself and loads nothing. Under no-referrer, Chromium posts the form with
+// `Origin: null`, which the origin check refuses, so this page alone uses same-origin.
+const LOGIN_CSP = "default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+const loginPage = (status: number, message?: string) => new Response(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light dark"><title>acon sign in</title></head>
+<body><main><h1>Sign in to acon</h1>
+<p>Paste this node's bearer token: the file that ACON_TOKEN_FILE names on the Mac running acon serve.</p>
+${message ? `<p role="alert">${message}</p>\n` : ""}<form method="post" action="/login"><label for="token">Token</label> <input id="token" name="token" type="password" autocomplete="current-password" required autofocus> <button type="submit">Sign in</button></form>
+</main></body></html>
+`, { status, headers: { ...HEADERS, "Content-Security-Policy": LOGIN_CSP, "Content-Type": "text/html; charset=utf-8", "Referrer-Policy": "same-origin" } });
 const HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
@@ -258,6 +270,18 @@ export function startServer(options: ServerOptions) {
     return json(result);
   }
 
+  async function signIn(req: Request, checkToken: (token: string) => boolean, originOk: boolean): Promise<Response> {
+    if (req.method === "GET") return loginPage(200);
+    if (req.method !== "POST") return reject(405, "GET or POST required");
+    if (!originOk) return reject(403, "origin required; open this node at an address listed in --origin");
+    if (req.headers.get("content-type")?.split(";")[0]?.trim() !== "application/x-www-form-urlencoded") return reject(415, "form required");
+    if (!checkToken(new URLSearchParams(await req.text()).get("token") ?? "")) return loginPage(401, "That is not this node's token. Copy it again from the token file and retry.");
+    cap(sessions);
+    const session = secret();
+    sessions.set(session, { expires: now() + LOGIN_MS });
+    return new Response(null, { status: 303, headers: { ...HEADERS, Location: "/", "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${LOGIN_MS / 1000}` } });
+  }
+
   async function handle(req: Request): Promise<Response> {
       const url = new URL(req.url);
       const path = url.pathname;
@@ -279,11 +303,18 @@ export function startServer(options: ServerOptions) {
       const grant = resources.get(url.searchParams.get("acon_resource") ?? "");
       const resourcePath = /^\/(?:p\/[^/]+\/(?:panel\.js|panel\.css|asset)|pets\/[^/]+\/sheet|assets\/[^/]+\/[^/]+|models\/[^/]+\/[^/]+)$/.test(path);
       const resourceGrant = serve && req.method === "GET" && resourcePath && grant && (!requestOrigin || requestOrigin === grant.origin) && serve.origins.includes(grant.origin) ? grant : undefined;
-      // A resource grant is GET-only. It cannot authenticate JSON, action or session requests.
-      const principal = serve ? (resourceGrant?.principal ?? await serve.authenticate(req)) : null;
-      if (serve && principal === null) return reject(401, "authentication required");
-      prune(tickets);
       prune(sessions);
+      // #65: a bearer node signs a browser in at /login; the session cookie then stands for the token.
+      const checkToken = serve?.checkToken;
+      if (checkToken && path === "/login") return signIn(req, checkToken, originOk);
+      const signedIn = checkToken !== undefined && sessions.has(cookieOf(req) ?? "");
+      // A resource grant is GET-only. It cannot authenticate JSON, action or session requests.
+      const principal = serve ? (resourceGrant?.principal ?? (signedIn ? "bearer" : await serve.authenticate(req))) : null;
+      if (serve && principal === null) {
+        // A browser opening the console goes to the sign-in form; every other caller keeps the 401.
+        return checkToken && req.method === "GET" && path === "/" && req.headers.get("sec-fetch-mode") === "navigate" ? new Response(null, { status: 303, headers: { ...HEADERS, Location: "/login" } }) : reject(401, "authentication required");
+      }
+      prune(tickets);
       const cookie = serve ? principal! : cookieOf(req);
       const live = serve ? true : cookie !== undefined && sessions.has(cookie);
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);

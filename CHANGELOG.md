@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Local Mac first, other Macs over the Cloudflare WARP mesh (#65). `--origin` accepts `http://` for WARP device addresses in `100.64.0.0/10`. A bearer node has a script-free `/login` form; the token typed there gets a 12-hour `HttpOnly; SameSite=Strict` session cookie that stands for the token, and a browser opening `/` unauthenticated is redirected to it (other callers keep the 401). Access and loopback nodes are unchanged. The README shows a loopback agent for this Mac plus a bearer agent on the WARP address.
+
 ## [0.1.4] - 2026-11-05
 
 ### Fixed

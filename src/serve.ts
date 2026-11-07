@@ -18,12 +18,19 @@ export interface ServeOptions {
   mode: "access" | "bearer" | "loopback";
   /** #45: every plugin action is refused without calling the plugin; snapshots, search and assets are unchanged. */
   readOnly?: boolean;
+  /** #65, bearer mode only: checks a token typed into `/login`, which then gets a session cookie. */
+  checkToken?: (token: string) => boolean;
 }
 
 const SKEW_S = 60;
 const REFRESH_MS = 30_000;
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 export const isLoopback = (host: string) => LOOPBACK.has(host) || /^127\.\d+\.\d+\.\d+$/.test(host);
+/** #65: 100.64.0.0/10 (CGNAT), where mesh VPNs such as Cloudflare WARP assign device addresses and encrypt the traffic. */
+export const isMesh = (host: string) => {
+  const m = /^100\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  return m !== null && Number(m[1]) >= 64 && Number(m[1]) <= 127 && Number(m[2]) <= 255 && Number(m[3]) <= 255;
+};
 
 const b64url = (part: string): Uint8Array<ArrayBuffer> | null => {
   if (!/^[A-Za-z0-9_-]*$/.test(part)) return null;
@@ -152,7 +159,7 @@ function authConfig(args: ServeArgs, env: Record<string, string | undefined>, ce
   for (const raw of [...args.origins, ...(env.ACON_ORIGINS ?? "").split(",").map((v) => v.trim()).filter(Boolean)]) {
     let url: URL;
     try { url = new URL(raw); } catch { return `--origin ${raw} is not a URL`; }
-    if (url.origin !== raw.replace(/\/$/, "") || (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname)))) return `--origin ${raw} must be an exact https origin (http only for loopback), without a path`;
+    if (url.origin !== raw.replace(/\/$/, "") || (url.protocol !== "https:" && !(url.protocol === "http:" && (isLoopback(url.hostname) || isMesh(url.hostname))))) return `--origin ${raw} must be an exact https origin (http only for loopback or a WARP address in 100.64.0.0/10), without a path`;
     if (!origins.includes(url.origin)) origins.push(url.origin);
   }
   const loopback = isLoopback(hostname);
@@ -177,7 +184,7 @@ function authConfig(args: ServeArgs, env: Record<string, string | undefined>, ce
   if (tokenFile) {
     const check = bearerVerifier(tokenFile);
     if (typeof check === "string") return check;
-    return { hostname, port, origins, hosts, mode: "bearer", authenticate: async (req) => check(req.headers.get("authorization")) ? "bearer" : null };
+    return { hostname, port, origins, hosts, mode: "bearer", authenticate: async (req) => check(req.headers.get("authorization")) ? "bearer" : null, checkToken: (token) => check(`Bearer ${token}`) };
   }
   if (!loopback) return `refusing to serve on ${hostname} without authentication: set ACON_ACCESS_TEAM and ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN_FILE (bearer token)`;
   return { hostname, port, origins, hosts, mode: "loopback", authenticate: async () => "loopback" };

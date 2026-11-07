@@ -314,3 +314,87 @@ describe("read-only node (#45 AC1)", () => {
     expect(writableTools.readOnly).toBeUndefined();
   });
 });
+
+describe("local Mac and WARP sign-in (#65)", () => {
+  const WARP = "http://100.96.0.68:8791";
+  const bearerOverWarp = () => {
+    const dir = mkdtempSync(join(tmpdir(), "acon-serve-")); dirs.push(dir);
+    const file = join(dir, "token"); writeFileSync(file, `${"t".repeat(40)}\n`); chmodSync(file, 0o600);
+    const c = serveConfig({ host: "0.0.0.0", origins: [WARP] }, { ACON_TOKEN_FILE: file });
+    if (typeof c === "string") throw new Error(c);
+    return c;
+  };
+  const warp = (server: ReturnType<typeof startServer>, path: string, init: { method?: string; origin?: string | null; cookie?: string; form?: string; json?: unknown; navigate?: boolean } = {}) => {
+    const headers: Record<string, string> = { Host: new URL(WARP).host };
+    if (init.navigate) headers["Sec-Fetch-Mode"] = "navigate";
+    if (init.origin !== null && (init.origin || init.form !== undefined || init.json !== undefined)) headers.Origin = init.origin ?? WARP;
+    if (init.cookie) headers.Cookie = init.cookie;
+    if (init.form !== undefined) headers["Content-Type"] = "application/x-www-form-urlencoded";
+    if (init.json !== undefined) headers["Content-Type"] = "application/json";
+    const body = init.form ?? (init.json !== undefined ? JSON.stringify(init.json) : undefined);
+    return fetch(`http://127.0.0.1:${server.port}${path}`, { method: init.method ?? (body !== undefined ? "POST" : "GET"), headers, redirect: "manual", ...(body !== undefined ? { body } : {}) });
+  };
+
+  test("AC1 http origins are accepted for WARP addresses (100.64.0.0/10) only", () => {
+    expect(typeof serveConfig({ origins: ["http://100.96.0.68:8791"] }, {})).toBe("object");
+    expect(typeof serveConfig({ origins: ["http://100.64.0.1:8791"] }, {})).toBe("object");
+    expect(serveConfig({ origins: ["http://10.0.0.5:8791"] }, {})).toContain("100.64.0.0/10");
+    expect(serveConfig({ origins: ["http://100.128.0.1:8791"] }, {})).toContain("100.64.0.0/10");
+    expect(serveConfig({ origins: ["http://100.63.0.1:8791"] }, {})).toContain("100.64.0.0/10");
+  });
+
+  test("AC2 a browser signs in with the token and the cookie stands for it", async () => {
+    const server = await boot(bearerOverWarp());
+    const root = await warp(server, "/", { navigate: true });
+    expect(root.status).toBe(303);
+    expect(root.headers.get("location")).toBe("/login");
+    expect((await warp(server, "/")).status).toBe(401); // only a browser navigation is redirected
+    expect((await warp(server, "/tools", { json: {} })).status).toBe(401);
+
+    const page = await warp(server, "/login");
+    expect(page.status).toBe(200);
+    expect(page.headers.get("content-security-policy")).toBe("default-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    expect(page.headers.get("referrer-policy")).toBe("same-origin"); // no-referrer makes Chromium post Origin: null
+    const html = await page.text();
+    expect(html).toContain('type="password"');
+    expect(html).not.toContain("<script");
+
+    const wrong = await warp(server, "/login", { form: `token=${"x".repeat(40)}` });
+    expect(wrong.status).toBe(401);
+    expect(wrong.headers.get("set-cookie")).toBeNull();
+    expect(await wrong.text()).toContain('role="alert"');
+    expect((await warp(server, "/login", { form: `token=${"t".repeat(40)}`, origin: null })).status).toBe(403);
+    expect((await warp(server, "/login", { form: `token=${"t".repeat(40)}`, origin: "http://100.96.0.9:8791" })).status).toBe(403);
+    expect((await warp(server, "/login", { json: { token: "t".repeat(40) } })).status).toBe(415);
+
+    const ok = await warp(server, "/login", { form: `token=${"t".repeat(40)}` });
+    expect(ok.status).toBe(303);
+    expect(ok.headers.get("location")).toBe("/");
+    const setCookie = ok.headers.get("set-cookie")!;
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+    expect(setCookie).toContain("Max-Age=43200");
+    const cookie = setCookie.split(";")[0]!;
+
+    expect((await warp(server, "/", { cookie })).status).toBe(200);
+    expect((await warp(server, "/session", { cookie, json: {} })).status).toBe(200);
+    expect((await warp(server, "/tools", { cookie, json: {} })).status).toBe(200);
+    const preview = await (await warp(server, "/p/demo/action", { cookie, json: { action: "delete", id: "n1" } })).json() as { needsConfirm: boolean; confirmToken: string };
+    expect(preview.needsConfirm).toBe(true);
+    expect((await warp(server, "/p/demo/action", { cookie, json: { action: "delete", id: "n1", confirmToken: preview.confirmToken } })).status).toBe(200);
+    // A cookie still needs a configured Origin on POST, and an unknown cookie is no session.
+    expect((await warp(server, "/tools", { cookie, json: {}, origin: "https://evil.example.com" })).status).toBe(403);
+    expect((await warp(server, "/tools", { cookie: `${cookie.split("=")[0]}=${"0".repeat(64)}`, json: {} })).status).toBe(401);
+  });
+
+  test("AC3 Access and loopback nodes have no /login", async () => {
+    const access = await boot(accessServe());
+    expect((await call(access, "/login")).status).toBe(401);
+    expect((await call(access, "/")).status).toBe(401);
+    expect((await fetch(`http://127.0.0.1:${access.port}/`, { headers: { Host: new URL(ORIGIN).host, "Sec-Fetch-Mode": "navigate" }, redirect: "manual" })).status).toBe(401);
+    const c = serveConfig({ origins: [] }, {});
+    if (typeof c === "string") throw new Error(c);
+    const local = await boot(c);
+    expect((await call(local, "/login", { host: `127.0.0.1:${local.port}` })).status).toBe(404);
+  });
+});

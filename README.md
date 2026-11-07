@@ -117,14 +117,30 @@ acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.co
 ```
 
 - No ticket link, no idle exit and no browser opening. The process stays up until it is stopped. `--port` defaults to `ACON_PORT`, or 8787 when that is unset.
-- `--origin` (repeatable, or comma-separated in `ACON_ORIGINS`) lists the exact browser origins. POST needs one of them as `Origin`. `Host` must be one of their hosts or the bind address, which local health checks use.
+- `--origin` (repeatable, or comma-separated in `ACON_ORIGINS`) lists the exact browser origins. They are `https:`, or `http:` only on loopback or a WARP device address in `100.64.0.0/10`. POST needs one of them as `Origin`. `Host` must be one of their hosts or the bind address, which local health checks use.
 - `GET /healthz` answers 204 with no body and no authentication. Every other route, the shell files included, needs authentication.
 - Authentication is required unless `--host` is a loopback address. Starting on another address without it is refused. There are two modes:
   - Cloudflare Access: set `ACON_ACCESS_TEAM` (the team domain, `<team>.cloudflareaccess.com`) and `ACON_ACCESS_AUD` (the Access application's AUD tag). Each request's `Cf-Access-Jwt-Assertion` must verify as RS256 against `https://<team>/cdn-cgi/access/certs`. The keys are cached and refetched on an unknown `kid`. The checks are `aud` contains the AUD, `iss` is `https://<team>`, `exp`/`nbf` hold with 60 s skew, and `sub` (or `email`) is present.
   - Bearer token: set `ACON_TOKEN_FILE` to a file with mode 0600 holding one random token of at least 32 characters. `acon token new [--file PATH] [--force]` writes one (32 random bytes, base64url) to `$AGENTHUB_HOME/console/token` by default. It creates the file exclusively with mode 0600, refuses an existing file unless `--force` is given, and prints only the path, never the token. Requests send `Authorization: Bearer <token>`. The comparison is constant-time. A file readable by group or others is refused.
+  - Browser sign-in (bearer mode only): a browser opening `/` unauthenticated is redirected to `/login`, a script-free form that takes the token and sets an `HttpOnly; SameSite=Strict` session cookie for 12 hours that stands for the token. The POST needs a configured `Origin`. Access and loopback nodes have no `/login`.
 - The verified identity (the Access `sub`, or `bearer`) takes the place of the ticket session. Confirm tokens for destructive actions are bound to it, so a preview confirmed by another identity is refused. The page skips the ticket step because `/session` answers `{ok: true, mode: "serve"}`.
 - CSP, headers, plugins, the confirm path and the 32 KB body limit are the same as under `acon ui`.
 - Read-only node: `--read-only` or `ACON_READ_ONLY=1`. Every `/p/<tool>/action` answers 403 `{ok: false, error: "read-only node"}` before any confirm-token lookup, without calling the plugin and without issuing a confirm token. `/tools` reports `readOnly: true`, and the shell shows a "Read-only" chip and disables verb, answer and confirm buttons. Snapshots, search and assets are unchanged. Authentication rules do not change.
+
+### Local Mac and other Macs over WARP
+
+The console runs on your own Mac. Your other Macs reach it over the Cloudflare WARP device mesh when the WARP profile sends WARP device addresses (`100.96.0.0/12`) through WARP. Find this Mac's address with `ifconfig | grep 'inet 100\.'`.
+
+Run two agents: one on loopback for this Mac, with no token, and one with a token for the other Macs.
+
+```sh
+acon token new
+acon setup launchd --label acon.local --port 8790 --apply
+ACON_TOKEN_FILE=~/.agenthub/console/token \
+  acon setup launchd --label acon.warp --host 0.0.0.0 --port 8791 --origin http://100.96.0.68:8791 --apply
+```
+
+On this Mac open `http://127.0.0.1:8790`. On another Mac with WARP connected, open `http://100.96.0.68:8791` and paste the token (`pbcopy < ~/.agenthub/console/token` on this Mac). WARP encrypts that traffic. `0.0.0.0` also listens on the LAN, where every request still needs the token, but sign in only through the WARP address, because the LAN carries plain http.
 
 ### LaunchAgent (macOS)
 
