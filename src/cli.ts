@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 
-const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem and vault-mem
+const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem, vault-mem and agent-research
 
 Usage:
   acon ui [--no-open] [--json]   serve the console on 127.0.0.1 and print a one-time link
