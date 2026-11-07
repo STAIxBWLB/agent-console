@@ -274,7 +274,7 @@ describe("plugin assets", () => {
     }
     const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
     const fixture = (await provider.asset!({ id: "figure.webp" }))!;
-    expect(new Uint8Array(await webp.arrayBuffer())).toEqual(fixture.bytes);
+    expect(new Uint8Array(await webp.arrayBuffer())).toEqual(new Uint8Array(fixture.bytes));
     expect(webp.headers.get("content-length")).toBe(String(fixture.bytes.byteLength));
     const mismatch = await get(server, "/p/demo/asset?id=not-webp.webp", cookie);
     expect(mismatch.status).toBe(502);
