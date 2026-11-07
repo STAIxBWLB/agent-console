@@ -8,7 +8,8 @@ permissions:
   contents: read
 concurrency:
   group: check-${{ github.ref }}
-  cancel-in-progress: true
+  # Only PR runs cancel each other: a main push run is the release gate's evidence and must finish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
     timeout-minutes: 10

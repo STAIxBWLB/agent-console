@@ -15,8 +15,8 @@ const git = (...args: string[]): { ok: boolean; out: string; err: string } => {
 };
 
 export function bumpChangelog(changelog: string, version: string, date: string): string {
-  if (changelog.includes(`## [${version}] - `)) throw new Error(`CHANGELOG.md already has a ${version} section`);
-  if (!changelog.includes("## [Unreleased]\n")) throw new Error("CHANGELOG.md has no ## [Unreleased] section");
+  if (changelog.includes(`## [${version}] - `)) throw new Error(`CHANGELOG.md already has a ${version} section; pick an unused version (never reuse a published one) and rerun bump`);
+  if (!changelog.includes("## [Unreleased]\n")) throw new Error("CHANGELOG.md has no ## [Unreleased] section; add a '## [Unreleased]' heading above the latest release section, put the notes under it and rerun bump");
   return changelog.replace("## [Unreleased]\n", `## [Unreleased]\n\n## [${version}] - ${date}\n`);
 }
 
@@ -53,7 +53,7 @@ function main(argv: string[]): number {
     for (const p of problems) console.error(`release-tag: ${p}`);
     if (problems.length) return 1;
     const made = git("tag", "-a", tag, "-m", tag, head);
-    if (!made.ok) { console.error(`release-tag: git tag ${tag} failed: ${made.err || "no output"}`); return 1; }
+    if (!made.ok) { console.error(`release-tag: git tag ${tag} failed: ${made.err || "no output"}; if a local ${tag} exists remove it with git tag -d ${tag}, make sure git user.name and user.email are set, then rerun`); return 1; }
     console.log(`release-tag: created ${tag} at ${head}`);
     if (argv.includes("--push")) {
       const pushed = git("push", "origin", `refs/tags/${tag}`);

@@ -306,7 +306,7 @@ jobs:
               printf 'gh release view failed: %s\n' "$view"; return 1
             fi
           }
-          retry publish
+          retry publish || { echo "::error::The GitHub release did not complete. npm is already published; re-run this github-release job, it reconciles an existing or partial release."; exit 1; }
 
   notify-site:
     name: Tell the family site to resync

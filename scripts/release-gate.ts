@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 export type CiRun = { status: string; conclusion: string | null; created_at?: string };
-export type CiVerdict = "green" | "pending" | "red";
+/** missing: no push Check run on the commit; cancelled: the newest run was cancelled or skipped. */
+export type CiVerdict = "green" | "pending" | "missing" | "red" | "cancelled";
 
 /** Problems that block a release; empty means the tag may publish. */
 export function checkRelease(i: { tag: string; version: string; changelog: string; onMain: boolean }): string[] {
@@ -24,23 +25,37 @@ export function checkRelease(i: { tag: string; version: string; changelog: strin
 /** The newest run decides: success is green, any other finished result is red, none or unfinished is pending. */
 export function ciVerdict(runs: CiRun[]): CiVerdict {
   const latest = [...runs].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0];
-  if (!latest || latest.status !== "completed") return "pending";
-  return latest.conclusion === "success" ? "green" : "red";
+  if (!latest) return "missing";
+  if (latest.status !== "completed") return "pending";
+  if (latest.conclusion === "success") return "green";
+  return latest.conclusion === "cancelled" || latest.conclusion === "skipped" ? "cancelled" : "red";
 }
 
 /** A request error that retrying cannot fix (4xx other than 429); waitForCi stops on it. */
 export class FatalGateError extends Error {}
 
-/** Polls until green, red or the deadline; pending at the deadline fails. A FatalGateError propagates. */
+/** Polls while pending or missing (a run can appear late) until a finished result or the deadline. A FatalGateError propagates. */
 export async function waitForCi(fetchRuns: () => Promise<CiRun[]>, opts: { deadlineMs: number; intervalMs: number; now?: () => number; sleep?: (ms: number) => Promise<void> }): Promise<CiVerdict> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const end = now() + opts.deadlineMs;
   for (;;) {
-    let verdict: CiVerdict = "pending";
+    let verdict: CiVerdict = "missing";
     try { verdict = ciVerdict(await fetchRuns()); } catch (e) { if (e instanceof FatalGateError) throw e; console.error(`release-gate: ${(e as Error).message}; retrying`); }
-    if (verdict !== "pending" || now() >= end) return verdict;
+    if ((verdict !== "pending" && verdict !== "missing") || now() >= end) return verdict;
     await sleep(opts.intervalMs);
+  }
+}
+
+/** What to do about a non-green gate result. */
+export function nextStep(verdict: CiVerdict, sha: string): string {
+  const redo = "delete the tag (git push origin :refs/tags/<tag>), fix main, bump through a PR with `bun scripts/release-tag.ts bump <version>`, then run `bun scripts/release-tag.ts tag --push` on the merged main commit";
+  switch (verdict) {
+    case "red": return `Check failed on ${sha}; do not rerun it to force a release: ${redo}`;
+    case "cancelled": return `Check on ${sha} was cancelled or skipped; rerun that run from the Actions tab, wait for it to pass, then re-run this release run`;
+    case "missing": return `${sha} has no push Check run (it was never the tip of a main push); delete the tag (git push origin :refs/tags/<tag>) and tag the current main head with \`bun scripts/release-tag.ts tag --push\``;
+    case "pending": return `Check on ${sha} was still running at the deadline; wait for it to finish green, then re-run this release run`;
+    default: return "";
   }
 }
 
@@ -57,7 +72,7 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === "wait-ci" && a) {
     const repo = process.env.GITHUB_REPOSITORY, token = process.env.GITHUB_TOKEN;
-    if (!repo || !token) { console.error("release-gate: GITHUB_REPOSITORY and GITHUB_TOKEN are required"); return 2; }
+    if (!repo || !token) { console.error("release-gate: GITHUB_REPOSITORY and GITHUB_TOKEN are required; set both (owner/name and a token with actions: read) or let release.yml run this step"); return 2; }
     const url = `https://api.github.com/repos/${repo}/actions/workflows/check.yml/runs?head_sha=${a}&event=push&per_page=20`;
     const fetchRuns = async (): Promise<CiRun[]> => {
       const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } });
@@ -70,7 +85,7 @@ async function main(argv: string[]): Promise<number> {
     try { verdict = await waitForCi(fetchRuns, { deadlineMs, intervalMs: 20_000 }); }
     catch (e) { console.error(`release-gate: ${(e as Error).message}`); return 1; }
     console.log(`release-gate: Check on main for ${a} is ${verdict}`);
-    if (verdict !== "green") console.error("release-gate: rerun the Check workflow on that commit (a later merge can cancel its run), wait for it to pass, then re-run this release run");
+    if (verdict !== "green") console.error(`release-gate: ${nextStep(verdict, a)}`);
     return verdict === "green" ? 0 : 1;
   }
   console.error("usage: release-gate.ts check <tag> <sha> | wait-ci <sha>");
