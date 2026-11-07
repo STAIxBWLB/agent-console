@@ -365,7 +365,9 @@ describe("local Mac and WARP sign-in (#65)", () => {
     expect(await wrong.text()).toContain('role="alert"');
     expect((await warp(server, "/login", { form: `token=${"t".repeat(40)}`, origin: null })).status).toBe(403);
     expect((await warp(server, "/login", { form: `token=${"t".repeat(40)}`, origin: "http://100.96.0.9:8791" })).status).toBe(403);
-    expect((await warp(server, "/login", { json: { token: "t".repeat(40) } })).status).toBe(415);
+    const json = await warp(server, "/login", { json: { token: "t".repeat(40) } });
+    expect(json.status).toBe(415);
+    expect(((await json.json()) as { error: string }).error).toContain("Content-Type application/json is not a sign-in form; open /login");
 
     const ok = await warp(server, "/login", { form: `token=${"t".repeat(40)}` });
     expect(ok.status).toBe(303);

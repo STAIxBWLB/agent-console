@@ -274,7 +274,8 @@ export function startServer(options: ServerOptions) {
     if (req.method === "GET") return loginPage(200);
     if (req.method !== "POST") return reject(405, "GET or POST required");
     if (!originOk) return reject(403, "origin required; open this node at an address listed in --origin");
-    if (req.headers.get("content-type")?.split(";")[0]?.trim() !== "application/x-www-form-urlencoded") return reject(415, "form required");
+    const type = req.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+    if (type !== "application/x-www-form-urlencoded") return reject(415, `Content-Type ${type ? type.slice(0, 60) : "(missing)"} is not a sign-in form; open /login in a browser, or POST application/x-www-form-urlencoded with a token field`);
     if (!checkToken(new URLSearchParams(await req.text()).get("token") ?? "")) return loginPage(401, "That is not this node's token. Copy it again from the token file and retry.");
     cap(sessions);
     const session = secret();
