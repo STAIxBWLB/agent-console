@@ -15,7 +15,7 @@ function staticPanel(host) {
     const response = await host.action({ action: "probe" });
     result.textContent = `Action owner: ${response.owner ?? "missing"}`;
   });
-  host.mount.append(host.ui.h("section", { class: "card static-style-probe" }, status, action, result, host.ui.img({asset: "figure.png", alt: "Node figure"}), host.ui.frame({asset: "fixture.txt", title: "Node text attachment"})));
+  host.mount.append(host.ui.h("section", { class: "card static-style-probe" }, status, action, result, host.ui.img({asset: "figure.png", alt: "Node figure"}), host.ui.frame({asset: "fixture.txt", title: "Node text attachment"}), host.ui.frame({asset: "figure.webp", title: "Node WebP attachment"})));
   return { show() {}, hide() {}, destroy() {} };
 }
 
@@ -124,9 +124,14 @@ export async function runStaticCheck({ browser, root, capture, report, output, f
           const image = panel.getByAltText("Node figure");
           await image.scrollIntoViewIfNeeded();
           await page.waitForFunction(() => [...document.querySelectorAll(".panel-mount:not([hidden]) img")].every((img) => img.complete && img.naturalWidth > 0));
-          const viewer = panel.frameLocator("iframe.ui-frame");
+          const viewer = panel.frameLocator('iframe.ui-frame[title="Node text attachment"]');
           await viewer.locator("pre").filter({ hasText: "Plain fixture <script> is text." }).waitFor();
           if (await viewer.locator("#asset script").count()) add("static-asset-text", "Attachment text became markup; render attachment bytes as text.", label);
+          const webpViewer = panel.frameLocator('iframe.ui-frame[title="Node WebP attachment"]');
+          await webpViewer.locator("#asset img").waitFor();
+          await webpViewer.locator("#asset img").evaluate((img) => img.decode());
+          const webpSize = await webpViewer.locator("#asset img").evaluate((img) => ({ width: img.naturalWidth, height: img.naturalHeight }));
+          if (webpSize.width !== 2 || webpSize.height !== 2) add("static-asset-webp", `WebP did not decode: ${JSON.stringify(webpSize)}`, label);
           await capture(page, scenario, `static-panel-${id}`);
         }
         await system(page);

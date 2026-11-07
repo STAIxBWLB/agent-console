@@ -79,7 +79,7 @@ test("WebP asset conformance checks bytes instead of the filename", async () => 
   padded.set(webp.bytes, 1);
   expect(assetResultProblems({ ...webp, bytes: padded.subarray(1, -1) })).toEqual([]);
   const mismatch = await provider.asset!({ id: "not-webp.webp" });
-  const problem = ["asset.bytes must have RIFF/WEBP magic for image/webp"];
+  const problem = ["asset.bytes must have RIFF/WEBP magic for image/webp; declare the real type or send WebP bytes"];
   expect(assetResultProblems(mismatch)).toEqual(problem);
   for (const bytes of [new Uint8Array(), new TextEncoder().encode("RIFF1234WAVE"), webp.bytes.subarray(0, 11)]) {
     expect(assetResultProblems({ ...webp, bytes })).toEqual(problem);

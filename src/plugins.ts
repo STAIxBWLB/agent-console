@@ -4,7 +4,6 @@ import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, CONSOLE_FEATURES, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
-
 import { imageType } from "./assets.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
@@ -272,7 +271,7 @@ export function assetResultProblems(result: unknown): string[] {
   if (!(r.bytes instanceof Uint8Array)) out.push("asset.bytes must be a Uint8Array");
   if (typeof r.mime !== "string" || !r.mime) out.push("asset.mime must be a non-empty string");
   if (typeof r.name !== "string" || !r.name) out.push("asset.name must be a non-empty string");
-  if (r.mime === "image/webp" && r.bytes instanceof Uint8Array && imageType(r.bytes) !== "image/webp") out.push("asset.bytes must have RIFF/WEBP magic for image/webp");
+  if (r.mime === "image/webp" && r.bytes instanceof Uint8Array && imageType(r.bytes) !== "image/webp") out.push("asset.bytes must have RIFF/WEBP magic for image/webp; declare the real type or send WebP bytes");
   return out;
 }
 

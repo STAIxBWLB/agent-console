@@ -1,5 +1,5 @@
 // Opaque sandbox: only the parent may supply bounded, allowlisted attachment bytes.
-const types = new Set(['application/pdf', 'image/png', 'image/jpeg', 'text/plain', 'text/csv']);
+const types = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'text/plain', 'text/csv']);
 let objectUrl;
 window.addEventListener('message', (event) => {
   if (event.source !== parent || event.origin !== location.origin || event.data?.kind !== 'acon-asset') return;
