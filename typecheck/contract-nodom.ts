@@ -8,3 +8,8 @@ export const node: Same<PanelNode, ConsoleNode> = true;
 export const use = (host: ConsoleHost) => host.mount.append(host.ui.chip("ok"));
 // @ts-expect-error document is a DOM global and must not resolve here
 export const leak = document.title;
+
+import { VISUAL_CASES, type VisualCase } from "../src/visual-cases.ts";
+export const visualCase: VisualCase | undefined = VISUAL_CASES[0];
+// @ts-expect-error importing visual cases must not bring DOM globals
+export const visualLeak = window.document;

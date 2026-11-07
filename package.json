@@ -21,7 +21,8 @@
   "exports": {
     ".": "./src/contract.ts",
     "./contract": "./src/contract.ts",
-    "./conformance": "./src/conformance.ts"
+    "./conformance": "./src/conformance.ts",
+    "./visual-cases": "./src/visual-cases.ts"
   },
   "bin": {
     "acon": "bin/acon.js"

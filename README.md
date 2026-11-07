@@ -7,7 +7,7 @@ Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated reside
 <!-- facts:package -->
 - Package `@staix/agent-console` 0.1.6, command `acon`. Install: `bun add -g @staix/agent-console`.
 - Requires Bun >=1.4.2 (`engines.bun`).
-- Library exports: `@staix/agent-console` (`src/contract.ts`), `@staix/agent-console/contract` (`src/contract.ts`), `@staix/agent-console/conformance` (`src/conformance.ts`).
+- Library exports: `@staix/agent-console` (`src/contract.ts`), `@staix/agent-console/contract` (`src/contract.ts`), `@staix/agent-console/conformance` (`src/conformance.ts`), `@staix/agent-console/visual-cases` (`src/visual-cases.ts`).
 - Plugin contract api: 1.
 <!-- /facts:package -->
 
@@ -350,6 +350,9 @@ A plugin without `asset` behaves as before. Pass `assets: [ids]` to `registerCon
 - `{kind: "beforeAfter", caption?, before, after}`: each side is `{text}` or `{asset, alt}` (a plugin asset, see "Plugin assets"); sides stack below 768 px.
 
 The only CSP addition for visuals is the console's `frame-src 'self'`, shared with plugin assets. Mermaid follows the [vendored browser assets policy](#vendored-browser-assets): `@mermaid-js/tiny` 12.2.0 (2,811,424 bytes, MIT) ships in `shell/vendor/mermaid/`; `bun scripts/vendor-mermaid.ts` regenerates it and `bun scripts/vendor-mermaid.ts --check` verifies it. Shell icons follow the same policy: `@tabler/icons` 3.50.0 (MIT) outline path data ships in `shell/vendor/icons/`; `bun scripts/vendor-icons.ts` regenerates it from a fixed name list and `--check` verifies it.
+
+Shared conformance data is exported as `VISUAL_CASES` (and type `VisualCase`) from `@staix/agent-console/visual-cases`. The list, payloads and verdicts are recursively frozen and have no runtime imports or DOM globals. Each entry is `{id, payload, expected: {valid: true} | {valid: false, field}}`; field paths use the same notation as `tableColumnProblems`, such as `columns[0].key`. Consumers run each payload through their validator and compare the verdict and failing field. An invalid contract case may still render: acon cuts oversized lists, falls back to source text for Mermaid, and throws for invalid asset ids. Its renderer tests exercise every shared case. The Mermaid bound counts UTF-16 code units (`source.length`), not encoded bytes; captions have no acon length bound (long-caption cases are valid). Extra consumer text or total-size ceilings remain consumer policy.
+
 
 ### Public styling contract
 
