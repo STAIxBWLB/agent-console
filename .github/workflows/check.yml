@@ -18,7 +18,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           # check-docs resolves documentation stamps against history.
@@ -34,3 +34,19 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: npm pack --dry-run --ignore-scripts
+
+  # The one required check for main (#64): fails on any non-success gating result, skips and cancels included.
+  ci-ok:
+    name: ci-ok
+    if: always()
+    needs: [check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every gating job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "gating results: $RESULTS"
+          for r in $RESULTS; do [ "$r" = success ] || { echo "a gating job ended $r"; exit 1; }; done
+          [ -n "$RESULTS" ]
