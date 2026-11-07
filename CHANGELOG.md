@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-07
+
 ### Added
 
 - Local Mac first, other Macs over the Cloudflare WARP mesh (#65). `--origin` accepts `http://` for WARP device addresses in `100.64.0.0/10`. A bearer node has a script-free `/login` form; the token typed there gets a 12-hour `HttpOnly; SameSite=Strict` session cookie that stands for the token, and a browser opening `/` unauthenticated is redirected to it (other callers keep the 401). Access and loopback nodes are unchanged. The README shows a loopback agent for this Mac plus a bearer agent on the WARP address.
@@ -9,7 +11,7 @@
 
 ### Fixed
 
-- Name agent-research alongside the other three plugin producers in `acon help` and the package description, matching the README producer table.
+- Name agent-research alongside the other three plugin producers in `acon help` and the package description, matching the README producer table (#69).
 - The README lists agent-mem and agent-research among the tools that register plugins, and the 0.1.1 entry no longer contradicts the README on the hosted static-shell readback (#67).
 
 ## [0.1.4] - 2026-11-05
