@@ -550,14 +550,18 @@ async function checkSpace(page, scenario, resources, packed) {
 
 let baseline;
 /** Tablet landscape (#71): a touch context at 1024 px must give every control a 44 px target at any width. */
-const COARSE_TARGETS = ".btn, .areas a, .search-open, .tab, .icon-btn, #mini-open, .pet, #palette-input, .reason-row input, .typed input";
+// Every visible interactive control; only inline text links (button.link, .ui-link) are exempt.
+const COARSE_TARGETS = "button:not(.link), input:not([type=hidden]), select, textarea, [role=tab], [role=option], .areas a";
 async function measureCoarse(page) {
   return page.evaluate((selector) => {
     if (!matchMedia("(pointer: coarse)").matches) return [{ kind: "coarse-media", detail: "The touch context does not match (pointer: coarse)" }];
     return [...document.querySelectorAll(selector)].flatMap((el) => {
-      const box = el.getBoundingClientRect();
+      if (el.closest("[hidden], dialog:not([open])") || el.closest(".ui-link")) return [];
+      // A radio or checkbox is hit through its wrapping label, so the label is the target that is measured.
+      const target = el.matches("input[type=radio], input[type=checkbox]") ? el.closest("label") ?? el : el;
+      const box = target.getBoundingClientRect();
       if (!box.width || !box.height || box.height >= 43.5) return [];
-      return [{ kind: "coarse-target", detail: `${el.id ? `#${el.id}` : el.className}: ${Math.round(box.height)}px tall` }];
+      return [{ kind: "coarse-target", detail: `${el.id ? `#${el.id}` : el.dataset.fid ? `[data-fid=${el.dataset.fid}]` : `${el.tagName.toLowerCase()}.${el.className}`}: ${Math.round(box.height)}px tall` }];
     });
   }, COARSE_TARGETS);
 }
@@ -572,6 +576,17 @@ async function runCoarse(ticket, theme) {
     await page.locator("#view-inbox .row-main").first().waitFor();
     await page.evaluate((t) => { localStorage.setItem("acon.theme", JSON.stringify(t)); document.documentElement.dataset.theme = t; }, theme);
     await capture(page, scenario, "coarse-inbox", await measureCoarse(page));
+    // "Mark all read" only renders for a seen result group, which the fixture inbox lacks: measure the real
+    // shell CSS on the same markup (section.group > h2 > button.btn.group-command), then remove it.
+    await page.evaluate(() => {
+      const group = document.createElement("section"); group.className = "group"; group.dataset.uiCheck = "coarse-probe";
+      const head = document.createElement("h2"); const button = document.createElement("button");
+      button.type = "button"; button.className = "btn group-command"; button.textContent = "Mark all read";
+      head.append(button); group.append(head); document.querySelector("#view-inbox").append(group);
+    });
+    const groupFindings = await measureCoarse(page);
+    await page.evaluate(() => document.querySelector("[data-ui-check='coarse-probe']")?.remove());
+    report.findings.push(...groupFindings.map((finding) => ({ capture: `1024-${theme}-100-coarse-group-command`, ...finding })));
     await page.keyboard.press("Control+k");
     await page.locator("#palette[open]").waitFor();
     await capture(page, scenario, "coarse-palette", await measureCoarse(page));
@@ -579,6 +594,24 @@ async function runCoarse(ticket, theme) {
     await page.evaluate(() => { location.hash = "#/local/demo/notes"; });
     await page.locator(".panel-mount:not([hidden]) .ui-row-open").first().waitFor();
     await capture(page, scenario, "coarse-panel", await measureCoarse(page));
+    const review = page.locator("[data-ui-check='review']");
+    await review.scrollIntoViewIfNeeded();
+    await review.locator(".ui-review-gutter[tabindex='0']").focus();
+    await page.keyboard.press("Enter");
+    await settle(page);
+    await capture(page, scenario, "coarse-review", await measureCoarse(page));
+    // System holds the segmented theme and pet choices.
+    await page.evaluate(() => { location.hash = "#/local/system"; });
+    await page.locator("#view-system:not([hidden]) .segmented button").first().waitFor();
+    await capture(page, scenario, "coarse-system", await measureCoarse(page));
+    // Snoozing a row raises a toast with an Undo button.
+    await page.evaluate(() => { location.hash = "#/local/inbox"; });
+    await page.locator("#view-inbox .row-main").first().focus();
+    await page.keyboard.press("h");
+    await page.locator(".toast .btn").first().waitFor();
+    const toastFindings = await measureCoarse(page);
+    await page.locator(".toast .btn").first().click();
+    await capture(page, scenario, "coarse-toast", toastFindings);
   } catch (error) {
     report.findings.push({ capture: label, kind: "probe-error", detail: error.message.slice(0, 1000) });
   } finally { await context.close(); }

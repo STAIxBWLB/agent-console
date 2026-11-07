@@ -534,7 +534,8 @@ body.pip { margin: 0; overflow-y: auto; }
 
 /* Touch targets: 44 px on coarse pointers at any width (tablets in landscape included). */
 @media (pointer: coarse) {
-  .btn, .areas a, .search-open, .tab, .pet, .reason-row input, .typed input, .palette-field input, #palette-list [role="option"] { min-height: 44px; }
+  .btn, .areas a, .search-open, .tab, .pet, .reason-row input, .typed input, .palette-field input, #palette-list [role="option"],
+  .toast .btn, .group h2 .group-command, .segmented button, .ui-review-mark, .ui-review-gutter, .ui-review-gutter-pad { min-height: 44px; }
   .icon-btn, #mini-open { width: 44px; height: 44px; }
 }
 
