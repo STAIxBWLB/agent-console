@@ -572,8 +572,15 @@ describe("ui.visual", () => {
     try { root = node(ui.visual(payload)); }
     catch (error) {
       expect(error).toBeInstanceOf(TypeError);
-      const field = payload.kind === "beforeAfter"
-        ? (c.id.startsWith("before-") ? "before.asset" : "after.asset") : "kind";
+      let field: string | undefined = payload.kind === "beforeAfter" ? undefined : "kind";
+      if (payload.kind === "beforeAfter") {
+        for (const [name, side] of [["before", payload.before], ["after", payload.after]] as const) {
+          if (!("asset" in side)) continue;
+          try { ui.img(side); }
+          catch { field = `${name}.asset`; break; }
+        }
+      }
+      expect(field).toBeDefined();
       expect(c.expected).toEqual({ valid: false, field });
       return;
     }
@@ -605,6 +612,7 @@ describe("ui.visual", () => {
       const images = all.filter((n) => n.tagName === "IMG");
       const sides = [payload.before, payload.after];
       expect(all.filter((n) => n.className === "ui-visual-text").map((n) => n.textContent)).toEqual(sides.filter((s) => "text" in s).map((s) => (s as { text: string }).text));
+      expect(images.map((n) => n.attributes.get("src"))).toEqual(sides.filter((s) => "asset" in s).map((s) => `/p/demo/asset?id=${encodeURIComponent((s as { asset: string }).asset)}`));
       expect(images.map((n) => n.attributes.get("alt"))).toEqual(sides.filter((s) => "asset" in s).map((s) => String((s as { alt?: unknown }).alt ?? "")));
       // The contract requires string alt text; the renderer currently coerces malformed alt to text.
       for (const [i, side] of sides.entries()) if ("asset" in side && typeof side.alt !== "string") field = `${i === 0 ? "before" : "after"}.alt`;

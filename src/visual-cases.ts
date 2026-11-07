@@ -20,6 +20,7 @@ const columns = (count: number) => Array.from({ length: count }, (_, i) => ({ ke
 const table = (columnCount: number, rowCount: number): Extract<VisualPayload, { kind: "table" }> => ({
   kind: "table", columns: columns(columnCount), rows: Array.from({ length: rowCount }, (_, i) => ({ k0: i })),
 });
+const emojiSource = `flowchart LR\nA["${"😀".repeat(10230)}"]`.padEnd(20 * 1024, " ");
 const pair = (before: unknown, after: unknown = { text: "After" }) => ({ kind: "beforeAfter", before, after });
 
 /**
@@ -35,6 +36,8 @@ export const VISUAL_CASES: readonly VisualCase[] = [
   valid("mermaid-source-at-limit", { kind: "mermaid", source: "flowchart LR\nA-->B".padEnd(20 * 1024, " ") }),
   invalid("mermaid-source-past-limit", { kind: "mermaid", source: "flowchart LR\nA-->B".padEnd(20 * 1024 + 1, " ") }, "source"),
   valid("mermaid-source-multibyte", { kind: "mermaid", source: "flowchart LR\nA[한글]-->B".padEnd(20 * 1024, "가") }),
+  valid("mermaid-source-emoji-at-limit", { kind: "mermaid", source: emojiSource }),
+  invalid("mermaid-source-emoji-past-limit", { kind: "mermaid", source: `${emojiSource} ` }, "source"),
   valid("comparison-options-min", { kind: "comparison", options: options(2) }),
   invalid("comparison-options-below-min", { kind: "comparison", options: options(1) }, "options"),
   valid("comparison-options-max", { kind: "comparison", options: options(6) }),
@@ -59,6 +62,10 @@ export const VISUAL_CASES: readonly VisualCase[] = [
   valid("before-after-assets", { kind: "beforeAfter", before: { asset: "before.png", alt: "Before" }, after: { asset: "after.png", alt: "After" } }),
   valid("before-after-empty-text-alt", { kind: "beforeAfter", before: { text: "" }, after: { asset: "figure.png", alt: "" } }),
   valid("before-after-caption-unbounded", { kind: "beforeAfter", before: { text: "Before" }, after: { text: "After" }, caption: "c".repeat(4097) }),
+  valid("asset-id-at-limit", { kind: "beforeAfter", before: { asset: "a".repeat(512), alt: "Before" }, after: { text: "After" } }),
+  invalid("asset-id-past-limit", pair({ asset: "a".repeat(513), alt: "Before" }), "before.asset"),
+  valid("after-asset-id-at-limit", { kind: "beforeAfter", before: { text: "Before" }, after: { asset: "a".repeat(512), alt: "After" } }),
+  invalid("after-asset-id-past-limit", pair({ text: "Before" }, { asset: "a".repeat(513), alt: "After" }), "after.asset"),
   invalid("before-asset-empty", pair({ asset: "", alt: "Before" }), "before.asset"),
   invalid("before-asset-non-string", pair({ asset: 1, alt: "Before" }), "before.asset"),
   invalid("before-asset-missing-alt", pair({ asset: "before.png" }), "before.alt"),
