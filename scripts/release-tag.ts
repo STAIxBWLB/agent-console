@@ -23,12 +23,20 @@ export function bumpChangelog(changelog: string, version: string, date: string):
 function main(argv: string[]): number {
   const [cmd, arg] = argv;
   const pkgPath = join(root, "package.json"), logPath = join(root, "CHANGELOG.md");
-  if (cmd === "bump" && arg && /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(arg)) {
+  if (cmd === "bump" && arg && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(arg)) {
+    console.error(`release-tag: "${arg}" is not a semver version such as 0.2.0 or 0.2.0-rc.1`);
+    return 2;
+  }
+  if (cmd === "bump" && arg) {
+    // Compute both files before writing either, so a refusal leaves the tree untouched.
+    let changelog: string;
+    try { changelog = bumpChangelog(readFileSync(logPath, "utf8"), arg, new Date().toISOString().slice(0, 10)); }
+    catch (e) { console.error(`release-tag: ${(e as Error).message}; nothing was changed`); return 1; }
     const pkg = readFileSync(pkgPath, "utf8");
     writeFileSync(pkgPath, pkg.replace(/"version": "[^"]+"/, `"version": "${arg}"`));
-    writeFileSync(logPath, bumpChangelog(readFileSync(logPath, "utf8"), arg, new Date().toISOString().slice(0, 10)));
+    writeFileSync(logPath, changelog);
     const facts = spawnSync("bun", ["scripts/readme-facts.ts", "--write"], { cwd: root, stdio: "inherit" });
-    if (facts.status !== 0) return 1;
+    if (facts.status !== 0) { console.error("release-tag: package.json and CHANGELOG.md are bumped but `bun scripts/readme-facts.ts --write` failed; fix its error and rerun it before committing"); return 1; }
     console.log(`release-tag: bumped to ${arg} (Unreleased notes now sit under it); commit, open a PR, merge, then run \`tag\` on main`);
     return 0;
   }

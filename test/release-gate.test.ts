@@ -41,3 +41,11 @@ test("bumpChangelog dates a new section and refuses a reused version", () => {
   expect(bumpChangelog(log, "0.2.1", "2026-11-09")).toContain("## [Unreleased]\n\n## [0.2.1] - 2026-11-09\n");
   expect(() => bumpChangelog(log, "0.2.0", "2026-11-09")).toThrow();
 });
+
+test("waitForCi stops at once on a request error retrying cannot fix", async () => {
+  const { FatalGateError } = await import("../scripts/release-gate.ts");
+  let calls = 0;
+  const failing = async (): Promise<CiRun[]> => { calls++; throw new FatalGateError("GitHub API 403"); };
+  await expect(waitForCi(failing, { deadlineMs: 1000, intervalMs: 10, sleep: async () => {} })).rejects.toThrow("403");
+  expect(calls).toBe(1);
+});

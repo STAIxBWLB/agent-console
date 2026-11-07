@@ -295,11 +295,15 @@ jobs:
           # Each attempt reconciles from the current state: a create that failed part way (release made, upload or
           # publish not) is finished by the idempotent upload --clobber + edit path on the next attempt.
           publish() {
-            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            local view
+            if view="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" 2>&1 >/dev/null)"; then
               gh release upload "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --clobber &&
                 gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --draft=false --prerelease="$RELEASE_PRERELEASE"
-            else
+            elif grep -qi 'not found' <<<"$view"; then
               gh release create "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --verify-tag "${flags[@]}"
+            else
+              # Any other view error (5xx, 429) is printed so retry can see its status and try again.
+              printf 'gh release view failed: %s\n' "$view"; return 1
             fi
           }
           retry publish

@@ -12,11 +12,12 @@ export type CiVerdict = "green" | "pending" | "red";
 /** Problems that block a release; empty means the tag may publish. */
 export function checkRelease(i: { tag: string; version: string; changelog: string; onMain: boolean }): string[] {
   const problems: string[] = [];
-  if (i.tag !== `v${i.version}`) problems.push(`tag ${i.tag} is not v + package.json version (${i.version})`);
+  const redo = `delete it (git push origin :refs/tags/${i.tag}), bump through a PR with \`bun scripts/release-tag.ts bump <version>\`, then run \`bun scripts/release-tag.ts tag --push\` on the merged main commit`;
+  if (i.tag !== `v${i.version}`) problems.push(`tag ${i.tag} is not v + package.json version (${i.version}); ${redo}`);
   const prefix = `## [${i.version}] - `;
   const dated = i.changelog.split("\n").some((l) => l.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}$/.test(l.slice(prefix.length)));
-  if (!dated) problems.push(`CHANGELOG.md has no dated "## [${i.version}] - YYYY-MM-DD" section`);
-  if (!i.onMain) problems.push("the tag commit is not on origin/main");
+  if (!dated) problems.push(`CHANGELOG.md has no dated "## [${i.version}] - YYYY-MM-DD" section; ${redo}`);
+  if (!i.onMain) problems.push(`the tag commit is not on origin/main; ${redo}`);
   return problems;
 }
 
@@ -27,14 +28,17 @@ export function ciVerdict(runs: CiRun[]): CiVerdict {
   return latest.conclusion === "success" ? "green" : "red";
 }
 
-/** Polls until green, red or the deadline; pending at the deadline fails. */
+/** A request error that retrying cannot fix (4xx other than 429); waitForCi stops on it. */
+export class FatalGateError extends Error {}
+
+/** Polls until green, red or the deadline; pending at the deadline fails. A FatalGateError propagates. */
 export async function waitForCi(fetchRuns: () => Promise<CiRun[]>, opts: { deadlineMs: number; intervalMs: number; now?: () => number; sleep?: (ms: number) => Promise<void> }): Promise<CiVerdict> {
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const end = now() + opts.deadlineMs;
   for (;;) {
     let verdict: CiVerdict = "pending";
-    try { verdict = ciVerdict(await fetchRuns()); } catch (e) { console.error(`release-gate: ${(e as Error).message}; retrying`); }
+    try { verdict = ciVerdict(await fetchRuns()); } catch (e) { if (e instanceof FatalGateError) throw e; console.error(`release-gate: ${(e as Error).message}; retrying`); }
     if (verdict !== "pending" || now() >= end) return verdict;
     await sleep(opts.intervalMs);
   }
@@ -57,11 +61,14 @@ async function main(argv: string[]): Promise<number> {
     const url = `https://api.github.com/repos/${repo}/actions/workflows/check.yml/runs?head_sha=${a}&event=push&per_page=20`;
     const fetchRuns = async (): Promise<CiRun[]> => {
       const res = await fetch(url, { headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json" } });
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new FatalGateError(`GitHub API ${res.status} for ${repo}; check that the job token has actions: read and that GITHUB_REPOSITORY names this repository, then re-run the release run`);
       if (!res.ok) throw new Error(`GitHub API ${res.status}`);
       return ((await res.json()) as { workflow_runs: CiRun[] }).workflow_runs;
     };
     const deadlineMs = Number(process.env.RELEASE_GATE_DEADLINE_S ?? 1200) * 1000;
-    const verdict = await waitForCi(fetchRuns, { deadlineMs, intervalMs: 20_000 });
+    let verdict: CiVerdict;
+    try { verdict = await waitForCi(fetchRuns, { deadlineMs, intervalMs: 20_000 }); }
+    catch (e) { console.error(`release-gate: ${(e as Error).message}`); return 1; }
     console.log(`release-gate: Check on main for ${a} is ${verdict}`);
     if (verdict !== "green") console.error("release-gate: rerun the Check workflow on that commit (a later merge can cancel its run), wait for it to pass, then re-run this release run");
     return verdict === "green" ? 0 : 1;
