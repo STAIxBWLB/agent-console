@@ -1,7 +1,7 @@
 {
   "name": "@staix/agent-console",
   "version": "0.1.4",
-  "description": "Local-first web console that composes agent-hub, agent-mem and vault-mem as plugin panels",
+  "description": "Local-first web console that composes agent-hub, agent-mem, vault-mem and agent-research as plugin panels",
   "license": "MIT",
   "type": "module",
   "repository": {

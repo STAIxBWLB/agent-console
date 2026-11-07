@@ -9,6 +9,7 @@
 
 ### Fixed
 
+- Name agent-research alongside the other three plugin producers in `acon help` and the package description, matching the README producer table.
 - The README lists agent-mem and agent-research among the tools that register plugins, and the 0.1.1 entry no longer contradicts the README on the hosted static-shell readback (#67).
 
 ## [0.1.4] - 2026-11-05
