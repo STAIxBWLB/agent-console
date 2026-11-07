@@ -6,6 +6,10 @@
 
 - Export recursively frozen `VISUAL_CASES` and `VisualCase` from `@staix/agent-console/visual-cases`, with DOM-free shared visual conformance cases and renderer regression checks, including 512-character asset ids and Mermaid UTF-16 boundaries (#78).
 
+### Changed
+
+- CI and release hardening (#64): `check.yml` adds one `if: always()` aggregate job, `ci-ok`, that fails on any non-success gating result. `release.yml` starts with a `gate` job (`scripts/release-gate.ts`) that checks tag, version, `main` ancestry and the dated CHANGELOG entry and waits, with a deadline, for the tag commit's `Check` run to finish green before anything publishes. `scripts/release-tag.ts` bumps the version first and is the only way to create a release tag. The GitHub release step retries API calls on 5xx and 429. Both workflows pin `actions/checkout` v6.
+
 ## [0.1.6] - 2026-11-08
 
 ### Changed

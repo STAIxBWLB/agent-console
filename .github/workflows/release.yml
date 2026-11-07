@@ -13,7 +13,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: Release gate on the tag commit
+    runs-on: ubuntu-latest
+    # The wait below has its own deadline (RELEASE_GATE_DEADLINE_S) inside this timeout.
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - name: Tag equals the package version, commit is on main, CHANGELOG entry is dated
+        run: bun scripts/release-gate.ts check "$GITHUB_REF_NAME" "$GITHUB_SHA"
+      - name: Wait for the tag commit's main CI to finish green
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_GATE_DEADLINE_S: "1200"
+        run: bun scripts/release-gate.ts wait-ci "$GITHUB_SHA"
+
   validate:
+    needs: gate
     name: Release validation (${{ matrix.os }})
     timeout-minutes: 15
     strategy:
@@ -253,15 +279,34 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          # Retry GitHub API calls on 5xx and 429 (#64): 4 attempts, 5/15/30 s backoff, inside the job timeout.
+          retry() {
+            local delays=(5 15 30) i out
+            for i in 0 1 2 3; do
+              if out="$("$@" 2>&1)"; then printf '%s\n' "$out"; return 0; fi
+              printf '%s\n' "$out" >&2
+              if [ "$i" -eq 3 ] || ! grep -Eq 'HTTP (5[0-9][0-9]|429)|(^|[^0-9])(5[0-9][0-9]|429)([^0-9]|$)|timeout|connection reset' <<<"$out"; then return 1; fi
+              echo "retrying in ${delays[$i]}s" >&2; sleep "${delays[$i]}"
+            done
+          }
           notes="$RUNNER_TEMP/release-notes.md"
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
-          else
-            flags=()
-            if [ "$RELEASE_PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
-            gh release create "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --verify-tag "${flags[@]}"
-          fi
+          flags=()
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          # Each attempt reconciles from the current state: a create that failed part way (release made, upload or
+          # publish not) is finished by the idempotent upload --clobber + edit path on the next attempt.
+          publish() {
+            local view
+            if view="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" 2>&1 >/dev/null)"; then
+              gh release upload "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --clobber &&
+                gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --draft=false --prerelease="$RELEASE_PRERELEASE"
+            elif grep -qi 'not found' <<<"$view"; then
+              gh release create "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --verify-tag "${flags[@]}"
+            else
+              # Any other view error (5xx, 429) is printed so retry can see its status and try again.
+              printf 'gh release view failed: %s\n' "$view"; return 1
+            fi
+          }
+          retry publish || { echo "::error::The GitHub release did not complete. npm is already published; re-run this github-release job, it reconciles an existing or partial release."; exit 1; }
 
   notify-site:
     name: Tell the family site to resync
