@@ -349,7 +349,7 @@ A plugin without `asset` behaves as before. Pass `assets: [ids]` to `registerCon
 - `{kind: "table", caption?, columns, rows}`: the same as `ui.table`.
 - `{kind: "beforeAfter", caption?, before, after}`: each side is `{text}` or `{asset, alt}` (a plugin asset, see "Plugin assets"); sides stack below 768 px.
 
-The only CSP addition for visuals is the console's `frame-src 'self'`, shared with plugin assets. Mermaid is vendored from `@mermaid-js/tiny` 12.2.0 (2,811,424 bytes, MIT) into `shell/vendor/mermaid/` with a sha256 manifest; `bun scripts/vendor-mermaid.ts` regenerates it from the pinned devDependency and `bun scripts/vendor-mermaid.ts --check` verifies it.
+The only CSP addition for visuals is the console's `frame-src 'self'`, shared with plugin assets. Mermaid follows the [vendored browser assets policy](#vendored-browser-assets): `@mermaid-js/tiny` 12.2.0 (2,811,424 bytes, MIT) ships in `shell/vendor/mermaid/`; `bun scripts/vendor-mermaid.ts` regenerates it and `bun scripts/vendor-mermaid.ts --check` verifies it.
 
 ### Public styling contract
 
@@ -382,6 +382,20 @@ import { registerConsoleConformance } from "@staix/agent-console/conformance";
 registerConsoleConformance(plugin, { destructive: [{ action: "delete", id: "x" }] });
 ```
 
+## Vendored browser assets
+
+The published package has zero third-party runtime dependencies. Server and CLI code in `src/` imports only builtins (`node:`, `bun:`, `bun`) and relative files. Third-party browser assets may ship in `shell/vendor/` under these conditions:
+
+- The source package is an exact `devDependencies` pin in `package.json`, never a runtime dependency.
+- `scripts/vendor-<name>.ts` deterministically copies only the files the shell uses.
+- A `manifest.json` records the package name, version and license, plus each shipped file's source path, byte count and SHA-256. `test/vendor-<name>.test.ts` pins those hashes and checks deterministic regeneration.
+- The upstream license text ships in a `NOTICE` beside the files. Allowed licenses are MIT, ISC, BSD-2-Clause, BSD-3-Clause and Apache-2.0, plus OFL-1.1 for fonts only.
+- Assets are served from the console origin only. Vendored code must not use a CDN, runtime network access, telemetry or `eval`. Loading from another origin remains forbidden for CSP, credential-free static builds and private-network use.
+- Each asset over 100 KB loads lazily on first use. State any change to the total size of `shell/vendor/` in `CHANGELOG.md`.
+- Code running in the shell document has the shell's authority, including tab credentials. Review each version bump like first-party code. A library that parses untrusted input runs in a sandboxed frame, as Mermaid does.
+
+New libraries go in `shell/vendor/<name>/`. Three.js keeps its existing root layout. `bun scripts/check-boundary.ts` checks every vendor manifest's exact devDependency pin, allowed license and adjacent NOTICE; the vendor scripts, hash tests and review enforce the other conditions.
+
 ## Develop
 
 ```sh
@@ -399,7 +413,7 @@ Use `PLAYWRIGHT_MODULE` for an absolute Playwright or playwright-core module pat
 
 `--space-views-only` runs the Room/3D camera checks at 375 and 1440 px in both themes and 100%/200% text. It verifies lazy vendor requests, preserved focus order, projected overlay centres within 8 px after rotation, model loading, context-loss and absent-WebGL2 fallbacks, and zero additional canvas renders across a settled 10-second window. Depth-ordered scene buttons can occlude each other in projected views; their geometry and equivalent keyboard/roster access are checked separately from the shell's normal strict overlap checks. The full run includes both view and motion checks. For a separate published-art compatibility run, use `--space-views-only --art-root <directory>` with explicit `assets/` and `pets/` subdirectories; the probe never scans a real agent home.
 
-Three.js is an exact build-time devDependency (`0.187.0`), not a runtime package dependency. To update it deliberately, change the pin in `package.json` and `scripts/vendor-three.ts`, install it, then run `bun scripts/vendor-three.ts`. The script walks the module/GLTFLoader import graph, copies only those modules, rewrites imports to relative paths using the installed TypeScript parser and retains the upstream MIT license in `shell/vendor/NOTICE`. `test/vendor-three.test.ts` pins each shipped file's SHA-256 and checks deterministic regeneration. Update its literal hashes only after reviewing the upstream change; serve the checked-in modules from the same origin. No CDN or import map is used. The package dry-run reports the added vendor size.
+Three.js 0.187.0 follows the [vendored browser assets policy](#vendored-browser-assets). To update it, change the version in `package.json` and `scripts/vendor-three.ts`, install it, then run `bun scripts/vendor-three.ts`. The script walks the module/GLTFLoader import graph and rewrites imports to relative paths using the installed TypeScript parser. Update the literal hashes in `test/vendor-three.test.ts` after reviewing the upstream change. The package dry-run reports the vendor size.
 
 `--space-motion-only` runs the focused Space motion regression context. It changes public fixture facts through intercepted snapshot responses, checks actual CSS transitions and message consumption, and holds responses until the real snapshot gap exceeds 3 seconds. The normal full run includes this check as well as the viewport matrix.
 
