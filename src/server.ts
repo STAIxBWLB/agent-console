@@ -312,8 +312,10 @@ export function startServer(options: ServerOptions) {
       // A resource grant is GET-only. It cannot authenticate JSON, action or session requests.
       const principal = serve ? (resourceGrant?.principal ?? (signedIn ? "bearer" : await serve.authenticate(req))) : null;
       if (serve && principal === null) {
-        // A browser opening the console goes to the sign-in form; every other caller keeps the 401.
-        return checkToken && req.method === "GET" && path === "/" && req.headers.get("sec-fetch-mode") === "navigate" ? new Response(null, { status: 303, headers: { ...HEADERS, Location: "/login" } }) : reject(401, "authentication required");
+        // A browser opening the console goes to the sign-in form; every other caller keeps the 401. Browsers send
+        // Sec-Fetch-Mode only to trustworthy origins, so plain http on a WARP address is recognized by Accept.
+        const navigation = req.headers.get("sec-fetch-mode") === "navigate" || (req.headers.get("accept") ?? "").includes("text/html");
+        return checkToken && req.method === "GET" && path === "/" && navigation ? new Response(null, { status: 303, headers: { ...HEADERS, Location: "/login" } }) : reject(401, "authentication required");
       }
       prune(tickets);
       const cookie = serve ? principal! : cookieOf(req);

@@ -1,7 +1,10 @@
 // #65 bearer sign-in page: the 375/768/1024/1440 x light/dark x 100/200% matrix for the form and its
 // invalid-token state, then one real sign-in into the shell. The page is plain HTML, so the shell's
 // measurePage (skip link, #app) does not apply; this checks overflow, control overlap and the alert.
+// The browser reaches the node as plain http on a WARP address through a forwarding proxy, as another Mac
+// would: that origin is not trustworthy, so the browser sends no Fetch Metadata (PR #66 review).
 import { spawn } from "node:child_process";
+import { createServer as createHttpServer, request } from "node:http";
 import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -35,17 +38,25 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   const tokenFile = join(scratch, "login-token");
   await writeFile(tokenFile, `${token}\n`, { mode: 0o600 });
   const port = await freePort();
-  const origin = `http://127.0.0.1:${port}`;
-  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port)], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: "ignore" });
-  report.login = { matrix: report.matrix, captures: 0, signedIn: false };
+  const origin = `http://100.96.0.1:${port}`;
+  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: "ignore" });
+  // Forwards every proxied request to the loopback node, keeping the WARP Host header.
+  const proxy = createHttpServer((req, res) => {
+    const target = new URL(req.url);
+    const upstream = request({ host: "127.0.0.1", port, method: req.method, path: target.pathname + target.search, headers: req.headers }, (answer) => { res.writeHead(answer.statusCode ?? 502, answer.headers); answer.pipe(res); });
+    upstream.on("error", () => { res.writeHead(502); res.end(); });
+    req.pipe(upstream);
+  });
+  await new Promise((done) => proxy.listen(0, "127.0.0.1", done));
+  report.login = { origin: "http://100.96.0.1 (WARP address via forwarding proxy)", matrix: report.matrix, captures: 0, signedIn: false };
   try {
     for (let i = 0; i < 50; i += 1) {
-      try { if ((await fetch(`${origin}/healthz`)).status === 204) break; } catch { /* not listening yet */ }
+      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).status === 204) break; } catch { /* not listening yet */ }
       await new Promise((done) => setTimeout(done, 100));
     }
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) {
       const scenario = { width, theme, textPercent };
-      const context = await browser.newContext({ viewport: { width, height: 800 }, colorScheme: theme, reducedMotion: "reduce" });
+      const context = await browser.newContext({ viewport: { width, height: 800 }, colorScheme: theme, reducedMotion: "reduce", proxy: { server: `http://127.0.0.1:${proxy.address().port}` } });
       const page = await context.newPage();
       page.setDefaultTimeout(8000);
       const errors = [];
@@ -87,6 +98,7 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
       }
     }
   } finally {
+    proxy.close();
     child.kill("SIGTERM");
   }
 }

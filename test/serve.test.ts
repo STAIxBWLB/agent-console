@@ -324,9 +324,10 @@ describe("local Mac and WARP sign-in (#65)", () => {
     if (typeof c === "string") throw new Error(c);
     return c;
   };
-  const warp = (server: ReturnType<typeof startServer>, path: string, init: { method?: string; origin?: string | null; cookie?: string; form?: string; json?: unknown; navigate?: boolean } = {}) => {
+  const warp = (server: ReturnType<typeof startServer>, path: string, init: { method?: string; origin?: string | null; cookie?: string; form?: string; json?: unknown; navigate?: boolean; html?: boolean } = {}) => {
     const headers: Record<string, string> = { Host: new URL(WARP).host };
     if (init.navigate) headers["Sec-Fetch-Mode"] = "navigate";
+    if (init.html) headers.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
     if (init.origin !== null && (init.origin || init.form !== undefined || init.json !== undefined)) headers.Origin = init.origin ?? WARP;
     if (init.cookie) headers.Cookie = init.cookie;
     if (init.form !== undefined) headers["Content-Type"] = "application/x-www-form-urlencoded";
@@ -349,6 +350,10 @@ describe("local Mac and WARP sign-in (#65)", () => {
     expect(root.status).toBe(303);
     expect(root.headers.get("location")).toBe("/login");
     expect((await warp(server, "/")).status).toBe(401); // only a browser navigation is redirected
+    // Plain http on a WARP address is not a trustworthy origin, so browsers send no Sec-Fetch-Mode there.
+    const plain = await warp(server, "/", { html: true });
+    expect(plain.status).toBe(303);
+    expect(plain.headers.get("location")).toBe("/login");
     expect((await warp(server, "/tools", { json: {} })).status).toBe(401);
 
     const page = await warp(server, "/login");
