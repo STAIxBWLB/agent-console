@@ -36,8 +36,11 @@ describe("shell files fit the CSP", () => {
       expect(css).toContain(selector);
       const rule = css.slice(css.indexOf(selector)).split("}")[0]!;
       expect(rule).toContain(`--row: ${row};`);
-      expect(rule).toContain(`animation: pet-${frames} `);
-      expect(rule).toContain(`steps(${frames})`);
+      const declared = /animation:\s*([^;]+)/.exec(rule)![1]!;
+      const token = /^var\((--[a-z-]+)\)$/.exec(declared);
+      const animation = token ? new RegExp(`${token[1]}:\\s*([^;]+)`).exec(css)![1]! : declared;
+      expect(animation).toStartWith(`pet-${frames} `);
+      expect(animation).toContain(`steps(${frames})`);
     }
   });
   test("the Space area preserves an existing plugin's space route", () => {
@@ -318,11 +321,11 @@ describe("public panel kit", () => {
 // ui.review runs against the same double; keys and clicks are dispatched to the listeners the view registers.
 describe("ui.review", () => {
   const sha = (text: string) => createHash("sha256").update(text).digest("hex");
-  function review(): (o: Parameters<ConsoleUi["review"]>[0]) => KitNode {
+  function review(markIcon?: () => KitNode): (o: Parameters<ConsoleUi["review"]>[0]) => KitNode {
     const js = shell("shell.js");
     const source = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
-    const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null })`, {
-      Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
+    const ui = runInNewContext(`${source}\n${js.match(/^const toneClass = .*$/m)![0]}\nkitFor("demo", () => "#", undefined, { openSheet: () => null, markIcon })`, {
+      markIcon, Node: KitNode, URLSearchParams, TypeError, document: { createElement: (tag: string) => new KitNode(tag) },
     }) as ConsoleUi;
     return (o) => ui.review(o) as unknown as KitNode;
   }
@@ -337,6 +340,16 @@ describe("ui.review", () => {
   const text = "alpha\nbeta\ngamma\ndelta\n";
   const doc = { kind: "text" as const, path: "docs/a.md", text, contentHash: sha(text) };
   const thread = (id: string, anchor: object) => ({ id, anchor, body: "<b>note</b>", author: "owner", at: "2026-11-02T00:00:00Z" }) as never;
+
+  test("a thread mark keeps its comment count when the shell supplies an icon", () => {
+    const glyph = new KitNode("svg");
+    glyph.setAttribute("aria-hidden", "true");
+    const root = review(() => glyph)({ doc, threads: [thread("t1", { path: doc.path, contentHash: doc.contentHash, selectors: [{ kind: "lineRange", startLine: 1, endLine: 1 }] })], onComment() {} });
+    const mark = walk(root).find((n) => n.className === "ui-review-mark")!;
+    expect(mark.textContent).toBe("1 comment");
+    expect(mark.childNodes).toContain(glyph);
+    expect(glyph.getAttribute("aria-hidden")).toBe("true");
+  });
 
   test("AC1 + AC4: keyboard selects two lines into lineRange + textQuote, then submits a comment", async () => {
     const comments: { anchor: Record<string, unknown>; body: string }[] = [];
