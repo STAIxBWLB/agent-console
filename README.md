@@ -5,7 +5,7 @@
 Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). agent-hub, agent-mem, vault-mem and agent-research register their plugins (table below); a fixture plugin in `test/fixtures/` shows the contract. H2 (`acon build --static`) serves a credential-free shell over independently authenticated H1 nodes.
 
 <!-- facts:package -->
-- Package `@staix/agent-console` 0.1.4, command `acon`. Install: `bun add -g @staix/agent-console`.
+- Package `@staix/agent-console` 0.1.5, command `acon`. Install: `bun add -g @staix/agent-console`.
 - Requires Bun >=1.4.2 (`engines.bun`).
 - Library exports: `@staix/agent-console` (`src/contract.ts`), `@staix/agent-console/contract` (`src/contract.ts`), `@staix/agent-console/conformance` (`src/conformance.ts`).
 - Plugin contract api: 1.
