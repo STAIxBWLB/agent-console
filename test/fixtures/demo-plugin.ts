@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
+import { webpImage } from "./asset-pack.ts";
 import type { ActionResult, ConsoleHost, ConsolePlugin, InboxItem, ReviewDoc, ReviewThread, TableColumn } from "../../src/contract.ts";
 
 /** Test fixture: an in-memory tool with an inbox, search, a reversible verb and a destructive verb. */
@@ -117,6 +118,8 @@ function png(): Uint8Array {
 }
 const ASSETS: Record<string, { bytes: Uint8Array; mime: string; name: string }> = {
   "report.pdf": { bytes: pdf("Fixture report"), mime: "application/pdf", name: "report.pdf" },
+  "figure.webp": { bytes: webpImage(), mime: "image/webp", name: "figure.webp" },
+  "not-webp.webp": { bytes: png(), mime: "image/webp", name: "not-webp.webp" },
   "figure.png": { bytes: png(), mime: "image/png", name: "figure.png" },
   "logo.svg": { bytes: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), mime: "image/svg+xml", name: "logo.svg" },
   "notes.txt": { bytes: new TextEncoder().encode("plain text"), mime: "text/plain", name: "notes \"x\".txt" },

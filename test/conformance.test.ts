@@ -7,7 +7,7 @@ import { inboxItemProblems, registerConsoleConformance, reviewAnchorProblems, re
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
-registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png"] });
+registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png", "figure.webp"] });
 
 const inbox = async (provider: { snapshot(input: { after: number; panel: string }): Promise<Record<string, unknown>> }) =>
   (await provider.snapshot({ after: 0, panel: "inbox" })).items as unknown[];
@@ -67,6 +67,23 @@ test("asset answers are checked for shape, and unknown ids answer null", async (
   expect(await provider.asset!({ id: "missing" })).toBeNull();
   expect(assetResultProblems(await provider.asset!({ id: "figure.png" }))).toEqual([]);
   expect(assetResultProblems({ bytes: "x", mime: "", name: 1 })).toEqual(["asset.bytes must be a Uint8Array", "asset.mime must be a non-empty string", "asset.name must be a non-empty string"]);
+});
+
+test("WebP asset conformance checks bytes instead of the filename", async () => {
+  const { assetResultProblems } = await import("../src/plugins.ts");
+  const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
+  const webp = (await provider.asset!({ id: "figure.webp" }))!;
+  expect(assetResultProblems(webp)).toEqual([]);
+  expect(assetResultProblems({ ...webp, name: "misleading.png" })).toEqual([]);
+  const padded = new Uint8Array(webp.bytes.length + 2);
+  padded.set(webp.bytes, 1);
+  expect(assetResultProblems({ ...webp, bytes: padded.subarray(1, -1) })).toEqual([]);
+  const mismatch = await provider.asset!({ id: "not-webp.webp" });
+  const problem = ["asset.bytes must have RIFF/WEBP magic for image/webp"];
+  expect(assetResultProblems(mismatch)).toEqual(problem);
+  for (const bytes of [new Uint8Array(), new TextEncoder().encode("RIFF1234WAVE"), webp.bytes.subarray(0, 11)]) {
+    expect(assetResultProblems({ ...webp, bytes })).toEqual(problem);
+  }
 });
 
 registerConsoleConformance(createAskPlugin());

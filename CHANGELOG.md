@@ -4,6 +4,8 @@
 
 ### Added
 
+- Serve plugin `image/webp` assets inline under the PNG/JPEG header and size policy, checking RIFF/WEBP magic in the conformance helper and route before serving (#81).
+
 - Export recursively frozen `VISUAL_CASES` and `VisualCase` from `@staix/agent-console/visual-cases`, with DOM-free shared visual conformance cases and renderer regression checks, including 512-character asset ids and Mermaid UTF-16 boundaries (#78).
 
 ### Changed

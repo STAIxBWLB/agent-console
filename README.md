@@ -322,7 +322,7 @@ With focus on kit rows inside a panel, `j` and `k` move between rows and `Enter`
 
 A provider may implement `asset({id})` and answer `{bytes: Uint8Array, mime, name}`, or `null` for an unknown id. The console serves it at `GET /p/<tool>/asset?id=<id>` with the same Host, Origin and session checks as other plugin routes (and the `acon serve` authentication), plus `X-Content-Type-Options: nosniff`, a `Content-Disposition` filename and a framing policy of same origin only. A cross-site fetch gets 403, an unknown id 404.
 
-- Types: `application/pdf`, `image/png`, `image/jpeg`, `text/plain` and `text/csv` are served inline; `image/svg+xml` is served only as an attachment. Any other type gets 415.
+- Types: `application/pdf`, `image/png`, `image/jpeg`, `image/webp`, `text/plain` and `text/csv` are served inline; `image/svg+xml` is served only as an attachment. Any other type gets 415. Declared `image/webp` must have RIFF/WEBP magic bytes regardless of the filename; a mismatch gets 502 as an invalid plugin answer.
 - Size: 32 MB per asset by default (`ServerOptions.assetMaxBytes`); larger answers get 413.
 - Panels reference assets only through `ui.img`, `ui.frame` and `ui.link`, which build the URL from the panel's own tool and an id. URLs, other tools and other link targets throw `TypeError`; `h` still has no `a`, `img` or `iframe`.
 

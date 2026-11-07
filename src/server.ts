@@ -53,7 +53,7 @@ const secret = () => randomBytes(32).toString("hex");
 const asset = (name: string) => readFileSync(new URL(`../shell/${name}`, import.meta.url), "utf8");
 
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'";
-const ASSET_INLINE = new Set(["application/pdf", "image/png", "image/jpeg", "text/plain", "text/csv"]);
+const ASSET_INLINE = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp", "text/plain", "text/csv"]);
 // Assets may be framed by the shell (PDF viewer), never by another origin, and load nothing themselves.
 const ASSET_CSP = "default-src 'none'; frame-ancestors 'self'";
 const ASSET_ID_MAX = 512;
