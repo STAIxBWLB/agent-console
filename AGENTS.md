@@ -2,7 +2,8 @@
 
 - Implement the accepted issue contract on a branch with a PR. The plan of record is entelecheia/ai-workspace#60 Part 2, and the UX spec is STAIxBWLB/vault-mem#48.
 - Source is in `src/`, the browser shell in `shell/` (no build step), the bootstrap in `bin/`, checks in `scripts/`, tests in `test/`.
-- Use strict TypeScript, `.ts` imports and `noUncheckedIndexedAccess`. Runtime imports are builtins and relative files only; `bun scripts/check-boundary.ts` enforces this.
+- Use strict TypeScript, `.ts` imports and `noUncheckedIndexedAccess`. In `src/`, imports are builtins (`node:`, `bun:`, `bun`) and relative files only; `package.json` must declare no runtime dependencies. `bun scripts/check-boundary.ts` enforces this.
+- Before adding or updating `shell/vendor/`, follow README "Vendored browser assets".
 - Shell and panel code runs under `default-src 'none'` with `'self'` scripts and styles. The H2 static-shell exception allows exactly the configured node origins for scripts, connections and images; never widen it beyond those origins. Put only equally trusted nodes in one static build: node panel modules run with the shell's authority, including the other nodes' tab credentials. No inline scripts, no `style=` attributes, no `innerHTML` with data; render data as text.
 - Contract api 1 changes are additive only. Destructive or outward plugin actions answer `needsConfirm`; never let the page set `confirmed` or `fingerprint`.
 - Do not add agent-environment refusal or TTY requirements. Keep static build output credential-free and node origins exact; never deploy a production static shell without explicit authorization. `acon serve` (H1, #20) must keep authentication mandatory off loopback.
