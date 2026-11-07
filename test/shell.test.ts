@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { ConsoleElement, ConsoleUi, ReviewThread } from "../src/contract.ts";
 
+import { VISUAL_CASES } from "../src/visual-cases.ts";
+import { tableColumnProblems } from "../src/conformance.ts";
+import type { VisualPayload } from "../src/contract.ts";
+
 const shell = (name: string) => readFileSync(join(import.meta.dir, "..", "shell", name), "utf8");
 
 describe("shell files fit the CSP", () => {
@@ -561,6 +565,61 @@ describe("ui.visual", () => {
     const send = (src: unknown, data: unknown) => { for (const fn of listeners) fn({ source: src, data }); };
     return { ui, posted, timers, frames, send, ioCallbacks };
   }
+  for (const c of VISUAL_CASES) test(`shared visual case: ${c.id}`, () => {
+    const { ui } = visualKit();
+    const payload = c.payload as VisualPayload;
+    let root: KitNode;
+    try { root = node(ui.visual(payload)); }
+    catch (error) {
+      expect(error).toBeInstanceOf(TypeError);
+      let field: string | undefined = payload.kind === "beforeAfter" ? undefined : "kind";
+      if (payload.kind === "beforeAfter") {
+        for (const [name, side] of [["before", payload.before], ["after", payload.after]] as const) {
+          if (!("asset" in side)) continue;
+          try { ui.img(side); }
+          catch { field = `${name}.asset`; break; }
+        }
+      }
+      if (!field) throw error;
+      expect(c.expected).toEqual({ valid: false, field });
+      return;
+    }
+    const all = walk(root);
+    let field: string | undefined;
+    if (payload.kind === "mermaid") {
+      if (all.some((n) => n.className === "ui-visual-source")) field = "source";
+      else expect(all.some((n) => n.tagName === "IFRAME")).toBe(true);
+    } else if (payload.kind === "comparison") {
+      const shown = all.filter((n) => n.className.split(" ").includes("ui-visual-option"));
+      if (shown.length !== payload.options.length || all.some((n) => n.textContent === "A comparison needs at least two options.")) field = "options";
+      for (const name of ["pros", "cons"] as const) {
+        const list = all.find((n) => n.className === `ui-visual-points ${name}`);
+        const count = list ? walk(list).filter((n) => n.tagName === "LI").length : 0;
+        const requested = payload.options[0]?.[name]?.length ?? 0;
+        if (count !== requested) field = `options[0].${name}`;
+      }
+    } else if (payload.kind === "table") {
+      const problems = tableColumnProblems(payload.columns);
+      if (problems.length) field = problems[0]!.split(/[: ]/)[0];
+      const head = all.find((n) => n.tagName === "THEAD")!;
+      const body = all.find((n) => n.tagName === "TBODY")!;
+      expect(walk(head).filter((n) => n.tagName === "TH")).toHaveLength(Math.min(12, payload.columns.length));
+      const count = walk(body).filter((n) => n.tagName === "TR").length;
+      expect(count).toBe(Math.min(500, payload.rows.length));
+      if (count !== payload.rows.length) field = "rows";
+      if (payload.caption) expect(all.find((n) => n.tagName === "CAPTION")!.textContent).toBe(payload.caption);
+    } else if (payload.kind === "beforeAfter") {
+      const images = all.filter((n) => n.tagName === "IMG");
+      const sides = [payload.before, payload.after];
+      expect(all.filter((n) => n.className === "ui-visual-text").map((n) => n.textContent)).toEqual(sides.filter((s) => "text" in s).map((s) => (s as { text: string }).text));
+      expect(images.map((n) => n.attributes.get("src"))).toEqual(sides.filter((s) => "asset" in s).map((s) => `/p/demo/asset?id=${encodeURIComponent((s as { asset: string }).asset)}`));
+      expect(images.map((n) => n.attributes.get("alt"))).toEqual(sides.filter((s) => "asset" in s).map((s) => String((s as { alt?: unknown }).alt ?? "")));
+      // The contract requires string alt text; the renderer currently coerces malformed alt to text.
+      for (const [i, side] of sides.entries()) if ("asset" in side && typeof side.alt !== "string") field = `${i === 0 ? "before" : "after"}.alt`;
+      if (payload.caption) expect(all.find((n) => n.tagName === "FIGCAPTION")!.textContent).toBe(payload.caption);
+    }
+    expect(c.expected).toEqual(field ? { valid: false, field } : { valid: true });
+  });
   const flow = "flowchart LR\n  A[Start] --> B{Ok?}\n  B -->|yes| C[Ship]";
 
   test("AC1 + AC4: the frame is sandboxed allow-scripts only; replies from other windows are ignored; height is clamped", () => {

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Export recursively frozen `VISUAL_CASES` and `VisualCase` from `@staix/agent-console/visual-cases`, with DOM-free shared visual conformance cases and renderer regression checks, including 512-character asset ids and Mermaid UTF-16 boundaries (#78).
+
 ## [0.1.6] - 2026-11-08
 
 ### Changed
