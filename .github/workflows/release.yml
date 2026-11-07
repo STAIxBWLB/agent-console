@@ -290,14 +290,19 @@ jobs:
             done
           }
           notes="$RUNNER_TEMP/release-notes.md"
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            retry gh release upload "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --clobber
-            retry gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
-          else
-            flags=()
-            if [ "$RELEASE_PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
-            retry gh release create "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --verify-tag "${flags[@]}"
-          fi
+          flags=()
+          if [ "$RELEASE_PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          # Each attempt reconciles from the current state: a create that failed part way (release made, upload or
+          # publish not) is finished by the idempotent upload --clobber + edit path on the next attempt.
+          publish() {
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --clobber &&
+                gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --draft=false --prerelease="$RELEASE_PRERELEASE"
+            else
+              gh release create "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --verify-tag "${flags[@]}"
+            fi
+          }
+          retry publish
 
   notify-site:
     name: Tell the family site to resync

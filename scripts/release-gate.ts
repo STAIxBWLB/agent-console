@@ -63,6 +63,7 @@ async function main(argv: string[]): Promise<number> {
     const deadlineMs = Number(process.env.RELEASE_GATE_DEADLINE_S ?? 1200) * 1000;
     const verdict = await waitForCi(fetchRuns, { deadlineMs, intervalMs: 20_000 });
     console.log(`release-gate: Check on main for ${a} is ${verdict}`);
+    if (verdict !== "green") console.error("release-gate: rerun the Check workflow on that commit (a later merge can cancel its run), wait for it to pass, then re-run this release run");
     return verdict === "green" ? 0 : 1;
   }
   console.error("usage: release-gate.ts check <tag> <sha> | wait-ci <sha>");

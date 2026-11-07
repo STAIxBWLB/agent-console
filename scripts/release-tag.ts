@@ -33,9 +33,9 @@ function main(argv: string[]): number {
     return 0;
   }
   if (cmd === "tag") {
-    if (git("status", "--porcelain").out) { console.error("release-tag: the working tree is not clean"); return 1; }
+    if (git("status", "--porcelain").out) { console.error("release-tag: the working tree is not clean; commit or stash the changes, then rerun"); return 1; }
     const fetched = git("fetch", "--quiet", "origin", "main", "--tags");
-    if (!fetched.ok) { console.error(`release-tag: git fetch failed: ${fetched.err || "no output"}`); return 1; }
+    if (!fetched.ok) { console.error(`release-tag: git fetch failed: ${fetched.err || "no output"}; check the origin remote and network, then rerun`); return 1; }
     const head = git("rev-parse", "HEAD").out;
     if (head !== git("rev-parse", "origin/main").out) { console.error("release-tag: HEAD must be origin/main (pull first)"); return 1; }
     const { version } = JSON.parse(readFileSync(pkgPath, "utf8")) as { version: string };
