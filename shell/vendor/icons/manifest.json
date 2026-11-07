@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "name": "@tabler/icons",
+  "version": "3.50.0",
+  "license": "MIT",
+  "entry": "icons.js",
+  "sources": {
+    "adjustments-horizontal": {
+      "source": "icons/outline/adjustments-horizontal.svg",
+      "bytes": 649,
+      "sha256": "c07711c7f515e7707b97e32d9a18fed49bb200f1fcf0d1a987422f44e8ec8479"
+    },
+    "alert-triangle": {
+      "source": "icons/outline/alert-triangle.svg",
+      "bytes": 538,
+      "sha256": "92a951d8e90c1b1d986449e74a8b2e1c52982dc3dbe09b141ac11990420408f4"
+    },
+    "arrow-right": {
+      "source": "icons/outline/arrow-right.svg",
+      "bytes": 412,
+      "sha256": "fbd84a5780a8b2c6d4efc5f3376675e999d11eb43fadf7b9cbf2848b3120a7da"
+    },
+    "book-2": {
+      "source": "icons/outline/book-2.svg",
+      "bytes": 458,
+      "sha256": "50b44063c67eaf31e8bca9d8a026767e32117cf5fed3ad61ccc2545fe178059a"
+    },
+    "box": {
+      "source": "icons/outline/box.svg",
+      "bytes": 469,
+      "sha256": "317f48fbb3608b4edcffd99bb9f3a557435f42cc6a54ef663cdc7a10fe821077"
+    },
+    "check": {
+      "source": "icons/outline/check.svg",
+      "bytes": 360,
+      "sha256": "012d69548a769f4287e0af4c535b2cdf6e40457651de8078c4e588f0488952d6"
+    },
+    "external-link": {
+      "source": "icons/outline/external-link.svg",
+      "bytes": 465,
+      "sha256": "21623891fb11b028b31ad59e8f864592ea1fcb3900607e70366f9157dc107b7a"
+    },
+    "inbox": {
+      "source": "icons/outline/inbox.svg",
+      "bytes": 460,
+      "sha256": "a10a87ce0c47a8f3eca284fa371b8340a880ee10602bc15ede0162bb518ad5a5"
+    },
+    "plus": {
+      "source": "icons/outline/plus.svg",
+      "bytes": 379,
+      "sha256": "c273c746b4db19bebe87aaad5142f649c8e60cecfeb63d457ad4633d9907d17d"
+    },
+    "search": {
+      "source": "icons/outline/search.svg",
+      "bytes": 409,
+      "sha256": "57e054b6c1508be40d5eba1ea434b702f5ff55dca04e28e5e3f22472c2f6176d"
+    },
+    "stack-2": {
+      "source": "icons/outline/stack-2.svg",
+      "bytes": 431,
+      "sha256": "729d3e264f4e2e9670cd86f4531141baa78eb94e975198228a8167c8a1eb0572"
+    },
+    "terminal-2": {
+      "source": "icons/outline/terminal-2.svg",
+      "bytes": 484,
+      "sha256": "355ab62eb9ab035d468444b02b9170600b7b7c424aee20dc90e42b839761d387"
+    },
+    "user": {
+      "source": "icons/outline/user.svg",
+      "bytes": 433,
+      "sha256": "89eb991dd629ba6ad556608bf70528de1e1ca7801a3c9d5566d4f1506e4404c6"
+    },
+    "x": {
+      "source": "icons/outline/x.svg",
+      "bytes": 378,
+      "sha256": "445e1b53563ad7e089f94dee923c2ef3444c63d45294a733687471a76a3c3b8d"
+    }
+  },
+  "files": {
+    "icons.js": {
+      "source": "icons/outline/*.svg",
+      "bytes": 1522,
+      "sha256": "aea8541cf512d3295e016f8961a4174a03f9aa412da70f7f5ed6bf991e82f95c"
+    },
+    "NOTICE": {
+      "source": "LICENSE",
+      "bytes": 1232,
+      "sha256": "f19a42247b6cdda493c0fa2ec2f9c6f8f5fa9c939120df2db280ac269e874c12"
+    }
+  }
+}

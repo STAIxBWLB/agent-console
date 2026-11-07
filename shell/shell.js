@@ -1,4 +1,5 @@
 // acon shell (H0). Vanilla ES module under a strict CSP: no inline code, and data is rendered as text, never as markup.
+import { ICONS as TABLER } from "./vendor/icons/icons.js";
 const NODE = "local";
 const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["result", "Results"], ["candidate", "Candidates"], ["alert", "Alerts"]];
 const NEEDS_ME = new Set(["decision", "review", "candidate"]);
@@ -8,25 +9,17 @@ const INBOX_MS = 5000;
 const TOOLS_MS = 30000;
 const PING_MS = 60000;
 const SNOOZE_MS = 60 * 60 * 1000;
-const ICONS = {
-  inbox: "M3 13h5l1.5 3h5L16 13h5M5.5 5h13L21 13v6H3v-6z",
-  agents: "M4 5h16v11H4zM8 20h8M12 16v4M8 9l2 2-2 2M13 13h3",
-  memory: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
-  vault: "M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3zM5 17a3 3 0 0 1 3-3h11",
-  system: "M4 7h10M18 7h2M4 17h4M12 17h8M14 5v4M8 15v4",
-  box: "M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10",
-  you: "M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21a8 8 0 0 1 16 0",
-  review: "M20 6L9 17l-5-5",
-  candidate: "M12 5v14M5 12h14",
-  alert: "M12 3l10 18H2zM12 10v4M12 17.5v.5",
-  close: "M6 6l12 12M18 6L6 18",
-  go: "M5 12h14M13 6l6 6-6 6",
-  search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4",
-  popout: "M14 4h6v6M20 4l-8 8M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
-  brand: "M6 4h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM7 9l3 3-3 3M12 15h5",
+const VENDOR = {
+  inbox: "inbox", agents: "terminal-2", memory: "stack-2", vault: "book-2", system: "adjustments-horizontal", box: "box", you: "user",
+  review: "check", candidate: "plus", alert: "alert-triangle", close: "x", go: "arrow-right", search: "search", popout: "external-link",
 };
+// Shell icon names stay the public manifest names (src/contract.ts); paths come from vendored Tabler outline, except the acon mark.
+const ICONS = Object.freeze({
+  ...Object.fromEntries(Object.entries(VENDOR).map(([name, tabler]) => [name, TABLER[tabler] ?? TABLER.box])),
+  brand: ["M6 4h12a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3zM7 9l3 3-3 3M12 15h5"],
+});
 const TOOL_ICON = { ahub: "agents", amem: "memory", vmem: "vault" };
-const toolIcon = (t) => (t?.icon && ICONS[t.icon] ? t.icon : TOOL_ICON[t?.tool] ?? "box");
+const toolIcon = (t) => (t?.icon && Object.hasOwn(ICONS, t.icon) ? t.icon : TOOL_ICON[t?.tool] ?? "box");
 
 const $ = (id) => document.getElementById(id);
 // Module references: these move into a Picture-in-Picture document with Mini, where getElementById cannot find them.
@@ -748,9 +741,11 @@ function icon(name, cls = "ic") {
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("class", cls);
   svg.setAttribute("aria-hidden", "true");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", ICONS[name] ?? ICONS.box);
-  svg.append(path);
+  for (const d of Object.hasOwn(ICONS, name) ? ICONS[name] : ICONS.box) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
   return svg;
 }
 const str = (v) => (typeof v === "string" ? v : "");
