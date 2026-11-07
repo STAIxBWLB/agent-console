@@ -580,7 +580,7 @@ describe("ui.visual", () => {
           catch { field = `${name}.asset`; break; }
         }
       }
-      expect(field).toBeDefined();
+      if (!field) throw error;
       expect(c.expected).toEqual({ valid: false, field });
       return;
     }
