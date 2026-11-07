@@ -349,7 +349,7 @@ A plugin without `asset` behaves as before. Pass `assets: [ids]` to `registerCon
 - `{kind: "table", caption?, columns, rows}`: the same as `ui.table`.
 - `{kind: "beforeAfter", caption?, before, after}`: each side is `{text}` or `{asset, alt}` (a plugin asset, see "Plugin assets"); sides stack below 768 px.
 
-The only CSP addition for visuals is the console's `frame-src 'self'`, shared with plugin assets. Mermaid follows the [vendored browser assets policy](#vendored-browser-assets): `@mermaid-js/tiny` 12.2.0 (2,811,424 bytes, MIT) ships in `shell/vendor/mermaid/`; `bun scripts/vendor-mermaid.ts` regenerates it and `bun scripts/vendor-mermaid.ts --check` verifies it.
+The only CSP addition for visuals is the console's `frame-src 'self'`, shared with plugin assets. Mermaid follows the [vendored browser assets policy](#vendored-browser-assets): `@mermaid-js/tiny` 12.2.0 (2,811,424 bytes, MIT) ships in `shell/vendor/mermaid/`; `bun scripts/vendor-mermaid.ts` regenerates it and `bun scripts/vendor-mermaid.ts --check` verifies it. Shell icons follow the same policy: `@tabler/icons` 3.50.0 (MIT) outline path data ships in `shell/vendor/icons/`; `bun scripts/vendor-icons.ts` regenerates it from a fixed name list and `--check` verifies it.
 
 ### Public styling contract
 

@@ -1033,7 +1033,7 @@ async function runSpaceViews(ticket) {
       await page.locator(".space-scroll").focus(); await page.keyboard.press("ArrowRight"); await settle(page);
       const rotated = await page.locator(".space-plane").evaluate((el) => getComputedStyle(el).transform);
       if (rotated === evidence.room.transform) findings.push({ kind: "space-room-keyboard", detail: "ArrowRight did not rotate the Room camera" });
-      if (requests.some((r) => r.path.startsWith("/vendor/") || r.path === "/space3d.js")) findings.push({ kind: "space-lazy-vendor", detail: "Flat or Room loaded WebGL code" });
+      if (requests.some((r) => (r.path.startsWith("/vendor/") && !r.path.startsWith("/vendor/icons/")) || r.path === "/space3d.js")) findings.push({ kind: "space-lazy-vendor", detail: "Flat or Room loaded WebGL code" });
       await page.locator(".space-scroll").scrollIntoViewIfNeeded();
       await capture(page, { width, theme, textPercent }, "space-room", findings);
       evidence.roomKeyboard = await keyboardOrder(page, keys);

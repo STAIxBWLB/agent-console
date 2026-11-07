@@ -106,6 +106,7 @@ export function startServer(options: ServerOptions) {
   files["/visual/mermaid.js"] = { body: readFileSync(new URL("../shell/vendor/mermaid/mermaid.js", import.meta.url), "utf8"), type: "text/javascript; charset=utf-8", frame: true };
   // Fixed vendored module allowlist, never a request-derived filesystem path.
   for (const name of ["three.module.js", "three.core.js", "GLTFLoader.js", "BufferGeometryUtils.js", "SkeletonUtils.js"]) files[`/vendor/${name}`] = { body: asset(`vendor/${name}`), type: "text/javascript; charset=utf-8" };
+  files["/vendor/icons/icons.js"] = { body: asset("vendor/icons/icons.js"), type: "text/javascript; charset=utf-8" };
   // tools: the current load per tool, for new pages. refs: every load since start, so an open page keeps its version.
   // A tool whose registration later goes stale or disappears keeps its current load until the console restarts.
   const tools = new Map<string, PluginEntry>();
