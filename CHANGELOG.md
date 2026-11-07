@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-08
+
 ### Changed
 
 - Scope the zero-dependency import rule to `src/` and document the browser vendoring policy (#72). The boundary check now validates every vendor manifest's exact devDependency pin, allowed license and adjacent NOTICE. The shipped `shell/vendor/` files and total size are unchanged.
