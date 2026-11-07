@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "documents": {
+    "CHANGELOG.md": {
+      "verifiedAgainst": "281cc02650de8364f73263bc3b253d3785625e9f",
+      "paths": [
+        "src/",
+        "shell/",
+        "bin/"
+      ]
+    },
+    "README.md": {
+      "verifiedAgainst": "281cc02650de8364f73263bc3b253d3785625e9f",
+      "paths": [
+        "src/",
+        "shell/",
+        "bin/",
+        "Dockerfile",
+        "test/fixtures/",
+        "scripts/install-release.ts",
+        "scripts/ui-check.mjs",
+        "scripts/vendor-mermaid.ts",
+        "scripts/vendor-three.ts",
+        ".github/workflows/release.yml"
+      ]
+    }
+  }
+}

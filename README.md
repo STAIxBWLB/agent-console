@@ -1,12 +1,30 @@
 # agent-console
 
-`acon` is a local web console for the agent tool family: agent-hub (agents and tasks), agent-mem (memory) and vault-mem (knowledge vault). Each tool contributes panels as a plugin. The console adds what no single tool has: one inbox of everything waiting for you, a command palette across tools, and one confirm dialog for every destructive action.
+`acon` is a local web console for the agent tool family: agent-hub (agents and tasks), agent-mem (memory), vault-mem (knowledge vault) and agent-research (research). Each tool contributes panels as a plugin. The console adds what no single tool has: one inbox of everything waiting for you, a command palette across tools, and one confirm dialog for every destructive action.
 
-Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). vault-mem and agent-hub register their plugins; a fixture plugin in `test/fixtures/` shows the contract. H2 (`acon build --static`) serves a credential-free shell over independently authenticated H1 nodes.
+Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). agent-hub, agent-mem, vault-mem and agent-research register their plugins (table below); a fixture plugin in `test/fixtures/` shows the contract. H2 (`acon build --static`) serves a credential-free shell over independently authenticated H1 nodes.
+
+<!-- facts:package -->
+- Package `@staix/agent-console` 0.1.4, command `acon`. Install: `bun add -g @staix/agent-console`.
+- Requires Bun >=1.4.2 (`engines.bun`).
+- Library exports: `@staix/agent-console` (`src/contract.ts`), `@staix/agent-console/contract` (`src/contract.ts`), `@staix/agent-console/conformance` (`src/conformance.ts`).
+- Plugin contract api: 1.
+<!-- /facts:package -->
+
+The known producers, the contract api their registrations declare and the agent-console version each one pins (checked by hand in each repository; see `scripts/readme-facts.ts`):
+
+<!-- facts:producers -->
+| Tool | Repository | Registers with | Contract api | Pins agent-console |
+| --- | --- | --- | --- | --- |
+| `ahub` | [agent-hub](https://github.com/STAIxBWLB/agent-hub) | `ahub setup` | 1 | 0.1.3 |
+| `amem` | [agent-mem](https://github.com/STAIxBWLB/agent-mem) | `amem setup console --apply` | 1 | 0.1.3 |
+| `vmem` | [vault-mem](https://github.com/STAIxBWLB/vault-mem) | `vmem setup <host> --apply` | 1 | commit 4c4c1e0 (after 0.1.0, before 0.1.1) |
+| `ares` | [agent-research](https://github.com/STAIxBWLB/agent-research) | `ares setup console --apply` | 1 | commit 27e4f89 (0.1.2) |
+<!-- /facts:producers -->
 
 ## Use
 
-Requires Bun 1.4.2 or later. Install the published package, or run `bun install` and `bun bin/acon.js` from a checkout:
+Install the published package, or run `bun install` and `bun bin/acon.js` from a checkout:
 
 ```sh
 bun add -g @staix/agent-console
@@ -14,6 +32,27 @@ acon ui                       # opens the browser with a one-time link
 acon ui --no-open --json
 acon plugins                  # registered plugins and their hash check
 ```
+
+All commands, as `acon help` prints them:
+
+<!-- facts:commands -->
+```text
+acon ui [--no-open] [--json]   serve the console on 127.0.0.1 and print a one-time link
+acon serve [--host H] [--port P] [--origin https://host]... [--read-only] [--json]
+                               resident console behind Cloudflare Access or a bearer token
+acon build --static --nodes id=https://origin[,id=origin] [--out dist]
+                               write the static multi-node shell (no credentials or plugin data)
+acon token new [--file PATH] [--force]
+                               write a 0600 bearer token file (default $AGENTHUB_HOME/console/token); prints the path only
+acon setup launchd [--label ID] [--apply] [serve flags]
+                               print a LaunchAgent plist for acon serve; --apply installs and loads it
+acon plugins [--json]          list registered plugins and verify their module hashes
+acon install <name|https URL|dir> [--force]
+                               install a pet or asset package
+acon install --list [--json]   list the packages in the index
+acon --version | help
+```
+<!-- /facts:commands -->
 
 The server listens on 127.0.0.1 only and exits 5 minutes after the last request. The link works once and expires after 60 seconds.
 
@@ -347,8 +386,10 @@ registerConsoleConformance(plugin, { destructive: [{ action: "delete", id: "x" }
 
 ```sh
 bun install --frozen-lockfile
-bun run check   # typecheck, boundary, tests, pack dry-run
+bun run check   # typecheck, boundary, README facts, doc stamps, tests, pack dry-run
 ```
+
+README blocks between `<!-- facts:<name> -->` and `<!-- /facts:<name> -->` are generated: `bun scripts/readme-facts.ts` fails when one differs from `package.json`, `src/contract.ts`, `src/cli.ts` or the producer table in the script, and `--write` rewrites them. Edit the prose around them by hand. `docs/verified.json` records, per document, the commit its prose was last read against and the source paths it describes; `node scripts/check-docs.mjs` warns about a document whose paths changed after its stamp, and `--require-fresh` turns that into an error.
 
 Before UI PRs, run `node scripts/ui-check.mjs`. It finds an existing Playwright install at run time, starts isolated fixture servers and writes screenshots plus `ui-check/report.json`. It checks 375/768/1024/1440 px, both themes and 100%/200% text, including Space with two tools, an explicit synthetic pet/pack and a no-pack fallback. Mini (`#/local/mini`) is captured in every cell, at the 320x440 pop-out size (light and dark, 100% and 200% text, rendered in the page, not a Picture-in-Picture window) and once with no pack and the pet off; it checks the pet sprite, Tab order with visible focus over item and footer buttons, and that a pet-less Mini requests nothing under `/pets/`. It checks namespace keys, roster parity, navigation and unchanged-poll DOM writes. It exits non-zero on browser errors, text clipping (including the search label), overlap or horizontal overflow. It also checks that the skip link is completely offscreen until focused, reachable by keyboard and moves focus to main when activated. Playwright is a development tool supplied by the person running the check, not a package dependency or CI gate.
 
@@ -366,6 +407,8 @@ Record a real macOS Safari/VoiceOver pass in the PR for inbox, peek, palette and
 
 ## Release
 
-A `v*` tag equal to `v` plus the `package.json` version publishes through `.github/workflows/release.yml`. The tag needs a dated `## [VERSION] - YYYY-MM-DD` section in `CHANGELOG.md`. Linux and macOS run `bun run check`, then stage one tarball, check its SHA-256 manifest and install it into a clean prefix. The publish job uploads that same Linux tarball with npm OIDC trusted publishing and provenance, and no npm token is used. It runs only when the repository variable `NPM_PUBLISH_ENABLED` is `true`, and only after a reviewer approves the `npm-production` environment. The trusted publisher is configured on npm for repository `STAIxBWLB/agent-console`, workflow `release.yml` and environment `npm-production`. A GitHub release with the CHANGELOG section and the tarball follows. Never move a release tag or reuse a published version.
+A `v*` tag equal to `v` plus the `package.json` version publishes through `.github/workflows/release.yml`. The tag needs a dated `## [VERSION] - YYYY-MM-DD` section in `CHANGELOG.md`. Linux and macOS run `bun run check`, then stage one tarball, check its SHA-256 manifest and install it into a clean prefix. The publish job uploads that same Linux tarball with npm OIDC trusted publishing and provenance, and no npm token is used. It runs only when the repository variable `NPM_PUBLISH_ENABLED` is `true`, and only after a reviewer approves the `npm-production` environment. The trusted publisher is configured on npm for repository `STAIxBWLB/agent-console`, workflow `release.yml` and environment `npm-production`. A GitHub release with the CHANGELOG section and the tarball follows, and, when the `SITE_DISPATCH_TOKEN` secret is set, a `product-release` dispatch to STAIxBWLB/agent-hub-site (a failed dispatch does not fail the release). Never move a release tag or reuse a published version.
+
+Before tagging, run `bun scripts/readme-facts.ts --write` after the version bump, then `node scripts/check-docs.mjs`. For each stale document, reread it against the source on `origin/main`, fix it, and set its `verifiedAgainst` in `docs/verified.json` to that `origin/main` commit (never a branch commit, which a squash merge drops). The release workflow runs `node scripts/check-docs.mjs --require-fresh` on the tagged commit and refuses to publish while any document is stale.
 
 License: MIT

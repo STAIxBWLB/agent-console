@@ -35,6 +35,6 @@
     "LICENSE"
   ],
   "scripts": {
-    "check": "bun x tsc --noEmit && bun x tsc --noEmit -p tsconfig.contract.json && bun x tsc --noEmit -p tsconfig.contract-shim.json && bun scripts/check-boundary.ts && bun test && bun pm pack --dry-run"
+    "check": "bun x tsc --noEmit && bun x tsc --noEmit -p tsconfig.contract.json && bun x tsc --noEmit -p tsconfig.contract-shim.json && bun scripts/check-boundary.ts && bun scripts/readme-facts.ts && node scripts/check-docs.mjs && bun test && bun pm pack --dry-run"
   }
 }
