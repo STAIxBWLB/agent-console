@@ -5,6 +5,11 @@
 ### Added
 
 - Local Mac first, other Macs over the Cloudflare WARP mesh (#65). `--origin` accepts `http://` for WARP device addresses in `100.64.0.0/10`. A bearer node has a script-free `/login` form; the token typed there gets a 12-hour `HttpOnly; SameSite=Strict` session cookie that stands for the token, and a browser opening `/` unauthenticated is redirected to it (other callers keep the 401). Access and loopback nodes are unchanged. The README shows a loopback agent for this Mac plus a bearer agent on the WARP address.
+- README freshness (#67): `scripts/readme-facts.ts` renders the README's package, producer and command facts from `package.json`, `src/contract.ts` and `src/cli.ts`, and `bun run check` fails when a block differs (`--write` rewrites them). `docs/verified.json` records the commit each document was last reviewed against; `scripts/check-docs.mjs` reports stale documents on every check and refuses a release with `--require-fresh`. A successful release notifies STAIxBWLB/agent-hub-site when `SITE_DISPATCH_TOKEN` is set.
+
+### Fixed
+
+- The README lists agent-mem and agent-research among the tools that register plugins, and the 0.1.1 entry no longer contradicts the README on the hosted static-shell readback (#67).
 
 ## [0.1.4] - 2026-11-05
 
@@ -32,7 +37,7 @@
 
 ### Added
 
-- H2 static shell (#46): `acon build --static --nodes id=https://origin[,id=origin] [--out dist]`, fixed credential-free assets and Vercel/Workers static config, per-node bearer/Access auth, namespaced tools, node-owned actions and allowlisted credentialed CORS. Node-specific expiring GET-only grants serve authenticated modules/assets without exposing bearer tokens in URLs. Two-node ui-check covers ownership and distinct offline/origin-refused states. Hosted preview readback remains unverified.
+- H2 static shell (#46): `acon build --static --nodes id=https://origin[,id=origin] [--out dist]`, fixed credential-free assets and Vercel/Workers static config, per-node bearer/Access auth, namespaced tools, node-owned actions and allowlisted credentialed CORS. Node-specific expiring GET-only grants serve authenticated modules/assets without exposing bearer tokens in URLs. Two-node ui-check covers ownership and distinct offline/origin-refused states. Hosted preview readback was not done for this release; it followed with 0.1.3 (#57), and the README's "Static multi-node shell (H2)" section carries the current state.
 - H1 follow-ups (#45): `acon serve --read-only` / `ACON_READ_ONLY=1` refuses every plugin action (403 `read-only node`, no plugin call, no confirm token, a replayed token is not honoured), reports `readOnly: true` in `/tools`, and the shell shows a Read-only chip with verb, answer and confirm buttons disabled. `acon token new [--file] [--force]` writes a 0600 base64url bearer token and prints only its path. `acon setup launchd [--label] [--apply]` prints (or installs) a LaunchAgent for `acon serve` with auth passed as env names and file paths. The Dockerfile carries OCI `source` and `revision` labels.
 - Release images (#45): behind `IMAGE_PUBLISH_ENABLED`, tagged releases push multi-arch (`linux/amd64`, `linux/arm64`) images to `ghcr.io/staixbwlb/agent-console:<version>` (and `latest` for stable versions) with OCI labels, read the manifest back and run `--version` on amd64.
 
