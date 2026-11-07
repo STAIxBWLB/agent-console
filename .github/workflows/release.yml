@@ -209,9 +209,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
-    env:
-      # Secrets cannot be tested in a step `if`; an unset secret maps to an empty string and skips the site dispatch.
-      SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -265,7 +262,18 @@ jobs:
             if [ "$RELEASE_PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
             gh release create "$RELEASE_TAG" "$RELEASE_ASSETS.tgz" "$RELEASE_ASSETS.manifest.json" --repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes-file "$notes" --verify-tag "${flags[@]}"
           fi
-      - name: Tell the family site to resync
+
+  notify-site:
+    name: Tell the family site to resync
+    needs: github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      # Only this job sees the token. Secrets cannot be tested in a step `if`; an unset secret maps to an empty string.
+      SITE_DISPATCH_TOKEN: ${{ secrets.SITE_DISPATCH_TOKEN }}
+    steps:
+      - name: Send the product-release dispatch
         if: env.SITE_DISPATCH_TOKEN != ''
         # The site resync is best effort; it never fails a published release.
         continue-on-error: true
