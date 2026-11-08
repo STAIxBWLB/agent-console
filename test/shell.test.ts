@@ -1049,3 +1049,41 @@ test("static read-only chip identifies mixed nodes in Inbox without disabling wr
     expect(chip.title).toContain("writable nodes");
   }
 });
+
+test("static attachment transport and opaque viewer accept WebP like PNG", async () => {
+  const js = shell("shell.js");
+  const kit = js.slice(js.indexOf("function h("), js.indexOf("function icon("));
+  const transport = js.slice(js.indexOf("function staticAssetFrame("), js.indexOf("function hostFor("));
+  const bytes = new Uint8Array([1, 2, 3]);
+  const sent: { kind: string; mime: string; bytes: ArrayBuffer }[] = [];
+  const win = { postMessage: (msg: typeof sent[number]) => sent.push(msg) };
+  let receive = async (_event: { source: unknown; data: { kind: string } }): Promise<void> => { throw new Error("no listener"); };
+  const wrapper = runInNewContext(`${kit}\n${transport}\nstaticAssetFrame("https://node.example/asset", "WebP")`, {
+    Node: KitNode, document: { createElement: (tag: string) => {
+      const n = new KitNode(tag);
+      if (tag === "iframe") Object.defineProperty(n, "contentWindow", { value: win });
+      return n;
+    } },
+    window: { addEventListener: (_type: string, fn: typeof receive) => { receive = fn; }, removeEventListener() {} },
+    fetch: async () => new Response(bytes, { headers: { "Content-Type": "image/webp" } }),
+    AbortSignal, Uint8Array, setTimeout() {},
+  }) as KitNode;
+  await receive({ source: win, data: { kind: "acon-asset-ready" } });
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.mime).toBe("image/webp");
+  expect(new Uint8Array(sent[0]!.bytes)).toEqual(bytes);
+  expect(walk(wrapper).some((n) => n.textContent.includes("Attachment unavailable"))).toBe(false);
+  const parent = { postMessage() {} };
+  const root = new KitNode("div");
+  let show = (_event: unknown) => {};
+  let blob: Blob | undefined;
+  runInNewContext(shell("asset-viewer.js"), {
+    parent, location: { origin: "https://shell.example" }, ArrayBuffer, Blob, TextDecoder,
+    window: { addEventListener: (_type: string, fn: typeof show) => { show = fn; } },
+    document: { getElementById: () => root, createElement: (tag: string) => new KitNode(tag) },
+    URL: { createObjectURL: (value: Blob) => { blob = value; return "blob:fixture"; }, revokeObjectURL() {} },
+  });
+  show({ source: parent, origin: "https://shell.example", data: sent[0] });
+  expect(blob?.type).toBe("image/webp");
+  expect(root.childNodes[0]?.tagName).toBe("IMG");
+});

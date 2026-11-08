@@ -261,6 +261,38 @@ describe("plugin assets", () => {
     expect(text.headers.get("content-disposition")).toContain('filename="notes _x_.txt"');
   });
 
+  test("WebP assets use the PNG inline policy and reject declared WebP with PNG bytes", async () => {
+    const { server } = await boot();
+    const cookie = await login(server);
+    const webp = await get(server, "/p/demo/asset?id=figure.webp", cookie);
+    const png = await get(server, "/p/demo/asset?id=figure.png", cookie);
+    expect(webp.status).toBe(200);
+    expect(webp.headers.get("content-type")).toBe("image/webp");
+    expect(webp.headers.get("content-disposition")).toStartWith('inline; filename="figure.webp"');
+    for (const header of ["x-content-type-options", "x-frame-options", "content-security-policy", "cache-control"]) {
+      expect(webp.headers.get(header)).toBe(png.headers.get(header));
+    }
+    const provider = await createDemoPlugin().open({ home: "/tmp", log: () => {} });
+    const fixture = (await provider.asset!({ id: "figure.webp" }))!;
+    expect(new Uint8Array(await webp.arrayBuffer())).toEqual(new Uint8Array(fixture.bytes));
+    expect(webp.headers.get("content-length")).toBe(String(fixture.bytes.byteLength));
+    const mismatch = await get(server, "/p/demo/asset?id=not-webp.webp", cookie);
+    expect(mismatch.status).toBe(502);
+    expect(mismatch.headers.get("content-type")).not.toBe("image/webp");
+    expect((await mismatch.json()).error).toContain("sent an invalid asset");
+  });
+
+  test("WebP uses the same configured asset byte cap", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    const bytes = (await provider.asset!({ id: "figure.webp" }))!.bytes;
+    for (const [assetMaxBytes, status] of [[bytes.length, 200], [bytes.length - 1, 413]] as const) {
+      const server = startServer({ plugins: [{ tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider }], version: "t", pluginsDir: "/tmp", log: () => {}, assetMaxBytes });
+      running.push(server);
+      expect((await get(server, "/p/demo/asset?id=figure.webp", await login(server))).status).toBe(status);
+    }
+  });
+
   test("a name cut at 120 inside a surrogate pair, or with a lone surrogate, still gets a valid header", async () => {
     const { server } = await boot();
     const cookie = await login(server);

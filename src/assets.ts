@@ -54,7 +54,7 @@ function readRegularFile(file: string, maxBytes: number, label: string): Buffer 
   }
 }
 
-function imageType(bytes: Uint8Array): ImageType | undefined {
+export function imageType(bytes: Uint8Array): ImageType | undefined {
   const head = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (head.length >= 12 && head.toString("latin1", 0, 4) === "RIFF" && head.toString("latin1", 8, 12) === "WEBP") return "image/webp";
   if (head.length >= 8 && head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";

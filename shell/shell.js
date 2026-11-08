@@ -1484,7 +1484,7 @@ function staticAssetFrame(url, title) {
     try {
       const response = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(10000), redirect: "error" });
       const mime = response.headers.get("content-type")?.split(";")[0];
-      if (!response.ok || !["application/pdf", "image/png", "image/jpeg", "text/plain", "text/csv"].includes(mime)) throw new Error("unavailable attachment");
+      if (!response.ok || !["application/pdf", "image/png", "image/jpeg", "image/webp", "text/plain", "text/csv"].includes(mime)) throw new Error("unavailable attachment");
       const chunks = [];
       let length = 0;
       const reader = response.body.getReader();

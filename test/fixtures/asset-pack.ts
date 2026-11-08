@@ -27,7 +27,7 @@ export function pngImage(width = 2, height = 2, rgba: readonly [number, number, 
 }
 
 /** Small WebP signature fixture for validation; PNG above supplies complete renderable pixels. */
-export const webpImage = (): Buffer => Buffer.from("UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAEAcQERGIiP4HAA==", "base64");
+export const webpImage = (): Buffer => Buffer.from("UklGRh4AAABXRUJQVlA4TBEAAAAvAUAAAAdQ0IIUtP+BiOh/AAA=", "base64");
 
 /** A generated triangle, not artwork: complete GLB 2 for loader and browser fixtures. */
 export function glbModel(overrides: Record<string, unknown> = {}): Buffer {
