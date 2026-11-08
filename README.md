@@ -5,7 +5,7 @@
 Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated resident node). agent-hub, agent-mem, vault-mem and agent-research register their plugins (table below); a fixture plugin in `test/fixtures/` shows the contract. H2 (`acon build --static`) serves a credential-free shell over independently authenticated H1 nodes.
 
 <!-- facts:package -->
-- Package `@staix/agent-console` 0.1.6, command `acon`. Install: `bun add -g @staix/agent-console`.
+- Package `@staix/agent-console` 0.1.7, command `acon`. Install: `bun add -g @staix/agent-console`.
 - Requires Bun >=1.4.2 (`engines.bun`).
 - Library exports: `@staix/agent-console` (`src/contract.ts`), `@staix/agent-console/contract` (`src/contract.ts`), `@staix/agent-console/conformance` (`src/conformance.ts`), `@staix/agent-console/visual-cases` (`src/visual-cases.ts`).
 - Plugin contract api: 1.
@@ -286,7 +286,7 @@ Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/c
 | `table({columns, rows, caption?, sortable?})` | A table with text cells. A column is a `TableColumn`: `{key, label, align?: "start" \| "end", format?: "text" \| "number" \| "percent"}`. Header buttons sort stably (ascending, then descending) and set `aria-sort`; `sortable: false` turns this off. |
 | `bars({items, max?, caption})` | Horizontal SVG bars; items are `{label, value, target?}` and `target` draws a marker. `max` defaults to the largest value or target. |
 | `spark({values, caption})` | A small SVG line with a low/high/last summary. |
-| `img({asset, alt})` | An image of this plugin's asset (PNG or JPEG). |
+| `img({asset, alt})` | An image of this plugin's asset (PNG, JPEG or WebP). |
 | `frame({asset, title})` | A same-origin frame of this plugin's asset, for PDF or text. |
 | `link({asset} \| {panel, params?}, text)` | A link to this plugin's asset (opens in a new tab) or to one of its panels. |
 | `review({doc, threads, onComment, onPlacement?})` | A line-numbered review of a `text`, `prose` or `diff` document. Select a range (pointer, or a gutter with Shift+Up/Down, then Enter), write a comment and the kit calls `onComment({anchor, body})`; send it to your tool with `host.action()` and throw (or reject) when the result is not `ok`, so the kit keeps the draft and says the comment was not sent. Existing threads show as gutter marks or, when they cannot be placed, in a strip above the view. |

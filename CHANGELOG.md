@@ -2,9 +2,7 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Hidden Mermaid frames report successful renders after image load and synchronous layout, without waiting for requestAnimationFrame; the 5 s fallback, 20 KB cap and sandbox stay unchanged (#84).
+## [0.1.7] - 2026-11-08
 
 ### Added
 
@@ -14,6 +12,10 @@
 ### Changed
 
 - CI and release hardening (#64): `check.yml` adds one `if: always()` aggregate job, `ci-ok`, that fails on any non-success gating result. `release.yml` starts with a `gate` job (`scripts/release-gate.ts`) that checks tag, version, `main` ancestry and the dated CHANGELOG entry and waits, with a deadline, for the tag commit's `Check` run to finish green before anything publishes. `scripts/release-tag.ts` bumps the version first and is the only way to create a release tag. The GitHub release step retries API calls on 5xx and 429. Both workflows pin `actions/checkout` v6.
+
+### Fixed
+
+- Hidden Mermaid frames report successful renders after image load and synchronous layout, without waiting for requestAnimationFrame; the 5 s fallback, 20 KB cap and sandbox stay unchanged (#84).
 
 ## [0.1.6] - 2026-11-08
 
