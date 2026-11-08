@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Hidden Mermaid frames report successful renders after image load and synchronous layout, without waiting for requestAnimationFrame; the 5 s fallback, 20 KB cap and sandbox stay unchanged (#84).
+
 ### Added
 
 - Serve plugin `image/webp` assets inline under the PNG/JPEG header and size policy, checking RIFF/WEBP magic in the conformance helper and route before serving (#81), including the static shell attachment viewer.

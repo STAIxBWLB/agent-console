@@ -7,28 +7,30 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { runVisualCheck } from "./ui-check-visual.mjs";
 import { runLoginCheck } from "./ui-check-login.mjs";
 import { runStaticCheck } from "./ui-check-static.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, staticOnly: false, spaceMotionOnly: false, spaceViewsOnly: false, loginOnly: false, artRoot: null };
+const options = { output: resolve("ui-check"), baseline: null, forceOverflow: false, staticOnly: false, spaceMotionOnly: false, spaceViewsOnly: false, loginOnly: false, visualOnly: false, artRoot: null };
 for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
   if (arg === "--help") {
-    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only] [--space-views-only] [--static-only] [--login-only] [--art-root DIR]\n--login-only runs the bearer /login matrix (#65) only.\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
+    console.log("Usage: node scripts/ui-check.mjs [--output DIR] [--baseline report.json] [--force-overflow] [--space-motion-only] [--space-views-only] [--static-only] [--login-only] [--visual-only] [--art-root DIR]\n--login-only runs the bearer /login matrix (#65) only.\n--space-motion-only runs the single Space motion/regression context instead of the full matrix.\nEnvironment: PLAYWRIGHT_MODULE (absolute package path), PLAYWRIGHT_EXECUTABLE_PATH, BUN_BIN");
     process.exit(0);
   }
   if (arg === "--static-only") options.staticOnly = true;
   else if (arg === "--force-overflow") options.forceOverflow = true;
   else if (arg === "--space-motion-only") options.spaceMotionOnly = true;
   else if (arg === "--space-views-only") options.spaceViewsOnly = true;
+  else if (arg === "--visual-only") options.visualOnly = true;
   else if (arg === "--login-only") options.loginOnly = true;
   else if (arg === "--art-root" && process.argv[i + 1]) options.artRoot = resolve(process.argv[++i]);
   else if ((arg === "--output" || arg === "--baseline") && process.argv[i + 1]) options[arg === "--output" ? "output" : "baseline"] = resolve(process.argv[++i]);
   else throw new Error(`Unknown or incomplete argument: ${arg}`);
 }
 
-if ([options.spaceMotionOnly, options.spaceViewsOnly, options.staticOnly, options.loginOnly].filter(Boolean).length > 1) throw new Error("Choose only one focused probe mode");
+if ([options.spaceMotionOnly, options.spaceViewsOnly, options.staticOnly, options.loginOnly, options.visualOnly].filter(Boolean).length > 1) throw new Error("Choose only one focused probe mode");
 if (options.artRoot && !options.spaceViewsOnly) throw new Error("--art-root requires --space-views-only");
 
 async function findPlaywright() {
@@ -1230,7 +1232,7 @@ try {
   process.env.TMPDIR = env.TMPDIR;
   browser = await chromium.launch({ headless: true, env, ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH } : {}) });
   report.browserVersion = browser.version();
-  const focused = options.staticOnly || options.spaceMotionOnly || options.spaceViewsOnly || options.loginOnly;
+  const focused = options.staticOnly || options.spaceMotionOnly || options.spaceViewsOnly || options.loginOnly || options.visualOnly;
   if (!focused) {
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
@@ -1240,6 +1242,7 @@ try {
   }
   if (!focused || options.spaceMotionOnly) await runSpaceMotion(ticket);
   if (!focused || options.spaceViewsOnly) await runSpaceViews(ticket);
+  if (!focused || options.visualOnly) await runVisualCheck({ browser, root, report, output: options.output, env, scratch });
   if (!focused || options.loginOnly) await runLoginCheck({ browser, root, report, output: options.output, forceOverflow: options.forceOverflow, env, scratch });
   if (!focused || options.staticOnly) await runStaticCheck({ browser, root, capture, report, output: options.output, forceOverflow: options.forceOverflow });
 } catch (error) {

@@ -38,7 +38,8 @@
       await new Promise((done) => { img.onload = done; img.onerror = done; img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`; });
       root.replaceChildren(img);
       root.setAttribute("aria-label", img.alt);
-      requestAnimationFrame(() => reply({ id, ok: true, height: height() }));
+      // Layout reads are synchronous; a hidden loading frame may never run requestAnimationFrame.
+      reply({ id, ok: true, height: height() });
     } catch (error) {
       root.replaceChildren();
       reply({ id, ok: false, error: String(error && error.message ? error.message : error).split("\n")[0].slice(0, 200) });
