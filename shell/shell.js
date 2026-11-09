@@ -1590,6 +1590,7 @@ async function pollPanel() {
   if (res.status === 200) {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
+    if (res.data.changed === false) return;
     // Listeners hear only changed data, so an unchanged poll never re-renders the panel (focus and scroll stay).
     const sig = JSON.stringify(res.data);
     if (sig === p.lastSig) return;
