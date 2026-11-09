@@ -1592,7 +1592,7 @@ async function pollPanel() {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
     let data = res.data;
-    if (data.changed === false) {
+    if (data.changed === false && Object.keys(data).every((key) => key === "changed" || key === "cursor")) {
       if (p.lastSig !== "") return;
       if (!p.lastData) {
         // Recover a full reply once when show() has no cached snapshot to replay.

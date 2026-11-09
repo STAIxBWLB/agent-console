@@ -304,6 +304,8 @@ Versions and upgrades (#26):
 
 ### Producer-owned execution provenance
 
+A bare `{changed: false}` reply (with only an optional `cursor` key) means a conditional no-change response. The shell suppresses background delivery and replays the cached full snapshot after `show()`, or requests `after: 0` when no full snapshot is cached. Any additional key makes the reply a full snapshot, including legacy plugin data that happens to contain `changed: false`.
+
 Lineage and attempt comparison belong to the provider that owns the source records. Use `host.navigate(tool, panel, params)` with explicit owner/project selectors, and render bounded metadata through the existing detail/table/notice kit. Keep origin node, tool, project, exact reference revision/hash and source snapshot hash visible. A comparison has a selection set and source hash, not an invented single-record hash. Keep failed/unknown attempts, retry ancestry and unmeasured costs explicit; descriptive rows do not create a new winner or pooled result.
 
 `ExecutionReferenceV1` is `{v: 1, tool, projectKey, kind, id, revision?, sha256?}`. It is an opaque address, never a URL, asset path, script or authority token. Keep bytes/identity exact, select only a registered owner scope, and never resolve a reference by title, shared path or matching hash. Same-node tool navigation retains its owning node in the static shell; an explicitly qualified `node:tool` names that exact owner. An unavailable or unverified foreign owner must remain unavailable, not fall back to the local same-named tool. Only already authorized diagnostic operators may receive detailed missing/withheld reasons; ordinary callers see the same unavailable result.

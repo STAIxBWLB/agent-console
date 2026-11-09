@@ -60,6 +60,19 @@ describe("bounded lineage shell snapshot delivery", () => {
     expect(requests.at(-1)?.after).toBe(0);
     expect(h.delivered).toEqual([]);
   });
+  test("legacy full changed:false snapshots render at after zero and after show", async () => {
+    const full = { cursor: 0, changed: false, notes: [{ id: "legacy-full" }] };
+    const after: unknown[] = [];
+    const h = pollHarness(async (_path, input) => { after.push(input.after); return { status: 200, data: full }; });
+    h.p.cursor = 0;
+    await h.poll();
+    expect(h.delivered).toEqual([full]);
+    h.p.next = 0; await h.poll();
+    expect(h.delivered).toHaveLength(1);
+    await h.show(h.state.route); await Promise.resolve();
+    expect(h.delivered).toEqual([full, full]);
+    expect(after).toEqual([0, 0, 0]);
+  });
   test("legacy plugins without changed still render full snapshots and deduplicate identical replies", async () => {
     const data = { cursor: 7, notes: [{ id: "legacy-note" }] };
     const h = pollHarness(async () => ({ status: 200, data }));
