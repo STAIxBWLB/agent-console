@@ -646,6 +646,7 @@ function visualView(payload, kit, frames, theme) {
   let started = false;
   let shownTheme = null;
   let wantedTheme = null;
+  let visibilityObserver = null;
   let frame = null;
   const draw = (mode) => {
     frames.render(frame, { source, theme: mode, title: p.title ? String(p.title) : "" }, (data) => {
@@ -671,9 +672,23 @@ function visualView(payload, kit, frames, theme) {
   // Redraw in the frame it owns when the console theme changes; a detached or handed-over diagram drops out.
   const entry = {
     retheme(mode) {
-      if (!frame || frame.owner !== entry || !frame.el.isConnected) { frames.live.delete(entry); return; }
+      if (!frame || frame.owner !== entry || !frame.el.isConnected) { visibilityObserver?.disconnect(); visibilityObserver = null; frames.live.delete(entry); return; }
       wantedTheme = mode;
       if (mode === shownTheme || frame.busy) return; // a busy frame picks up wantedTheme when it finishes
+      if (frame.el.offsetParent === null) {
+        if (!visibilityObserver && typeof IntersectionObserver === "function") {
+          visibilityObserver = new IntersectionObserver((entries) => {
+            if (!entries.some((e) => e.isIntersecting)) return;
+            visibilityObserver.disconnect();
+            visibilityObserver = null;
+            entry.retheme(wantedTheme);
+          });
+          visibilityObserver.observe(root);
+        }
+        return;
+      }
+      visibilityObserver?.disconnect();
+      visibilityObserver = null;
       frame.busy = true;
       draw(mode);
     },

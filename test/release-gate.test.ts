@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { checkRelease, ciVerdict, nextStep, waitForCi, type CiRun } from "../scripts/release-gate.ts";
+import { checkRelease, ciVerdict, FatalGateError, nextStep, waitForCi, type CiRun } from "../scripts/release-gate.ts";
 import { bumpChangelog } from "../scripts/release-tag.ts";
 
 const log = "# Changelog\n\n## [Unreleased]\n\n## [0.2.0] - 2026-11-08\n\n- x\n";
@@ -55,10 +55,38 @@ test("each non-green result names its own next step, and only cancelled says to 
   expect(nextStep("red", "abc")).toContain("do not rerun");
   expect(nextStep("cancelled", "abc")).toContain("rerun that run");
   expect(nextStep("missing", "abc")).toContain("current main head");
+  expect(nextStep("missing", "abc")).toContain("git tag -d <tag>");
   expect(nextStep("pending", "abc")).toContain("still running");
 });
 
 test("a commit with no Check run stays missing through the deadline", async () => {
   let t = 0;
   expect(await waitForCi(async () => [], { deadlineMs: 50, intervalMs: 20, now: () => t, sleep: async (ms) => { t += ms; } })).toBe("missing");
+});
+
+test("an API error at the deadline preserves the last successful pending verdict", async () => {
+  let t = 0;
+  let calls = 0;
+  const verdict = await waitForCi(async () => {
+    if (calls++ === 0) return [{ status: "in_progress", conclusion: null }];
+    throw new Error("GitHub API 502");
+  }, { deadlineMs: 10, intervalMs: 10, now: () => t, sleep: async (ms) => { t += ms; } });
+  expect(verdict).toBe("pending");
+  expect(calls).toBe(2);
+});
+
+test("API errors on every poll report the last error and release retry, not a missing run", async () => {
+  let t = 0;
+  let calls = 0;
+  let failure: unknown;
+  try {
+    await waitForCi(async () => { throw new Error(`GitHub API 502 poll ${++calls}`); },
+      { deadlineMs: 10, intervalMs: 10, now: () => t, sleep: async (ms) => { t += ms; } });
+  } catch (error) { failure = error; }
+  expect(failure).toBeInstanceOf(Error);
+  expect(failure).not.toBeInstanceOf(FatalGateError);
+  expect((failure as Error).message).toContain("GitHub API failed on every poll");
+  expect((failure as Error).message).toContain("502 poll 2");
+  expect((failure as Error).message).toContain("re-run this release run");
+  expect((failure as Error).message).not.toContain("missing");
 });

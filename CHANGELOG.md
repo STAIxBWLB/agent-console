@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve the last successful CI verdict across release-gate API errors, distinguish API outages from missing runs, and give actionable release and CI failure messages (#83).
+- Defer Mermaid theme redraws while panels are hidden, document inline WebP images, reject unsupported visual overflow controls, and report isolated UI server readiness failures (#87).
+
 ## [0.1.7] - 2026-11-08
 
 ### Added

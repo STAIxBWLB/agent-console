@@ -40,6 +40,8 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   const port = await freePort();
   const origin = `http://100.96.0.1:${port}`;
   const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: "ignore" });
+  let spawnError;
+  child.on("error", (error) => { spawnError = error; });
   // Forwards every proxied request to the loopback node, keeping the WARP Host header.
   const proxy = createHttpServer((req, res) => {
     const target = new URL(req.url);
@@ -50,10 +52,13 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   await new Promise((done) => proxy.listen(0, "127.0.0.1", done));
   report.login = { origin: "http://100.96.0.1 (WARP address via forwarding proxy)", matrix: report.matrix, captures: 0, signedIn: false };
   try {
-    for (let i = 0; i < 50; i += 1) {
-      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).status === 204) break; } catch { /* not listening yet */ }
+    let healthy = false;
+    for (let i = 0; i < 100; i += 1) {
+      if (spawnError) break;
+      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).status === 204) { healthy = true; break; } } catch { /* not listening yet */ }
       await new Promise((done) => setTimeout(done, 100));
     }
+    if (!healthy) throw new Error("acon serve did not answer /healthz within 10 s; check BUN_BIN, the plugin manifest hash, and the server's stderr");
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) {
       const scenario = { width, theme, textPercent };
       const context = await browser.newContext({ viewport: { width, height: 800 }, colorScheme: theme, reducedMotion: "reduce", proxy: { server: `http://127.0.0.1:${proxy.address().port}` } });

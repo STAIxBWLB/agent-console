@@ -7,7 +7,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 
 function visualPanel(host) {
-  for (const [id, source] of [["valid", "flowchart LR\nA[Start]-->B[Done]"], ["broken", "flowchart LR\nA-->"], ["cap", "a".repeat(20 * 1024 + 1)]]) {
+  for (const [id, source] of [["valid", "flowchart TD\nA[Start]-->B[Review]-->C[Done]"], ["broken", "flowchart LR\nA-->"], ["cap", "a".repeat(20 * 1024 + 1)]]) {
     host.mount.append(host.ui.h("section", { "data-visual-case": id }, host.ui.visual({ kind: "mermaid", title: id, source })));
   }
 }
@@ -37,11 +37,13 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, stop);
   report.visualChecks ??= [];
   try {
+    let healthy = false;
     for (let i = 0; i < 100; i += 1) {
-      if (spawnError) throw spawnError;
-      try { if ((await fetch(`${origin}/healthz`)).status === 204) break; } catch { /* starting isolated server */ }
+      if (spawnError) break;
+      try { if ((await fetch(`${origin}/healthz`)).status === 204) { healthy = true; break; } } catch { /* starting isolated server */ }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
+    if (!healthy) throw new Error("acon serve did not answer /healthz within 10 s; check BUN_BIN, the plugin manifest hash, and the server's stderr");
     for (const suspendAnimationFrames of [false, true]) for (const theme of ["light", "dark"]) {
       const label = `visual-${theme}-${suspendAnimationFrames ? "suspended-raf" : "natural"}`;
       const context = await browser.newContext({ viewport: { width: 900, height: 1000 }, colorScheme: theme });
@@ -93,7 +95,23 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
         assert(probe.starts.some((s) => s.case === "valid" && s.hidden && s.height <= 2), "No loading frame was observed hidden at zero content height");
         assert(probe.replies.some((r) => r.case === "valid" && r.ok === true && r.elapsedMs < 5000), "No successful reply before timeout");
         assert(probe.replies.some((r) => r.case === "broken" && r.ok === false && r.elapsedMs < 4000), "Malformed reply was not prompt");
-        report.visualChecks.push({ label, ...probe, revealed, decoded });
+        // Keep the live panel mounted while System hides it, then request the opposite theme.
+        const changedTheme = theme === "light" ? "dark" : "light";
+        const beforeReplies = probe.replies.filter((r) => r.case === "valid").length;
+        await page.getByRole("link", { name: "System", exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[data-visual-case="valid"] iframe')?.offsetParent === null);
+        await page.getByRole("button", { name: changedTheme === "dark" ? "Dark" : "Light", exact: true }).click();
+        assert.equal(await frame.contentFrame().locator("html").getAttribute("class"), theme, "Hidden panel redrew before becoming visible");
+        await page.evaluate(() => { location.hash = "#/local/demo/visual"; });
+        await valid.scrollIntoViewIfNeeded();
+        await page.waitForFunction((before) => window.__visualProbe.replies.filter((r) => r.case === "valid").length > before, beforeReplies);
+        await frame.contentFrame().locator("#diagram img").evaluate((img) => img.decode());
+        const height = await frame.evaluate((el) => el.getBoundingClientRect().height);
+        const renderedTheme = await frame.contentFrame().locator("html").getAttribute("class");
+        assert(height > 80, `Reopened diagram was clipped to ${height} px`);
+        assert.equal(renderedTheme, changedTheme, "Reopened diagram did not adopt the requested theme");
+        const retheme = { hidden: true, requestedTheme: changedTheme, renderedTheme, height };
+        report.visualChecks.push({ label, ...probe, revealed, decoded, retheme });
         const file = `${label}.png`;
         await valid.scrollIntoViewIfNeeded();
         await page.screenshot({ path: join(output, file), fullPage: false });
