@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionMeta, type ActionResult } from "./contract.ts";
-import { ASSET_TYPES, assetResultProblems, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
+import { ASSET_TYPES, assetResultProblems, dispatchConsoleSnapshot, dispatchConsoleAction, declaresPanel, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import type { PetPackage } from "./pets.ts";
 import { readValidatedImage, readValidatedModel, type AssetPack } from "./assets.ts";
 import { sanitizeSpaceScene } from "./space.ts";
@@ -174,7 +174,7 @@ export function startServer(options: ServerOptions) {
   async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {
     const caps = entry.manifest!.capabilities ?? {};
     const panel = input.panel;
-    const allowed = entry.manifest!.panels.some((p) => p.id === panel) || (panel === "inbox" && caps.inbox) || (panel === "search" && caps.search) || (panel === "space" && caps.space === true);
+    const allowed = declaresPanel(entry.manifest!, panel);
     if (typeof panel !== "string" || !allowed) return reject(400, "unknown panel");
     const after = input.after ?? 0;
     if (typeof after !== "number" || !Number.isSafeInteger(after) || after < 0) return reject(400, "invalid cursor");
@@ -184,7 +184,7 @@ export function startServer(options: ServerOptions) {
       if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) return reject(400, "limit must be 1-10");
     }
     try {
-      const result = await call(entry.tool, "snapshot", () => entry.provider!.snapshot({ ...input, after, panel }));
+      const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, { ...input, after, panel }));
       if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
       if (panel === "space" && caps.space === true) {
         const clean = sanitizeSpaceScene(result.scene);
@@ -242,7 +242,7 @@ export function startServer(options: ServerOptions) {
     }
     let result: ActionResult;
     // meta comes from the verified session, never from the body; an input key named meta stays page data.
-    const running = Promise.resolve().then(() => entry.provider!.action(request as { action: string }, meta));
+    const running = Promise.resolve().then(() => dispatchConsoleAction(entry, request as { action: string }, meta));
     try {
       result = await withTimeout(running, callMs, `${entry.tool} action`);
       if (!result || typeof result !== "object" || typeof (result as { ok?: unknown }).ok !== "boolean") throw new Error("action must return {ok: boolean}");

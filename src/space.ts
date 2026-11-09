@@ -1,13 +1,14 @@
 import type { SpaceScene } from "./contract.ts";
 
-export const SPACE_CAPS = { actors: 32, cards: 200, links: 64 } as const;
+import { PUBLIC_CAPS, SPACE_CAPS } from "./public.ts";
+export { SPACE_CAPS } from "./public.ts";
 const STATES = ["idle", "working", "waiting", "blocked", "away"];
 const MARKS = ["approval", "inbox", "paused", "mode"];
 const KINDS = ["queue", "work", "review", "done"];
 const LINKS = ["message", "overlap", "conflict", "cohort"];
 const TONES = ["ok", "warn", "err", "neutral"];
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
-const text = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= 200;
+const text = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= PUBLIC_CAPS.text;
 
 /** Strict conformance check: extra fields are named instead of silently entering the public model. */
 export function spaceSceneProblems(value: unknown): string[] {
@@ -23,7 +24,7 @@ export function spaceSceneProblems(value: unknown): string[] {
   const link = (v: unknown, path: string) => {
     if (!object(v)) { out.push(`${path} must be a panel link`); return; }
     fields(v, ["panel", "params"], path); required(v, "panel", path);
-    if (v.params !== undefined && (!object(v.params) || Object.entries(v.params).some(([k, x]) => !text(k) || typeof x !== "string" || x.length > 200))) out.push(`${path}.params must contain string routing values of at most 200 characters`);
+    if (v.params !== undefined && (!object(v.params) || Object.entries(v.params).some(([k, x]) => !text(k) || typeof x !== "string" || x.length > PUBLIC_CAPS.text))) out.push(`${path}.params must contain string routing values of at most 200 characters`);
   };
   if (!object(value)) return ["scene must be an object"];
   fields(value, ["actors", "zones", "cards", "links"], "scene");
@@ -71,10 +72,10 @@ export function spaceSceneProblems(value: unknown): string[] {
 export function sanitizeSpaceScene(value: unknown): { scene: SpaceScene; dropped: { actors: number; cards: number; links: number } } {
   const src = object(value) ? value : {};
   const dropped = { actors: 0, cards: 0, links: 0 };
-  const s = (v: unknown) => typeof v === "string" ? v.slice(0, 200) : "";
+  const s = (v: unknown) => typeof v === "string" ? v.slice(0, PUBLIC_CAPS.text) : "";
   const route = (v: unknown): { panel: string; params?: Record<string, string> } => {
     const l = object(v) ? v : {};
-    const params = object(l.params) ? Object.fromEntries(Object.entries(l.params).filter(([k, x]) => text(k) && typeof x === "string" && x.length <= 200).map(([k, x]) => [k, x as string])) : undefined;
+    const params = object(l.params) ? Object.fromEntries(Object.entries(l.params).filter(([k, x]) => text(k) && typeof x === "string" && x.length <= PUBLIC_CAPS.text).map(([k, x]) => [k, x as string])) : undefined;
     return { panel: s(l.panel), ...(params ? { params } : {}) };
   };
   const rows = (key: "actors" | "zones" | "cards" | "links") => Array.isArray(src[key]) ? src[key].filter(object) : [];
