@@ -108,6 +108,21 @@ describe("principal registry and bearer transport", () => {
     for (const secret of [TOKEN, PERSON, "unknown-credential"]) expect(f.logs.join(" ") + JSON.stringify(neutral)).not.toContain(secret);
     expect(f.plugin.calls).toEqual([]);
   });
+  test("anonymous health requests log each controlled cause once per endpoint", async () => {
+    const f = await boot();
+    const health = (token?: string) => fetch(`${f.server.origin}/principal/health`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const causes = () => f.logs.filter((line) => line.includes("principal registry") || line.includes("principal bearer"));
+    rmSync(f.file);
+    for (let i = 0; i < 50; i++) expect((await health()).status).toBe(403);
+    expect(causes()).toHaveLength(1);
+    f.save(); chmodSync(f.token, 0o644);
+    for (let i = 0; i < 50; i++) expect((await health("anonymous-token")).status).toBe(403);
+    expect(causes()).toHaveLength(2);
+    chmodSync(f.token, 0o600); writeFileSync(f.token, "too-short");
+    for (let i = 0; i < 5; i++) expect((await health("anonymous-token")).status).toBe(403);
+    expect(causes()).toHaveLength(3);
+    for (const secret of [TOKEN, "anonymous-token", "too-short"]) expect(causes().join(" ")).not.toContain(secret);
+  });
   test("an unsafe bearer record is refused without blocking other safe principal records", async () => {
     const f = await boot();
     const unsafeToken = "unsafe-principal-placeholder-".repeat(3);
@@ -125,6 +140,11 @@ describe("principal registry and bearer transport", () => {
     writeFileSync(unsafeFile, TOKEN);
     expect((await call(f.server)).status).toBe(403);
     expect(f.logs.join(" ")).toContain("multiple enabled records");
+    chmodSync(unsafeFile, 0o644);
+    expect((await call(f.server)).status).toBe(403);
+    expect(f.plugin.calls).toHaveLength(2);
+    writeFileSync(unsafeFile, unsafeToken);
+    expect((await call(f.server)).status).toBe(200);
   });
   test("registry edits, off/on and removed tool authority apply on the next request", async () => {
     const f = await boot();
@@ -355,7 +375,6 @@ test("Access maps verified common_name/email, rejects unknown or forged JWTs, an
   expect(consoleRequest.status).toBe(401);
   expect(plugin.calls.map((c) => c.port)).toEqual(["principalAction"]);
 });
-
 
 for (const concurrent of [false, true]) test(`registry toggle uses one validated snapshot and preserves edit-conflict cause (concurrent=${concurrent})`, () => {
   const source = readFileSync(join(import.meta.dir, "..", "src", "principal.ts"), "utf8");

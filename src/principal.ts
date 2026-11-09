@@ -25,11 +25,11 @@ export class BodyError extends Error {
 }
 const registryPath = (home: string) => join(home, "console", "principals.json");
 const privateMode = (s: Stats) => s.isFile() && (s.mode & 0o777) === 0o600 && (typeof process.getuid !== "function" || s.uid === process.getuid()) && s.nlink === 1;
-function privateText(file: string): string {
+function privateText(file: string, compareUnsafeOnly = false): string {
   const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = fstatSync(fd);
-    if (!privateMode(stat) || stat.size > PRINCIPAL_INPUT_MAX) throw new PrincipalError("private file is unsafe");
+    if (!stat.isFile() || (!compareUnsafeOnly && !privateMode(stat)) || stat.size > PRINCIPAL_INPUT_MAX) throw new PrincipalError("private file is unsafe");
     const bytes = readFileSync(fd);
     if (bytes.length > PRINCIPAL_INPUT_MAX) throw new PrincipalError("private file is too large");
     return bytes.toString("utf8");
@@ -156,16 +156,22 @@ async function identify(req: Request, serve: ServeOptions, registry: PrincipalRe
   if (!token || serve.checkToken?.(token)) return null;
   const given = digest(token);
   const matches: PrincipalRecord[] = [];
+  let unsafeMatch = false;
   for (const [index, p] of registry.principals.entries()) {
     if (!p.enabled || !p.bearerTokenFile) continue;
     let expected: string;
     try { expected = privateText(p.bearerTokenFile).trim(); }
-    catch { log(`principal bearer record ${index + 1} refused: token file is unsafe or unreadable; check its owner, regular-file type and mode 0600`); continue; }
+    catch {
+      log(`principal bearer record ${index + 1} refused: token file is unsafe or unreadable; check its owner, regular-file type and mode 0600`);
+      // A readable unsafe regular file can only veto a duplicate, never grant identity.
+      try { if (timingSafeEqual(given, digest(privateText(p.bearerTokenFile, true).trim()))) unsafeMatch = true; } catch { /* Unreadable and non-regular files remain refused. */ }
+      continue;
+    }
     if (expected.length < 32 || /\s/.test(expected) || serve.checkToken?.(expected)) { log(`principal bearer record ${index + 1} refused: credential configuration is invalid; use a separate random token of at least 32 characters`); continue; }
     if (timingSafeEqual(given, digest(expected))) matches.push(p);
   }
-  if (matches.length > 1) log("principal bearer credential matches multiple enabled records; configure unique tokens before retrying");
-  return matches.length === 1 ? matches[0]! : null;
+  if (matches.length > 1 || (unsafeMatch && matches.length > 0)) log("principal bearer credential matches multiple enabled records; configure unique tokens before retrying");
+  return !unsafeMatch && matches.length === 1 ? matches[0]! : null;
 }
 
 function auditFile(home: string): number {
@@ -181,7 +187,12 @@ export interface PrincipalEndpointOptions {
 }
 export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req: Request) => Promise<Response> {
   const now = options.now ?? Date.now;
-  const log = (message: string) => { try { options.log(message); } catch { /* A failed diagnostic sink never grants identity. */ } };
+  const reported = new Set<string>();
+  const log = (message: string) => {
+    if (reported.has(message)) return;
+    reported.add(message);
+    try { options.log(message); } catch { /* A failed diagnostic sink never grants identity. */ }
+  };
   const states = new Map<string, { start: number; count: number; active: number }>();
   const respond = (id: unknown, value: { result?: unknown; error?: { code: number; message: string } }, status = 200, overflowMessage = "principal response exceeds 256 KiB; reduce declared tools, descriptions or response metadata before retrying") => {
     let body = JSON.stringify({ jsonrpc: "2.0", id, ...value });

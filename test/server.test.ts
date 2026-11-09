@@ -483,7 +483,6 @@ describe("visual frame (#29)", () => {
   });
 });
 
-
 test("console HTTP requests cannot select principal ports or forge the actor", async () => {
   const plugin = createPrincipalPlugin();
   const provider = await plugin.open({ home: "/tmp", log: () => {} });
@@ -498,7 +497,6 @@ test("console HTTP requests cannot select principal ports or forge the actor", a
   expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action"]);
   expect(plugin.calls[1]!.meta).toEqual({ identity: "local", node: "local", via: "console", actor: { kind: "person", id: "local" } });
 });
-
 
 test("console JSON body failures give console guidance, never JSON-RPC instructions", async () => {
   const { server } = await boot(); const cookie = await login(server);
