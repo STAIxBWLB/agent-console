@@ -559,7 +559,12 @@ describe("ui.visual", () => {
       window: { addEventListener: (type: string, fn: (event: { source: unknown; data: unknown }) => void) => { if (type === "message") listeners.push(fn); } },
       setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
       queueMicrotask: (fn: () => void) => fn(),
-      ...(opts.io ? { IntersectionObserver: class { constructor(private cb: (e: { isIntersecting: boolean }[]) => void) { ioCallbacks.push(cb); } observe() {} disconnect() { disconnected.push(this.cb); } } } : {}),
+      ...(opts.io ? { IntersectionObserver: class {
+        private fire = (entries: { isIntersecting: boolean }[]) => this.cb(entries, this);
+        constructor(private cb: (e: { isIntersecting: boolean }[], observer: { disconnect(): void }) => void) { ioCallbacks.push(this.fire); }
+        observe() {}
+        disconnect() { disconnected.push(this.fire); }
+      } } : {}),
     }) as ConsoleUi;
     const ioCallbacks: ((e: { isIntersecting: boolean }[]) => void)[] = [];
     const disconnected: ((e: { isIntersecting: boolean }[]) => void)[] = [];
@@ -711,6 +716,8 @@ describe("ui.visual", () => {
     const b = node(k.ui.visual({ kind: "mermaid", source: "flowchart LR\n C-->D" }));
     k.ioCallbacks[2]!([{ isIntersecting: true }]);
     expect(k.disconnected).toContain(k.ioCallbacks[1]!);
+    expect(() => k.ioCallbacks[1]!([{ isIntersecting: true }])).not.toThrow();
+    expect(k.posted).toHaveLength(1);
     k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
     k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 140 });
     expect(k.frames).toHaveLength(1);
@@ -720,6 +727,25 @@ describe("ui.visual", () => {
     expect(k.posted).toHaveLength(3);
     expect(k.posted[2]!.msg).toMatchObject({ source: "flowchart LR\n C-->D", theme: "light" });
     void b;
+  });
+
+  test("a queued visibility callback after a visible retheme does not redraw or throw", () => {
+    let mode = "light";
+    let onTheme: (() => void) | undefined;
+    const k = visualKit({ io: true, theme: () => mode, onTheme: (cb) => { onTheme = cb; } });
+    const root = node(k.ui.visual({ kind: "mermaid", source: flow }));
+    k.ioCallbacks[0]!([{ isIntersecting: true }]);
+    k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 120 });
+    const frame = walk(root).find((n) => n.tagName === "IFRAME")!;
+    Object.defineProperty(frame, "offsetParent", { value: null, configurable: true });
+    mode = "dark"; onTheme!();
+    Object.defineProperty(frame, "offsetParent", { value: root });
+    onTheme!();
+    expect(k.disconnected).toContain(k.ioCallbacks[1]!);
+    k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 120 });
+    expect(() => k.ioCallbacks[1]!([{ isIntersecting: true }])).not.toThrow();
+    expect(k.posted).toHaveLength(2);
   });
 
   test("a theme change during a render is applied when that render finishes", () => {

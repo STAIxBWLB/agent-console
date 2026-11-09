@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Safely release queued diagram visibility callbacks after frame handover or a visible theme redraw, without dereferencing a cleared observer (#90).
+
 ## [0.1.8] - 2026-11-09
 
 ### Fixed
