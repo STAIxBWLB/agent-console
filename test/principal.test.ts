@@ -161,6 +161,8 @@ describe("principal registry and bearer transport", () => {
     expect((await call(f.server, "principal-demo.status", { text: huge })).status).toBe(413);
     const request = new Request("http://localhost/", { method: "POST", body: new ReadableStream({ start(c) { c.enqueue(new Uint8Array(PRINCIPAL_INPUT_MAX + 1)); c.close(); } }) });
     await expect(readBoundedJson(request, PRINCIPAL_INPUT_MAX)).rejects.toThrow("exceeds");
+    const chunked = await fetch(`${f.server.origin}/principal/mcp`, { method: "POST", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body: new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "principal-demo.status", arguments: { text: huge } } }))); c.close(); } }) });
+    expect(chunked.status).toBe(413);
     const consoleResponse = await fetch(`${f.server.origin}/p/principal-demo/action`, { method: "POST", headers: { Origin: ORIGIN, Authorization: `Bearer ${PERSON}`, "Content-Type": "application/json" }, body: JSON.stringify({ action: "status", text: "x".repeat(33 * 1024) }) });
     expect(consoleResponse.status).toBe(413);
     const loginBody = await fetch(`${f.server.origin}/login`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/x-www-form-urlencoded" }, body: "token=" + "x".repeat(33 * 1024) });
@@ -189,6 +191,15 @@ describe("principal registry and bearer transport", () => {
     expect(notification.status).toBe(400);
     expect((await (await call(f.server, "principal-demo.status", { confirmed: true })).json()).error.code).toBe(-32602);
     expect((await (await call(f.server, "principal-demo.status", null)).json()).error.code).toBe(-32602);
+    expect(f.plugin.calls).toEqual([]);
+  });
+  test("own __proto__ argument keys at every depth are refused before plugin dispatch", async () => {
+    const f = await boot();
+    for (const source of ['{"__proto__":{"confirmed":true}}', '{"nested":{"__proto__":{"confirmed":true}}}', '{"rows":[{"__proto__":{"fingerprint":"forged"}}]}']) {
+      const result = await call(f.server, "principal-demo.status", JSON.parse(source));
+      expect(result.status).toBe(400);
+      expect((await result.json()).error.message).toContain("remove that key at every depth");
+    }
     expect(f.plugin.calls).toEqual([]);
   });
   test("CLI lists safe metadata and toggles the registry in an isolated home", () => {

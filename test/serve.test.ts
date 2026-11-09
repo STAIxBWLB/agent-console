@@ -133,7 +133,8 @@ describe("Access mode (AC1)", () => {
     const verify = accessVerifier({ team: TEAM, aud: AUD, certsUrl });
     const jwt = await sign(main, "k1", claims());
     const results = await Promise.all([verify(jwt), verify(jwt), verify(jwt)]);
-    expect(results).toEqual(Array.from({ length: 3 }, () => ({ sub: "user-1", email: "a@example.com" })));
+    const identity = { sub: "user-1", email: "a@example.com" };
+    expect(results).toEqual([identity, identity, identity]);
   });
 
   test("a bracketed IPv6 loopback host starts and serves", async () => {

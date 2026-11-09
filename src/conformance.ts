@@ -3,7 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONSOLE_FEATURES, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
-import { ASSET_TYPES, assetResultProblems, manifestProblems, providerProblems, withTimeout } from "./plugins.ts";
+import { isPlainObject } from "./public.ts";
+import { ASSET_TYPES, declaresPanel, assetResultProblems, manifestProblems, providerProblems, withTimeout } from "./plugins.ts";
 import { spaceSceneProblems } from "./space.ts";
 
 export { spaceSceneProblems } from "./space.ts";
@@ -231,9 +232,10 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
     test("open() resolves to a provider", () => expect(providerProblems(provider, plugin.manifest)).toEqual([]));
     if (plugin.manifest.capabilities?.principal) test("principal snapshot ports answer objects within 5 s", async () => {
       expect(typeof provider.principalSnapshot).toBe("function");
-      for (const panel of plugin.manifest.panels) {
-        const result = await withTimeout(provider.principalSnapshot!({ principal: "acon-conformance", panel: panel.id }), 5_000, "principalSnapshot");
-        expect(result && typeof result === "object" && !Array.isArray(result)).toBe(true);
+      const panels = new Set([...plugin.manifest.panels.map((panel) => panel.id), ...["inbox", "search", "space"].filter((panel) => declaresPanel(plugin.manifest, panel))]);
+      for (const panel of panels) {
+        const result = await withTimeout(provider.principalSnapshot!({ principal: "acon-conformance", panel }), 5_000, "principalSnapshot");
+        expect(isPlainObject(result)).toBe(true);
       }
     });
     test("every panel answers a snapshot within 5 s", async () => {

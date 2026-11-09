@@ -120,14 +120,18 @@ export async function readBoundedText(req: Request, limit: number): Promise<stri
   } finally { reader.releaseLock(); }
 }
 
-export async function readBoundedJson(req: Request, limit: number): Promise<unknown> {
+export async function readBoundedJson(req: Request, limit: number, rejectPrototypeKeys = false): Promise<unknown> {
   const text = await readBoundedText(req, limit);
   try {
-    return JSON.parse(text, (_key, value: unknown) => {
+    return JSON.parse(text, (key, value: unknown) => {
+      if (rejectPrototypeKeys && key === "__proto__") throw new BodyError(400, "principal JSON contains an own __proto__ key; remove that key at every depth before submitting tool arguments");
       if (typeof value === "number" && !Number.isFinite(value)) throw new Error("non-finite number");
       return value;
     });
-  } catch { throw new BodyError(400, "JSON body is invalid; send one complete finite JSON object"); }
+  } catch (error) {
+    if (error instanceof BodyError) throw error;
+    throw new BodyError(400, "JSON body is invalid; send one complete finite JSON object");
+  }
 }
 
 const digest = (token: string) => createHash("sha256").update(token).digest();
@@ -203,7 +207,7 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
       const protocol = req.headers.get("mcp-protocol-version");
       if (protocol && !VERSIONS.includes(protocol)) return error(null, -32600, "unsupported MCP version; initialize with protocolVersion 2025-11-25 and use that MCP-Protocol-Version header", 400);
       let rpc: unknown;
-      try { rpc = await readBoundedJson(req, PRINCIPAL_INPUT_MAX); }
+      try { rpc = await readBoundedJson(req, PRINCIPAL_INPUT_MAX, true); }
       catch (e) { return error(null, -32700, (e as BodyError).message, (e as BodyError).status ?? 400); }
       if (!isPlainObject(rpc) || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string") return error(null, -32600, "invalid JSON-RPC request; send one object with jsonrpc 2.0, method and id", 400);
       if (!("id" in rpc)) return rpc.method === "notifications/initialized" ? new Response(null, { status: 202, headers: HEADERS }) : error(null, -32600, "unsupported notification; send a request with an id or notifications/initialized", 400);

@@ -173,22 +173,22 @@ export function launchScript(home: string, packageRoot = resolve(import.meta.dir
 const fail = (message: string): number => { console.error(`acon: ${message}`); return 2; };
 
 function principalCommand(home: string, args: string[], flags: Set<string>): number {
-    try {
-      if (args[0] === "list") {
-        const principals = readPrincipalRegistry(home).principals.map(({ id, enabled, tools, ratePerMinute }) => ({ id, enabled, tools, ratePerMinute }));
-        if (flags.has("--json")) console.log(JSON.stringify({ principals }));
-        else if (!principals.length) console.log("No server principals registered.");
-        else for (const principal of principals) console.log(`${principal.id.padEnd(24)} ${principal.enabled ? "enabled" : "disabled"}  ${principal.tools.join(", ")}  ${principal.ratePerMinute}/min`);
-      } else {
-        setPrincipalEnabled(home, args[1]!, args[0] === "on");
-        console.log(`acon: principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
-      }
-      return 0;
-    } catch (error) {
-      const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
-      console.error(`acon: ${cause}; check $AGENTHUB_HOME/console/principals.json ownership/mode 0600 and run acon principal list to choose a registered id before retrying`);
-      return 1;
+  try {
+    if (args[0] === "list") {
+      const principals = readPrincipalRegistry(home).principals.map(({ id, enabled, tools, ratePerMinute }) => ({ id, enabled, tools, ratePerMinute }));
+      if (flags.has("--json")) console.log(JSON.stringify({ principals }));
+      else if (!principals.length) console.log("No server principals registered.");
+      else for (const principal of principals) console.log(`${principal.id.padEnd(24)} ${principal.enabled ? "enabled" : "disabled"}  ${principal.tools.join(", ")}  ${principal.ratePerMinute}/min`);
+    } else {
+      setPrincipalEnabled(home, args[1]!, args[0] === "on");
+      console.log(`acon: principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
     }
+    return 0;
+  } catch (error) {
+    const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
+    console.error(`acon: ${cause}; check $AGENTHUB_HOME/console/principals.json ownership/mode 0600 and run acon principal list to choose a registered id before retrying`);
+    return 1;
+  }
 }
 
 export async function main(argv: string[]): Promise<number> {
