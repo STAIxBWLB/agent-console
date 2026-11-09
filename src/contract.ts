@@ -75,7 +75,7 @@ export const CONSOLE_FEATURES = ["inbox.form", "inbox.result", "action.meta", "p
 
 /** Who acted, built by the console from the verified session; the page cannot set it (#27). */
 export interface ActionMeta {
-  /** "local" under `acon ui`; under `acon serve` "access:<subject>", "bearer" or "loopback", as authenticated. */
+  /** "local" under `acon ui`; under `acon serve` "access:<subject>", "bearer" or "loopback", as authenticated; principal calls use "principal:<id>". */
   identity: string;
   node: string;
   via: "console";

@@ -185,10 +185,10 @@ test("principal and person dispatch use only their own fixture ports; inputs can
   expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action"]);
   expect(plugin.calls[1]!.meta).toEqual({ ...meta, actor: { kind: "person", id: "verified" } });
   const snapshot = await dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" });
-  const action = await dispatchPrincipalAction(entry, { principal: "assistant", tool: "principal-demo.status", input: { action: "status", principal: "forged", actor: { kind: "person", id: "forged" } } }, meta);
+  const action = await dispatchPrincipalAction(entry, { principal: "assistant", tool: "principal-demo.status", input: { action: "status", principal: "forged", actor: { kind: "person", id: "forged" }, meta: { identity: "forged-person" } } }, meta.node);
   expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action", "principalSnapshot", "principalAction"]);
   expect(plugin.calls[3]!.input.principal).toBe("assistant");
-  expect(plugin.calls[3]!.meta).toEqual({ ...meta, actor: { kind: "principal", id: "assistant" } });
+  expect(plugin.calls[3]!.meta).toEqual({ identity: "principal:assistant", node: "local", via: "console", actor: { kind: "principal", id: "assistant" } });
   for (const result of [snapshot, action as Record<string, unknown>]) {
     expect((result.title as string).length).toBe(200);
     expect((result.rows as unknown[]).length).toBe(200);

@@ -286,6 +286,12 @@ export function principalToolProblems(tools: unknown, pluginId: string): string[
   return out;
 }
 
+/** Panels declared either explicitly or by the console's reserved panel capabilities. */
+export function declaresPanel(manifest: ConsolePanelManifest, panel: unknown): boolean {
+  const caps = manifest.capabilities;
+  return manifest.panels.some((p) => p.id === panel) || (panel === "inbox" && caps?.inbox === true) || (panel === "search" && caps?.search === true) || (panel === "space" && caps?.space === true);
+}
+
 /** Console-only dispatch. Input keys never select an authority or a provider port. */
 export async function dispatchConsoleSnapshot(entry: PluginEntry, input: { after: number; panel: string } & Record<string, unknown>): Promise<Record<string, unknown>> {
   return entry.provider!.snapshot(input);
@@ -314,16 +320,18 @@ export async function dispatchPrincipalSnapshot(entry: PluginEntry, input: { pri
   const provider = principalProvider(entry, input.principal);
   if (typeof provider.principalSnapshot !== "function") throw new Error("plugin has no principalSnapshot port; implement it before serving principal snapshots");
   if (typeof input.panel !== "string" || !PANEL_ID.test(input.panel)) throw new Error("principal panel is invalid; pass a valid panel id to the principal snapshot port");
+  if (!declaresPanel(entry.manifest!, input.panel)) throw new Error("principal panel is not declared by this plugin; select a declared panel or panel capability");
   return principalResult(await provider.principalSnapshot({ principal: input.principal, panel: input.panel }));
 }
 
-export async function dispatchPrincipalAction(entry: PluginEntry, input: { principal: string; tool: string; input: Record<string, unknown> }, meta: ActionMeta): Promise<ActionResult> {
+export async function dispatchPrincipalAction(entry: PluginEntry, input: { principal: string; tool: string; input: Record<string, unknown> }, node: string): Promise<ActionResult> {
   const provider = principalProvider(entry, input.principal);
   if (!entry.manifest!.capabilities!.principal!.tools.some((tool) => tool.name === input.tool)) throw new Error("principal tool is not declared by this plugin; select a tool from capabilities.principal.tools");
   if (typeof provider.principalAction !== "function") throw new Error("plugin has no principalAction port; implement it before serving principal tools");
   if (!isPlainObject(input.input)) throw new Error("principal tool input is not an object; pass a JSON object matching its inputSchema");
+  if (["confirmed", "fingerprint", "confirmToken"].some((key) => key in input.input)) throw new Error("principal input may not set confirmed, fingerprint or confirmToken; remove confirmation fields and request person approval through the console");
   const result = await provider.principalAction({ principal: input.principal, tool: input.tool, input: input.input },
-    { identity: meta.identity, node: meta.node, via: meta.via, actor: { kind: "principal", id: input.principal } });
+    { identity: `principal:${input.principal}`, node, via: "console", actor: { kind: "principal", id: input.principal } });
   if (!isPlainObject(result) || typeof result.ok !== "boolean") throw new Error("principalAction returned no boolean ok; return an ActionResult from the plugin");
   return principalResult(result) as ActionResult;
 }

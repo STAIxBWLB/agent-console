@@ -392,12 +392,12 @@ describe("principal plugin dispatch", () => {
     const provider = await plugin.open(ctx("/tmp"));
     const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
     const meta = { identity: "verified", node: "local", via: "console" } as const;
-    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "other.status", input: {} }, meta)).rejects.toThrow("not declared");
+    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "other.status", input: {} }, meta.node)).rejects.toThrow("not declared");
     const { principalSnapshot, principalAction, ...consoleOnly } = provider;
     expect(providerProblems(consoleOnly, plugin.manifest).join(" ")).toContain("principalSnapshot");
     const broken = { ...entry, provider: consoleOnly };
     await expect(dispatchPrincipalSnapshot(broken, { principal: "assistant", panel: "status" })).rejects.toThrow("no principalSnapshot");
-    await expect(dispatchPrincipalAction(broken, { principal: "assistant", tool: "principal-demo.status", input: {} }, meta)).rejects.toThrow("no principalAction");
+    await expect(dispatchPrincipalAction(broken, { principal: "assistant", tool: "principal-demo.status", input: {} }, meta.node)).rejects.toThrow("no principalAction");
     expect(plugin.calls).toEqual([]);
   });
   test("old plugins still load and serve console calls but refuse all principal dispatch", async () => {
@@ -407,7 +407,7 @@ describe("principal plugin dispatch", () => {
     expect(providerProblems(provider, plugin.manifest)).toEqual([]);
     expect(await dispatchConsoleSnapshot(entry, { panel: "notes", after: 0 })).toBeObject();
     await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "notes" })).rejects.toThrow("not opted");
-    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "demo.status", input: {} }, { identity: "verified", node: "local", via: "console" })).rejects.toThrow("not opted");
+    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "demo.status", input: {} }, "local")).rejects.toThrow("not opted");
   });
   test("principal failures and invalid results never trigger person-port retries", async () => {
     const plugin = createPrincipalPlugin();
@@ -416,12 +416,32 @@ describe("principal plugin dispatch", () => {
     const input = { principal: "assistant", tool: "principal-demo.status", input: {} };
     const meta = { identity: "verified", node: "local", via: "console" } as const;
     provider.principalAction = async () => { throw new Error("principal unavailable; retry later"); };
-    await expect(dispatchPrincipalAction(entry, input, meta)).rejects.toThrow("principal unavailable");
+    await expect(dispatchPrincipalAction(entry, input, meta.node)).rejects.toThrow("principal unavailable");
     provider.principalAction = async () => new Date() as never;
-    await expect(dispatchPrincipalAction(entry, input, meta)).rejects.toThrow("ActionResult");
+    await expect(dispatchPrincipalAction(entry, input, meta.node)).rejects.toThrow("ActionResult");
     provider.principalSnapshot = async () => [] as never;
     await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" })).rejects.toThrow("plain JSON object");
     expect(plugin.calls).toEqual([]);
+  });
+  test("principal callers cannot supply person confirmation fields, even when falsy", async () => {
+    const plugin = createPrincipalPlugin();
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    for (const key of ["confirmed", "fingerprint", "confirmToken"]) for (const value of [true, false, "", "forged", undefined]) {
+      await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "principal-demo.request", input: { [key]: value } }, "local")).rejects.toThrow("remove confirmation fields");
+    }
+    expect(plugin.calls).toEqual([]);
+  });
+  test("principal snapshots refuse undeclared panels before calling any provider port", async () => {
+    const plugin = createPrincipalPlugin();
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    for (const panel of ["unknown", "inbox", "search", "space"]) {
+      await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel })).rejects.toThrow("not declared");
+    }
+    expect(plugin.calls).toEqual([]);
+    await dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" });
+    expect(plugin.calls.map((c) => c.port)).toEqual(["principalSnapshot"]);
   });
   test("principal capability validation enforces object and namespace shape", () => {
     const manifest = createPrincipalPlugin().manifest;
