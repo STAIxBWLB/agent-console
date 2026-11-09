@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-11-09
+
 ### Fixed
 
 - Preserve the last successful CI verdict across release-gate API errors, distinguish API outages from missing runs, and give actionable release and CI failure messages (#83).
