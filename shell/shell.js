@@ -682,10 +682,10 @@ function visualView(payload, kit, frames, theme) {
       if (mode === shownTheme || frame.busy) return; // a busy frame picks up wantedTheme when it finishes
       if (frame.el.offsetParent === null && typeof IntersectionObserver === "function") {
         if (!visibilityObserver) {
-          visibilityObserver = new IntersectionObserver((entries) => {
+          visibilityObserver = new IntersectionObserver((entries, observer) => {
             if (!entries.some((e) => e.isIntersecting)) return;
-            visibilityObserver.disconnect();
-            visibilityObserver = null;
+            observer.disconnect();
+            if (visibilityObserver === observer) visibilityObserver = null;
             entry.retheme(wantedTheme);
           });
           visibilityObserver.observe(root);
