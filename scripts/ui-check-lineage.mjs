@@ -152,7 +152,7 @@ try {
       const returnUrl = page.url();
       const returned = page.waitForResponse(async (response) => response.request().method() === "POST" && response.url().startsWith(fixture.nodes.a) && response.url().includes("/snapshot") && response.request().postDataJSON().rootKind === "artifact" && response.request().postDataJSON().after > 0 && (await response.json()).changed === false);
       await page.goto(fixture.origin + "/#/local/a:legacy/notes");
-      await ownerReady(page, "a:legacy");
+      await ownerReady(page, "a:legacy", "legacy");
       await page.goto(returnUrl);
       await returned;
       await page.getByRole("heading", { name: "Source evidence", exact: true }).waitFor();
