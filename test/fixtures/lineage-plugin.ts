@@ -19,6 +19,7 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
   const reads = { requests: [] as Record<string, unknown>[], pages: 0, details: 0, comparisons: 0, assets: 0 };
   const actions: Record<string, unknown>[] = [], writes: Record<string, unknown>[] = [];
   const seen = new Map<string, number>();
+  const continuations = new Map<string, { root: string; generation: number; page: number }>();
   const sourceHash = () => hash([origin, "public-source", generation]);
   const ref = (owner: "ahub" | "ares", kind: string, id: string, revision = generation): FixtureRef => ({ v: 1, tool: owner, projectKey: owner === "ahub" ? "hub-alpha" : "study-alpha", kind, id, revision: String(revision), sha256: hash([node, owner, kind, id, revision]) });
   const target = (owner: string, panel: string, params: Record<string, string>, ownerNode = node) => ({ node: ownerNode, tool: owner, panel, params });
@@ -90,12 +91,17 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
     const selection = rooted ? ref("ares", String(input.rootKind), String(input.rootId), version) : ref("ares", "study", "study-alpha");
     if (input.rootSha256 !== undefined && input.rootSha256 !== selection.sha256) return unavailable();
     const pages = Math.ceil((options.size ?? 505) / LINEAGE_BOUNDS.nodes);
-    const cursorFor = (page: number) => `fixture:${hash([origin, selection])}:${generation}:${page}`;
+    const cursorFor = (page: number) => {
+      const token = `fixture:${hash([origin, selection, generation, page])}`;
+      continuations.set(token, { root: hash(selection), generation, page });
+      return token;
+    };
     const cursor = input.graphCursor;
     let page = 0;
     if (cursor !== undefined) {
-      page = Array.from({ length: pages }, (_, i) => cursorFor(i)).indexOf(String(cursor));
-      if (page < 0) return respond({ title: "Sources changed", state: "changed", study, lineage: { v: 1, status: "changed", sourceSha256: sourceHash(), ledgerPosition: generation * 100, nodes: [], edges: [], issues: [{ code: "source-changed", message: "Restart from the first page of this same source." }], totals: null, truncated: false }, canAct: false, links: [] });
+      const continuation = continuations.get(String(cursor));
+      page = continuation?.page ?? -1;
+      if (!continuation || continuation.root !== hash(selection) || continuation.generation !== generation) return respond({ title: "Sources changed", state: "changed", study, lineage: { v: 1, status: "changed", sourceSha256: sourceHash(), ledgerPosition: generation * 100, nodes: [], edges: [], issues: [{ code: "source-changed", message: "Restart from the first page of this same source." }], totals: null, truncated: false }, canAct: false, links: [] });
     }
     const proof = { file: "runs/run-1/attempts/0000000000000001.json", sha256: selection.sha256, ledgerIndex: 1, recordType: "attempt.recorded" };
     const count = Math.min(LINEAGE_BOUNDS.nodes, (options.size ?? 505) - page * LINEAGE_BOUNDS.nodes);
@@ -106,14 +112,14 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
     const nodes = (rooted ? selectedRefs : Array.from({ length: count }, (_, index) => (page === 0 && index === 0 ? selection : ref("ares", "artifact", `artifact-${page * LINEAGE_BOUNDS.nodes + index - 1}`)))).map((value) => ({ ref: value, state: version === 0 ? "historical" : "current", availability: "not-read", proof }));
     const edges = hasProducedEdge ? [{ from: explicitAttempt, to: explicitArtifact, relation: "produced", proof }] : rooted ? [] : nodes.filter((item) => item.ref.kind === "artifact").map((item) => ({ from: selection, to: item.ref, relation: "contains", proof }));
     const truncated = !rooted && page + 1 < pages;
-    const nextCursor = cursorFor(page + 1);
+    const nextCursor = truncated ? cursorFor(page + 1) : undefined;
     const lineage = { v: 1, status: "ok", sourceSha256: sourceHash(), ledgerPosition: generation * 100, nodes, edges, issues: [], totals: { nodes: rooted ? nodes.length : options.size ?? 505, edges: rooted ? edges.length : (options.size ?? 505) - 1 }, truncated, ...(truncated ? { nextCursor } : {}) };
     const response = respond({ title: rooted && input.rootKind === "artifact" ? "Source evidence" : "Execution lineage", state: version === 0 ? "historical" : "current", study, selection, lineage, canAct: false, summary: "Metadata and exact digests only; artifact contents were not read.", links: [
       link("Compare attempts", "ares", "compare", { study: LINEAGE_STUDY, attempts: LINEAGE_ATTEMPTS.slice(0, 3).join(",") }),
       link("Full lineage", "ares", "lineage", { study: LINEAGE_STUDY }),
       link("Historical record", "ares", "lineage", rootParams(ref("ares", "attempt", LINEAGE_ATTEMPTS[0]!, 0))),
       link("Unsupported record", "ares", "lineage", { study: LINEAGE_STUDY, rootKind: "future-kind", rootId: "public-future" }),
-    ], ...(truncated ? { next: { label: "Next lineage page", target: target("ares", "lineage", { study: LINEAGE_STUDY, graphCursor: nextCursor }) } } : {}) });
+    ], ...(truncated ? { next: { label: "Next lineage page", target: target("ares", "lineage", { study: LINEAGE_STUDY, graphCursor: nextCursor! }) } } : {}) });
     if (response.changed) { reads.pages++; if (rooted && input.rootKind === "artifact") reads.details++; }
     return response;
   };
@@ -131,5 +137,5 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
         }, async asset() { reads.assets++; return null; }, async close() {} };
     },
   };
-  return { plugin, reads, actions, writes, advance: () => { generation++; seen.clear(); }, ref: (kind: string, id: string, revision?: number) => ref(tool === "ahub" ? "ahub" : "ares", kind, id, revision), sourceHash };
+  return { plugin, reads, actions, writes, advance: () => { generation++; seen.clear(); continuations.clear(); }, ref: (kind: string, id: string, revision?: number) => ref(tool === "ahub" ? "ahub" : "ares", kind, id, revision), sourceHash };
 }
