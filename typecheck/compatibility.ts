@@ -20,22 +20,24 @@ import type {
 } from "../src/contract.ts";
 import type { createCompatibilityPlugin } from "../test/fixtures/compatibility-plugin.ts";
 
-type SameAssignable<A, B> = [A] extends [B]
-  ? [B] extends [A]
-    ? true
-    : false
-  : false;
+type Assignable<From, To> = [From] extends [To] ? true : false;
 
-export const compatibilityTypes: [
-  SameAssignable<OldConsolePlugin, CurrentConsolePlugin>,
-  SameAssignable<OldConsoleProvider, CurrentConsoleProvider>,
-  SameAssignable<OldPanelManifest, CurrentPanelManifest>,
-  SameAssignable<OldActionMeta, CurrentActionMeta>,
-  SameAssignable<OldActionResult, CurrentActionResult>,
-  SameAssignable<OldConsoleContext, CurrentConsoleContext>,
-  SameAssignable<OldConsoleHost, CurrentConsoleHost>,
-  SameAssignable<OldConsoleUi, CurrentConsoleUi>,
-] = [true, true, true, true, true, true, true, true];
+// Plugins supply these values: today's console must continue accepting 0.1.8 values.
+export const pluginSupplied: [
+  Assignable<OldConsolePlugin, CurrentConsolePlugin>,
+  Assignable<OldConsoleProvider, CurrentConsoleProvider>,
+  Assignable<OldPanelManifest, CurrentPanelManifest>,
+  Assignable<OldActionResult, CurrentActionResult>,
+] = [true, true, true, true];
+
+// The console supplies these values: they must still satisfy an old plugin's expectations.
+// Extra current kit functions/metadata are additive and must not require Old extends Current.
+export const consoleSupplied: [
+  Assignable<CurrentActionMeta, OldActionMeta>,
+  Assignable<CurrentConsoleContext, OldConsoleContext>,
+  Assignable<CurrentConsoleHost, OldConsoleHost>,
+  Assignable<CurrentConsoleUi, OldConsoleUi>,
+] = [true, true, true, true];
 
 type OldPlugin = ReturnType<typeof createCompatibilityPlugin>;
 export const oldPluginLoadsInCurrentConsole: OldPlugin extends CurrentConsolePlugin ? true : false = true;
