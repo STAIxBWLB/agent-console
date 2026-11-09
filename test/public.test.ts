@@ -14,6 +14,11 @@ describe("public value projection", () => {
     });
   });
 
+  test("clipped keys keep the first value instead of silently overwriting it", () => {
+    const prefix = "x".repeat(PUBLIC_CAPS.text);
+    expect(projectPublicValue({ [prefix + "first"]: "first", [prefix + "second"]: "second" })).toEqual({ [prefix]: "first" });
+  });
+
   test("drops unsupported values and accessors without invoking getters", () => {
     let getterCalls = 0;
     const value = Object.defineProperties({

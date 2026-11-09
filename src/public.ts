@@ -21,13 +21,16 @@ export function projectPublicValue(value: unknown): PublicValue | undefined {
     if (!Array.isArray(v) && !isPlainObject(v)) return undefined;
     active.add(v);
     const entries: [string, PublicValue][] = [];
+    const names = new Set<string>();
     // Read data properties only: projection never invokes getters or toJSON.
     const keys = Array.isArray(v) ? Array.from({ length: Math.min(v.length, PUBLIC_CAPS.items) }, (_, i) => String(i)) : Object.keys(v).slice(0, PUBLIC_CAPS.items);
     for (const key of keys) {
+      const name = key.slice(0, PUBLIC_CAPS.text);
+      if (names.has(name)) continue;
       const property = Object.getOwnPropertyDescriptor(v, key);
       if (!property || !("value" in property)) continue;
       const child = project(property.value, depth + 1);
-      if (child !== undefined) entries.push([key.slice(0, PUBLIC_CAPS.text), child]);
+      if (child !== undefined) { names.add(name); entries.push([name, child]); }
     }
     active.delete(v);
     return Array.isArray(v) ? entries.map(([, child]) => child) : Object.fromEntries(entries);

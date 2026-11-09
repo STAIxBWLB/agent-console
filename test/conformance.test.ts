@@ -167,7 +167,11 @@ test("principal tool conformance names invalid namespace, duplicate, schema and 
   const tool = { name: "demo.status", description: "Read status", inputSchema: { type: "object" }, readOnly: true };
   expect(principalToolProblems([tool], "demo")).toEqual([]);
   expect(principalToolProblems([{ ...tool, name: "other.status" }], "demo").join(" ")).toContain("demo.");
-  expect(principalToolProblems([{ ...tool, name: "demo." }], "demo")).not.toEqual([]);
+  for (const name of ["demo.", "demo.Bad"]) {
+    const problems = principalToolProblems([{ ...tool, name }], "demo").join(" ");
+    expect(problems).toContain("suffix must match");
+    expect(problems).toContain("use demo.<valid-name>");
+  }
   expect(principalToolProblems([tool, tool], "demo").join(" ")).toContain("duplicated");
   for (const inputSchema of [null, [], "object", new Date()]) expect(principalToolProblems([{ ...tool, inputSchema }], "demo").join(" ")).toContain("inputSchema");
   expect(principalToolProblems([{ ...tool, readOnly: undefined }], "demo").join(" ")).toContain("readOnly");

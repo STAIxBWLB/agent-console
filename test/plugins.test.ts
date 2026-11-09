@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFile
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { realpathSync } from "node:fs";
-import { apiRangeProblem, loadPlugins, manifestProblems, pluginDir, scanPlugins, providerProblems, dispatchConsoleSnapshot, dispatchPrincipalSnapshot, dispatchPrincipalAction, type PluginEntry } from "../src/plugins.ts";
+import { apiRangeProblem, loadPlugins, manifestProblems, pluginDir, scanPlugins, providerProblems, declaresPanel, dispatchConsoleSnapshot, dispatchPrincipalSnapshot, dispatchPrincipalAction, type PluginEntry } from "../src/plugins.ts";
 import { createPrincipalPlugin } from "./fixtures/principal-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
@@ -418,7 +418,7 @@ describe("principal plugin dispatch", () => {
     provider.principalAction = async () => { throw new Error("principal unavailable; retry later"); };
     await expect(dispatchPrincipalAction(entry, input, meta.node)).rejects.toThrow("principal unavailable");
     provider.principalAction = async () => new Date() as never;
-    await expect(dispatchPrincipalAction(entry, input, meta.node)).rejects.toThrow("ActionResult");
+    await expect(dispatchPrincipalAction(entry, input, meta.node)).rejects.toThrow("plain JSON object");
     provider.principalSnapshot = async () => [] as never;
     await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" })).rejects.toThrow("plain JSON object");
     expect(plugin.calls).toEqual([]);
@@ -442,6 +442,23 @@ describe("principal plugin dispatch", () => {
     expect(plugin.calls).toEqual([]);
     await dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" });
     expect(plugin.calls.map((c) => c.port)).toEqual(["principalSnapshot"]);
+  });
+  test("principal action ok must remain a data boolean after projection", async () => {
+    const plugin = createPrincipalPlugin();
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    let reads = 0;
+    provider.principalAction = async () => Object.defineProperty({}, "ok", { enumerable: true, get() { reads++; return true; } }) as never;
+    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "principal-demo.status", input: {} }, "local")).rejects.toThrow("boolean ok after projection");
+    expect(reads).toBe(0);
+  });
+  test("reserved panel declarations preserve legacy truthy inbox/search behavior", () => {
+    const base = createPrincipalPlugin().manifest;
+    const manifest = { ...base, capabilities: { inbox: 1, search: "yes", space: 1 } } as never;
+    expect(declaresPanel(manifest, "inbox")).toBe(true);
+    expect(declaresPanel(manifest, "search")).toBe(true);
+    expect(declaresPanel(manifest, "space")).toBe(false);
+    expect(declaresPanel({ ...base, capabilities: { inbox: false, search: false } }, "inbox")).toBe(false);
   });
   test("principal capability validation enforces object and namespace shape", () => {
     const manifest = createPrincipalPlugin().manifest;

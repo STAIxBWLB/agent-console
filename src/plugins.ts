@@ -276,7 +276,8 @@ export function principalToolProblems(tools: unknown, pluginId: string): string[
   for (const tool of tools) {
     if (!isPlainObject(tool)) { out.push("principal tool must be an object; supply name, description, inputSchema and readOnly"); continue; }
     const prefix = `${pluginId}.`;
-    if (typeof tool.name !== "string" || !tool.name.startsWith(prefix) || !ACTION_ID.test(tool.name.slice(prefix.length))) out.push(`principal tool name must be under ${prefix}; use ${prefix}<name>`);
+    if (typeof tool.name !== "string" || !tool.name.startsWith(prefix)) out.push(`principal tool name must be under ${prefix}; use ${prefix}<name>`);
+    else if (!ACTION_ID.test(tool.name.slice(prefix.length))) out.push(`principal tool suffix must match ${ACTION_ID.source}; use ${prefix}<valid-name>`);
     else if (names.has(tool.name)) out.push(`principal tool ${tool.name} is duplicated; keep one declaration per name`);
     else names.add(tool.name);
     if (typeof tool.description !== "string" || !tool.description.trim()) out.push("principal tool description is required; describe what the tool does");
@@ -289,7 +290,7 @@ export function principalToolProblems(tools: unknown, pluginId: string): string[
 /** Panels declared either explicitly or by the console's reserved panel capabilities. */
 export function declaresPanel(manifest: ConsolePanelManifest, panel: unknown): boolean {
   const caps = manifest.capabilities;
-  return manifest.panels.some((p) => p.id === panel) || (panel === "inbox" && caps?.inbox === true) || (panel === "search" && caps?.search === true) || (panel === "space" && caps?.space === true);
+  return Boolean(manifest.panels.some((p) => p.id === panel) || (panel === "inbox" && caps?.inbox) || (panel === "search" && caps?.search) || (panel === "space" && caps?.space === true));
 }
 
 /** Console-only dispatch. Input keys never select an authority or a provider port. */
@@ -332,8 +333,9 @@ export async function dispatchPrincipalAction(entry: PluginEntry, input: { princ
   if (["confirmed", "fingerprint", "confirmToken"].some((key) => key in input.input)) throw new Error("principal input may not set confirmed, fingerprint or confirmToken; remove confirmation fields and request person approval through the console");
   const result = await provider.principalAction({ principal: input.principal, tool: input.tool, input: input.input },
     { identity: `principal:${input.principal}`, node, via: "console", actor: { kind: "principal", id: input.principal } });
-  if (!isPlainObject(result) || typeof result.ok !== "boolean") throw new Error("principalAction returned no boolean ok; return an ActionResult from the plugin");
-  return principalResult(result) as ActionResult;
+  const projected = principalResult(result);
+  if (typeof projected.ok !== "boolean") throw new Error("principalAction returned no boolean ok after projection; return a JSON data property ok in the plugin ActionResult");
+  return projected as ActionResult;
 }
 
 /** Plugin asset types the console serves; SVG is only ever an attachment so its scripts never run in the console origin. */
