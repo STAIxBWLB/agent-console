@@ -30,7 +30,9 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
   await writeFile(join(plugins, "demo.json"), JSON.stringify({ api: 1, tool: "demo", module, sha256: createHash("sha256").update(source).digest("hex") }), { mode: 0o600 });
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
-  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, AGENTHUB_HOME: home }, stdio: "ignore" });
+  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, AGENTHUB_HOME: home }, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-512); });
   let spawnError;
   child.on("error", (error) => { spawnError = error; });
   const stop = () => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM"); };
@@ -43,7 +45,8 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
       try { if ((await fetch(`${origin}/healthz`)).status === 204) { healthy = true; break; } } catch { /* starting isolated server */ }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (!healthy) throw new Error("acon serve did not answer /healthz within 10 s; check BUN_BIN, the plugin manifest hash, and the server's stderr");
+    if (spawnError) throw new Error(`acon serve could not be started with ${process.env.BUN_BIN ?? "bun"}: ${spawnError.message}; set BUN_BIN to a Bun executable`);
+    if (!healthy) throw new Error(`acon serve did not answer /healthz within 10 s; check BUN_BIN and the plugin manifest hash. Server stderr (last 512 characters): ${stderr.trim() || "(empty)"}; run bun bin/acon.js serve --port <port> by hand to see its startup error`);
     for (const suspendAnimationFrames of [false, true]) for (const theme of ["light", "dark"]) {
       const label = `visual-${theme}-${suspendAnimationFrames ? "suspended-raf" : "natural"}`;
       const context = await browser.newContext({ viewport: { width: 900, height: 1000 }, colorScheme: theme });

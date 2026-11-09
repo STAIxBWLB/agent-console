@@ -733,11 +733,12 @@ describe("ui.visual", () => {
     expect(k.posted).toHaveLength(2);
   });
 
-  test("a theme change redraws connected diagrams in their frames, once per change", () => {
+  test("without IntersectionObserver, a theme change redraws even a hidden connected frame once per change", () => {
     let mode = "light";
     let onTheme: (() => void) | undefined;
     const k = visualKit({ theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
     const r = node(k.ui.visual({ kind: "mermaid", source: flow }));
+    Object.defineProperty(walk(r).find((n) => n.tagName === "IFRAME")!, "offsetParent", { value: null });
     k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
     expect(k.posted[0]!.msg.theme).toBe("light");
     k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 200 });

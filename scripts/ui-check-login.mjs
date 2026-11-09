@@ -39,7 +39,9 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   await writeFile(tokenFile, `${token}\n`, { mode: 0o600 });
   const port = await freePort();
   const origin = `http://100.96.0.1:${port}`;
-  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: "ignore" });
+  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-512); });
   let spawnError;
   child.on("error", (error) => { spawnError = error; });
   // Forwards every proxied request to the loopback node, keeping the WARP Host header.
@@ -58,7 +60,8 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
       try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).status === 204) { healthy = true; break; } } catch { /* not listening yet */ }
       await new Promise((done) => setTimeout(done, 100));
     }
-    if (!healthy) throw new Error("acon serve did not answer /healthz within 10 s; check BUN_BIN, the plugin manifest hash, and the server's stderr");
+    if (spawnError) throw new Error(`acon serve could not be started with ${process.env.BUN_BIN ?? "bun"}: ${spawnError.message}; set BUN_BIN to a Bun executable`);
+    if (!healthy) throw new Error(`acon serve did not answer /healthz within 10 s; check BUN_BIN and the plugin manifest hash. Server stderr (last 512 characters): ${stderr.trim() || "(empty)"}; run bun bin/acon.js serve --port <port> by hand to see its startup error`);
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) {
       const scenario = { width, theme, textPercent };
       const context = await browser.newContext({ viewport: { width, height: 800 }, colorScheme: theme, reducedMotion: "reduce", proxy: { server: `http://127.0.0.1:${proxy.address().port}` } });

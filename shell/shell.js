@@ -675,8 +675,8 @@ function visualView(payload, kit, frames, theme) {
       if (!frame || frame.owner !== entry || !frame.el.isConnected) { visibilityObserver?.disconnect(); visibilityObserver = null; frames.live.delete(entry); return; }
       wantedTheme = mode;
       if (mode === shownTheme || frame.busy) return; // a busy frame picks up wantedTheme when it finishes
-      if (frame.el.offsetParent === null) {
-        if (!visibilityObserver && typeof IntersectionObserver === "function") {
+      if (frame.el.offsetParent === null && typeof IntersectionObserver === "function") {
+        if (!visibilityObserver) {
           visibilityObserver = new IntersectionObserver((entries) => {
             if (!entries.some((e) => e.isIntersecting)) return;
             visibilityObserver.disconnect();
