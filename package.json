@@ -16,7 +16,8 @@
     "@tabler/icons": "3.50.0",
     "@types/bun": "^1.3.0",
     "three": "0.187.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "acon-n-1": "npm:@staix/agent-console@0.1.8"
   },
   "exports": {
     ".": "./src/contract.ts",
@@ -37,6 +38,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "check": "bun x tsc --noEmit && bun x tsc --noEmit -p tsconfig.contract.json && bun x tsc --noEmit -p tsconfig.contract-shim.json && bun scripts/check-boundary.ts && bun scripts/readme-facts.ts && node scripts/check-docs.mjs && bun test && bun pm pack --dry-run"
+    "check": "bun x tsc --noEmit && bun x tsc --noEmit -p tsconfig.contract.json && bun x tsc --noEmit -p tsconfig.contract-shim.json && bun x tsc --noEmit -p tsconfig.compatibility.json && bun scripts/check-boundary.ts && bun scripts/readme-facts.ts && node scripts/check-docs.mjs && bun test && bun pm pack --dry-run",
+    "check:compatibility": "bun x tsc --noEmit -p tsconfig.compatibility.json && bun test test/compatibility.test.ts"
   }
 }
