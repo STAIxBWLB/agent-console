@@ -18,6 +18,7 @@ export interface PrincipalRecord {
 }
 export interface PrincipalRegistry { version: 1; principals: PrincipalRecord[] }
 export class PrincipalError extends Error {}
+class PrincipalIdError extends PrincipalError {}
 export class BodyError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -53,6 +54,7 @@ export function readPrincipalRegistry(home: string): PrincipalRegistry {
     if (!isPlainObject(value) || value.version !== 1 || !Array.isArray(value.principals) || Object.keys(value).some((k) => !["version", "principals"].includes(k))) throw new PrincipalError("invalid registry");
     const ids = new Set<string>(), credentials = new Set<string>();
     const principals = value.principals.map((p: unknown): PrincipalRecord => {
+      if (isPlainObject(p) && (!shortText(p.id) || !/^[a-z][a-z0-9-]*$/.test(p.id))) throw new PrincipalIdError("principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant");
       if (!isPlainObject(p) || !shortText(p.id) || typeof p.enabled !== "boolean" || !Array.isArray(p.tools) || p.tools.some((t: unknown) => !toolName(t)) || Object.keys(p).some((k) => !["id", "enabled", "tools", "ratePerMinute", "bearerTokenFile", "access"].includes(k))) throw new PrincipalError("invalid principal record");
       if (ids.has(p.id)) throw new PrincipalError("duplicate principal");
       ids.add(p.id);
@@ -73,7 +75,8 @@ export function readPrincipalRegistry(home: string): PrincipalRegistry {
       return { id: p.id, enabled: p.enabled, tools: [...new Set(p.tools as string[])], ratePerMinute: rate, ...(p.bearerTokenFile ? { bearerTokenFile: p.bearerTokenFile as string } : {}), ...(access ? { access } : {}) };
     });
     return { version: 1, principals };
-  } catch {
+  } catch (error) {
+    if (error instanceof PrincipalIdError) throw error;
     throw new PrincipalError("principal registry is missing, unsafe or invalid; check console/principals.json version 1, unique ids/credentials, tool lists, positive rates, owner and mode 0600");
   }
 }
@@ -173,11 +176,11 @@ export interface PrincipalEndpointOptions {
 export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req: Request) => Promise<Response> {
   const now = options.now ?? Date.now;
   const states = new Map<string, { start: number; count: number; active: number }>();
-  const respond = (id: unknown, value: { result?: unknown; error?: { code: number; message: string } }, status = 200) => {
+  const respond = (id: unknown, value: { result?: unknown; error?: { code: number; message: string } }, status = 200, overflowMessage = "principal response exceeds 256 KiB; reduce declared tools, descriptions or response metadata before retrying") => {
     let body = JSON.stringify({ jsonrpc: "2.0", id, ...value });
     if (Buffer.byteLength(body) > PRINCIPAL_OUTPUT_MAX) {
       status = 502;
-      body = JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32003, message: "principal output exceeds 256 KiB after the tool ran; check its read-only status before retrying and ask the plugin to return smaller results" } });
+      body = JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32003, message: overflowMessage } });
     }
     return new Response(body, { status, headers: HEADERS });
   };
@@ -239,7 +242,7 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
       try {
         const result = await withTimeout(running, options.callMs, "principal tool");
         attempt.outcome = result.ok ? "ok" : "error";
-        const response = respond(id, { result: { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: !result.ok } });
+        const response = respond(id, { result: { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: !result.ok } }, 200, "principal tool output exceeds 256 KiB after execution and was discarded; outcome may be unknown; check the tool execution status before retrying");
         if (response.status === 502) attempt.outcome = "output-limit";
         return response;
       } catch (failure) {
@@ -262,7 +265,7 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
     if (req.headers.has("origin")) return error(null, -32000, "principal routes do not accept browser origins; connect directly with principal credentials", 403);
     let registry: PrincipalRegistry, principal: PrincipalRecord | null;
     try { registry = readPrincipalRegistry(options.home); principal = await identify(req, options.serve, registry); }
-    catch { return error(null, -32000, "principal credentials or registry are unavailable; check private registry/token files, ownership, mode 0600 and separate credentials", 503); }
+    catch (failure) { return error(null, -32000, failure instanceof PrincipalError ? failure.message : "principal credentials or registry are unavailable; check private registry/token files, ownership, mode 0600 and separate credentials", 503); }
     if (!principal) return error(null, -32000, "principal identity is unknown or disabled; ask the owner to register or enable the credential", 403);
     const started = now();
     const attempt: Attempt = { tool: null, plugin: null };

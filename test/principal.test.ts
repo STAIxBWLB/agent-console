@@ -205,7 +205,32 @@ describe("principal registry and bearer transport", () => {
     expect(loginBody.status).toBe(413);
     f.provider.principalAction = async () => ({ ok: true, rows: Array.from({ length: 8 }, () => Array(200).fill("x".repeat(200))) });
     const output = await call(f.server); expect(output.status).toBe(502);
-    const body = await output.text(); expect(Buffer.byteLength(body)).toBeLessThan(PRINCIPAL_OUTPUT_MAX); expect(body).toContain("check its read-only status");
+    const body = await output.text(); expect(Buffer.byteLength(body)).toBeLessThan(PRINCIPAL_OUTPUT_MAX); expect(body).toContain("check the tool execution status before retrying"); expect(body).toContain("outcome may be unknown");
+  });
+  test("oversized tool catalogs name a catalog remedy without claiming tool execution", async () => {
+    const f = await boot();
+    f.plugin.manifest.capabilities!.principal!.tools[0]!.description = "large".repeat(PRINCIPAL_OUTPUT_MAX);
+    const response = await rpc(f.server, "tools/list");
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.error.message).toContain("reduce declared tools, descriptions");
+    expect(body.error.message).not.toContain("after execution");
+    expect(body.error.message).not.toContain("outcome may be unknown");
+    expect(f.plugin.calls).toEqual([]);
+  });
+  test("principal ids have a CLI-safe grammar, with an actionable registry error", async () => {
+    const f = await boot();
+    for (const id of ["--assistant", "-assistant", "Assistant", "has space", "", "a".repeat(201)]) {
+      f.registry.principals[0]!.id = id; f.save();
+      expect(() => readPrincipalRegistry(f.home)).toThrow("must start with a lowercase letter");
+      const response = await rpc(f.server, "tools/list");
+      expect(response.status).toBe(503);
+      expect((await response.json()).error.message).toContain("choose an id such as assistant");
+    }
+    f.registry.principals[0]!.id = "assistant-1"; f.save();
+    expect(readPrincipalRegistry(f.home).principals[0]!.id).toBe("assistant-1");
+    setPrincipalEnabled(f.home, "assistant-1", false);
+    expect(readPrincipalRegistry(f.home).principals[0]!.enabled).toBe(false);
   });
   test("audit has metadata only, including refusals; no token, input, output or caller tool name", async () => {
     const f = await boot();
