@@ -38,8 +38,8 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
     if (tool === "ahub" && input.taskId !== undefined && (input.projectId !== "project-alpha" || input.instanceId !== `instance-${node}`)) return unavailable();
     if (tool === "ahub" && input.taskId !== undefined && input.taskId !== "42") return unavailable(input.taskId === "withheld" ? "withheld" : "missing");
     const key = JSON.stringify(Object.fromEntries(Object.entries(input).filter(([key]) => key !== "after").sort(([a], [b]) => a.localeCompare(b))));
+    if (input.after === generation && seen.get(key) === generation) return { cursor: generation, changed: false };
     const respond = (data: Record<string, unknown>) => {
-      if (input.after === generation && seen.get(key) === generation) return { cursor: generation, changed: false };
       if (seen.size >= LINEAGE_BOUNDS.nodes) seen.delete(seen.keys().next().value!);
       seen.set(key, generation);
       return { cursor: generation, changed: true, origin, ...data };
