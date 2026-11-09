@@ -58,7 +58,7 @@ export default (host) => {
       ...(sourceSha ? [text("p", `Source SHA-256: ${sourceSha}`)] : []),
       text("p", `Record state: ${recordState}`, { "data-lineage-state": String(recordState) }),
       ...(sourceStatus ? [text("p", `Source status: ${sourceStatus}`)] : []),
-      ...(payload.summary ? [text("p", payload.summary)] : []),
+      ...(payload.summary && payload.state !== "unavailable" && payload.lineage?.status !== "unavailable" ? [text("p", payload.summary)] : []),
     );
     children.push(header);
 
