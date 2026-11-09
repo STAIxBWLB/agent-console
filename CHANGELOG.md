@@ -4,6 +4,7 @@
 
 ### Added
 
+- Serve authenticated MCP principal tools at `/principal/mcp` with a private live registry, verified Access or separate bearer identity, per-principal rate and concurrency limits, read-only filtering, bounded bodies/results and metadata-only audit. Add `acon principal list|off|on` and document the 2025-11-25 transport and registry schema (#88).
 - Add opt-in principal tool declarations, dedicated principal snapshot/action ports and bounded public JSON results. Console dispatch builds person actors; principal dispatch never falls back to console ports. The conformance kit validates principal declarations while API 1 plugins remain compatible (#88, contract slice).
 
 ### Fixed

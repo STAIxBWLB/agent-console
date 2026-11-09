@@ -4,6 +4,7 @@ import { startServer } from "./server.ts";
 import { buildStatic } from "./static.ts";
 import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
+import { PrincipalError, readPrincipalRegistry, setPrincipalEnabled } from "./principal.ts";
 import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
 import { serveConfig, type ServeArgs, type ServeOptions } from "./serve.ts";
 import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, reloadAgent, stableBun, tokenPath } from "./setup.ts";
@@ -24,6 +25,9 @@ Usage:
   acon setup launchd [--label ID] [--apply] [serve flags]
                                  print a LaunchAgent plist for acon serve; --apply installs and loads it
   acon plugins [--json]          list registered plugins and verify their module hashes
+  acon principal list [--json]   list server principals (safe metadata only)
+  acon principal off <id>        disable a server principal
+  acon principal on <id>         enable a server principal
   acon install <name|https URL|dir> [--force]
                                  install a pet or asset package
   acon install --list [--json]   list the packages in the index
@@ -35,7 +39,7 @@ serve auth: ACON_ACCESS_TEAM + ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN
 --read-only or ACON_READ_ONLY=1 refuses every plugin action; snapshots, search and assets keep working.
 The ui server exits 5 minutes after the last request; serve stays up.`;
 
-const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
+const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], principal: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
 const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"], build: ["--nodes", "--out"] };
 const SUBCOMMANDS: Record<string, string> = { token: "new", setup: "launchd" };
 
@@ -59,13 +63,14 @@ function parse(argv: string[]): { command: string; flags: Set<string>; args: str
   const sub = SUBCOMMANDS[command];
   if (sub && rest[0] !== sub) return `${command} takes the subcommand ${sub}: acon ${command} ${sub}`;
   if (sub) rest.shift();
-  const args = command === "install" ? rest.filter((arg) => !arg.startsWith("--")) : [];
+  const args = command === "install" || command === "principal" ? rest.filter((arg) => !arg.startsWith("--")) : [];
   const unknown = rest.find((arg) => !args.includes(arg) && !allowed.includes(arg));
   if (unknown) return `unknown option for ${command}: ${unknown}`;
   const flags = new Set(rest.filter((arg) => !args.includes(arg)));
   if (command === "install") {
     if (flags.has("--list") ? args.length > 0 || flags.has("--force") : args.length !== 1) return "install takes one package name, https URL or directory, or --list";
   }
+  if (command === "principal" && !(args.length === 2 && ["off", "on"].includes(args[0]!)) && !(args.length === 1 && args[0] === "list")) return "principal takes list [--json], off <id> or on <id>";
   if (command === "build" && (!flags.has("--static") || !values["--nodes"])) return "build needs --static and --nodes id=https://origin; run acon build --static --nodes desk=https://node.example.com";
   return { command, flags, args, values };
 }
@@ -167,6 +172,25 @@ export function launchScript(home: string, packageRoot = resolve(import.meta.dir
 
 const fail = (message: string): number => { console.error(`acon: ${message}`); return 2; };
 
+function principalCommand(home: string, args: string[], flags: Set<string>): number {
+  try {
+    if (args[0] === "list") {
+      const principals = readPrincipalRegistry(home).principals.map(({ id, enabled, tools, ratePerMinute }) => ({ id, enabled, tools, ratePerMinute }));
+      if (flags.has("--json")) console.log(JSON.stringify({ principals }));
+      else if (!principals.length) console.log("No server principals registered.");
+      else for (const principal of principals) console.log(`${principal.id.padEnd(24)} ${principal.enabled ? "enabled" : "disabled"}  ${principal.tools.join(", ")}  ${principal.ratePerMinute}/min`);
+    } else {
+      setPrincipalEnabled(home, args[1]!, args[0] === "on");
+      console.log(`acon: principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
+    }
+    return 0;
+  } catch (error) {
+    const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
+    console.error(`acon: ${cause}; check $AGENTHUB_HOME/console/principals.json ownership/mode 0600 and run acon principal list to choose a registered id before retrying`);
+    return 1;
+  }
+}
+
 export async function main(argv: string[]): Promise<number> {
   const parsed = parse(argv);
   if (typeof parsed === "string") { console.error(`acon: ${parsed}\n\n${USAGE}`); return 2; }
@@ -185,6 +209,7 @@ export async function main(argv: string[]): Promise<number> {
   }
   const home = familyHome();
   if (command === "install") return await install(home, args[0], flags);
+  if (command === "principal") return principalCommand(home, args, flags);
   if (command === "token") return token(home, values["--file"]?.[0], flags.has("--force"));
   if (command === "setup") return setupLaunchd(home, values, flags);
   let serve: ServeOptions | undefined;

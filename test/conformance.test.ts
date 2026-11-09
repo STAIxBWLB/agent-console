@@ -200,3 +200,18 @@ test("principal and person dispatch use only their own fixture ports; inputs can
   await expect(dispatchConsoleAction(entry, { action: "status" }, { ...meta, actor: { kind: "principal", id: "assistant" } })).rejects.toThrow("dispatchPrincipalAction");
   expect(plugin.calls).toHaveLength(4);
 });
+
+
+const reservedPrincipalFixture = createPrincipalPlugin();
+reservedPrincipalFixture.manifest.capabilities = { ...reservedPrincipalFixture.manifest.capabilities, inbox: true, search: true, space: true };
+const openReservedPrincipal = reservedPrincipalFixture.open;
+reservedPrincipalFixture.open = async (ctx) => {
+  const provider = await openReservedPrincipal(ctx);
+  const snapshot = provider.snapshot;
+  provider.snapshot = async (input) => ({ ...await snapshot(input), ...(input.panel === "inbox" ? { items: [] } : {}), ...(input.panel === "search" ? { hits: [], total: 0 } : {}), ...(input.panel === "space" ? { scene: { actors: [], cards: [], zones: [] } } : {}) });
+  return provider;
+};
+registerConsoleConformance(reservedPrincipalFixture);
+test("principal conformance exercises each declared reserved panel", () => {
+  expect(reservedPrincipalFixture.calls.filter((call) => call.port === "principalSnapshot").map((call) => call.input.panel)).toEqual(["status", "inbox", "search", "space"]);
+});

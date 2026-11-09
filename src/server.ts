@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { BodyError, createPrincipalEndpoint, readBoundedJson, readBoundedText, PRINCIPAL_INPUT_MAX } from "./principal.ts";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionMeta, type ActionResult } from "./contract.ts";
 import { ASSET_TYPES, assetResultProblems, dispatchConsoleSnapshot, dispatchConsoleAction, declaresPanel, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
@@ -17,6 +19,8 @@ export interface ServerOptions {
   reload?: (previous: PluginEntry[]) => Promise<PluginEntry[]>;
   version: string;
   pluginsDir: string;
+  /** Family home used for principal registry and audit; defaults to the plugin directory grandparent. */
+  home?: string;
   pluginsError?: string;
   /** Local pet packages (src/pets.ts); problems are listed in System. */
   pets?: PetPackage[];
@@ -277,12 +281,17 @@ export function startServer(options: ServerOptions) {
     if (!originOk) return reject(403, "origin required; open this node at an address listed in --origin");
     const type = req.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
     if (type !== "application/x-www-form-urlencoded") return reject(415, `Content-Type ${type ? type.slice(0, 60) : "(missing)"} is not a sign-in form; open /login in a browser, or POST application/x-www-form-urlencoded with a token field`);
-    if (!checkToken(new URLSearchParams(await req.text()).get("token") ?? "")) return loginPage(401, "That is not this node's token. Copy it again from the token file and retry.");
+    let form: string;
+    try { form = await readBoundedText(req, 32 * 1024); }
+    catch (error) { return reject(error instanceof BodyError ? error.status : 400, "sign-in form is oversized or incomplete; submit a complete form under 32 KiB"); }
+    if (!checkToken(new URLSearchParams(form).get("token") ?? "")) return loginPage(401, "That is not this node's token. Copy it again from the token file and retry.");
     cap(sessions);
     const session = secret();
     sessions.set(session, { expires: now() + LOGIN_MS });
     return new Response(null, { status: 303, headers: { ...HEADERS, Location: "/", "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${LOGIN_MS / 1000}` } });
   }
+
+  const principalEndpoint = serve && serve.mode !== "loopback" ? createPrincipalEndpoint({ home: options.home ?? dirname(dirname(options.pluginsDir)), serve, getPlugins: async () => { await refresh(); return [...tools.values()]; }, version: options.version, callMs, now }) : undefined;
 
   async function handle(req: Request): Promise<Response> {
       const url = new URL(req.url);
@@ -292,6 +301,10 @@ export function startServer(options: ServerOptions) {
       lastSeen = now();
       if (!serve) armIdle();
       if (serve ? !serve.hosts.includes(req.headers.get("host") ?? "") : req.headers.get("host") !== host) return reject(403, "forbidden host");
+      if (path === "/principal" || path.startsWith("/principal/")) {
+        if (!principalEndpoint) return reject(404, "principal routes require authenticated serve mode; configure Access or bearer authentication");
+        return principalEndpoint(req);
+      }
       const requestOrigin = req.headers.get("origin");
       const originOk = requestOrigin !== null && (serve ? serve.origins.includes(requestOrigin) : requestOrigin === origin);
       if (requestOrigin !== null && !originOk) return reject(403, "forbidden origin");
@@ -386,10 +399,11 @@ export function startServer(options: ServerOptions) {
       if (path !== "/session" && !live) return reject(401, "session expired or missing; run acon ui");
       let input: Record<string, unknown>;
       try {
-        const value = await req.json();
+        const value = await readBoundedJson(req, 32 * 1024);
         if (!value || typeof value !== "object" || Array.isArray(value)) return reject(400, "JSON object required");
         input = value as Record<string, unknown>;
-      } catch {
+      } catch (error) {
+        if (error instanceof BodyError) return reject(error.status, error.message);
         return reject(400, "invalid JSON");
       }
       // Every accepted body has a canonical form; this refuses numbers like 1e400 that would collide with null.
@@ -424,13 +438,13 @@ export function startServer(options: ServerOptions) {
   const server = Bun.serve({
     hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",
     port: serve?.port ?? 0,
-    maxRequestBodySize: 32 * 1024,
+    maxRequestBodySize: PRINCIPAL_INPUT_MAX,
     idleTimeout: 60,
     async fetch(req): Promise<Response> {
       let response: Response;
       try { response = await handle(req); }
       catch (error) { log(`request failed: ${(error as Error).message}`); response = reject(500, "console request failed"); }
-      if (serve) {
+      if (serve && !/^\/principal(?:\/|$)/.test(new URL(req.url).pathname)) {
         response.headers.set("Vary", "Origin");
         const requestOrigin = req.headers.get("origin");
         if (requestOrigin && serve.origins.includes(requestOrigin)) {
