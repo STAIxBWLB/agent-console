@@ -498,3 +498,13 @@ test("console HTTP requests cannot select principal ports or forge the actor", a
   expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action"]);
   expect(plugin.calls[1]!.meta).toEqual({ identity: "local", node: "local", via: "console", actor: { kind: "person", id: "local" } });
 });
+
+
+test("console JSON body failures give console guidance, never JSON-RPC instructions", async () => {
+  const { server } = await boot(); const cookie = await login(server);
+  for (const body of [undefined, "", "{broken", '{"n":1e400}']) {
+    const response = await fetch(`${server.origin}/tools`, { method: "POST", headers: { Origin: server.origin, Cookie: cookie, "Content-Type": "application/json" }, ...(body !== undefined ? { body } : {}) });
+    expect(response.status).toBe(400);
+    const value = await response.json(); expect(value.error).toContain("console JSON body"); expect(value.error).toContain("send a complete finite JSON object"); expect(value.error).not.toContain("JSON-RPC");
+  }
+});

@@ -291,7 +291,7 @@ export function startServer(options: ServerOptions) {
     return new Response(null, { status: 303, headers: { ...HEADERS, Location: "/", "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${LOGIN_MS / 1000}` } });
   }
 
-  const principalEndpoint = serve && serve.mode !== "loopback" ? createPrincipalEndpoint({ home: options.home ?? dirname(dirname(options.pluginsDir)), serve, getPlugins: async () => { await refresh(); return [...tools.values()]; }, version: options.version, callMs, now }) : undefined;
+  const principalEndpoint = serve && serve.mode !== "loopback" ? createPrincipalEndpoint({ home: options.home ?? dirname(dirname(options.pluginsDir)), serve, getPlugins: async () => { await refresh(); return [...tools.values()]; }, version: options.version, callMs, log, now }) : undefined;
 
   async function handle(req: Request): Promise<Response> {
       const url = new URL(req.url);
@@ -403,8 +403,8 @@ export function startServer(options: ServerOptions) {
         if (!value || typeof value !== "object" || Array.isArray(value)) return reject(400, "JSON object required");
         input = value as Record<string, unknown>;
       } catch (error) {
-        if (error instanceof BodyError) return reject(error.status, error.message);
-        return reject(400, "invalid JSON");
+        const status = error instanceof BodyError ? error.status : 400;
+        return reject(status, status === 413 ? "console JSON body exceeds 32 KiB; send a smaller console request" : "console JSON body is missing, invalid or incomplete; send a complete finite JSON object to this console route");
       }
       // Every accepted body has a canonical form; this refuses numbers like 1e400 that would collide with null.
       try { canonical(input); } catch { return reject(400, "numbers must be finite"); }
