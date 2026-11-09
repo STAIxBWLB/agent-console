@@ -36,7 +36,17 @@ export interface ConsolePanelManifest {
     search?: boolean;
     /** snapshot({panel: "space", after}) returns {scene: SpaceScene}, public fields only. */
     space?: boolean;
+    /** Principal-only tools; never dispatched through the person snapshot/action ports (#88). */
+    principal?: { tools: PrincipalTool[] };
   };
+}
+
+/** Each name belongs to this plugin's namespace, e.g. ahub.status. */
+export interface PrincipalTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  readOnly: boolean;
 }
 
 export interface ConsoleCommand {
@@ -55,12 +65,13 @@ export interface ConsoleContext {
   /**
    * What this console renders beyond api 1's base (#27); set by the console, absent in older consoles. Send verb
    * `form`s only with "inbox.form" and `result` items only with "inbox.result"; "action.meta" means action() gets `meta`.
+   * "principal" advertises separate principal ports, bounded public results and console-built meta.actor.
    */
   features?: readonly string[];
 }
 
 /** Features this console advertises in ConsoleContext.features. */
-export const CONSOLE_FEATURES = ["inbox.form", "inbox.result", "action.meta"] as const;
+export const CONSOLE_FEATURES = ["inbox.form", "inbox.result", "action.meta", "principal"] as const;
 
 /** Who acted, built by the console from the verified session; the page cannot set it (#27). */
 export interface ActionMeta {
@@ -68,6 +79,8 @@ export interface ActionMeta {
   identity: string;
   node: string;
   via: "console";
+  /** Built by the dispatcher from verified identity; never read from a page or tool input. */
+  actor?: { kind: "person" | "principal"; id: string };
 }
 
 export interface ConsolePlugin {
@@ -81,6 +94,13 @@ export interface ConsoleProvider {
   snapshot(input: { after: number; panel: string } & Record<string, unknown>): Promise<Record<string, unknown>>;
   /** `meta` is present when the console advertises "action.meta"; tools use it as evidence of who acted, under their own rules. */
   action(input: { action: string; confirmed?: true; fingerprint?: string } & Record<string, unknown>, meta?: ActionMeta): Promise<ActionResult>;
+  /**
+   * Separate principal ports, required with capabilities.principal. Never fall back to snapshot/action.
+   * Results are projected to plain JSON: strings/keys <= 200 chars, collections <= 200 entries,
+   * at most 6 container levels; unsupported values are omitted. Principal identity is node-authenticated.
+   */
+  principalSnapshot?(input: { principal: string; panel: string }): Promise<Record<string, unknown>>;
+  principalAction?(input: { principal: string; tool: string; input: Record<string, unknown> }, meta: ActionMeta): Promise<ActionResult>;
   /** Optional file for GET /p/<tool>/asset?id=; null when the id is unknown. Types: see README "Plugin assets". */
   asset?(input: { id: string }): Promise<{ bytes: Uint8Array; mime: string; name: string } | null>;
   close?(): Promise<void>;

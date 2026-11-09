@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add opt-in principal tool declarations, dedicated principal snapshot/action ports and bounded public JSON results. Console dispatch builds person actors; principal dispatch never falls back to console ports. The conformance kit validates principal declarations while API 1 plugins remain compatible (#88, contract slice).
+
 ### Fixed
 
 - Safely release queued diagram visibility callbacks after frame handover or a visible theme redraw, without dereferencing a cleared observer (#90).

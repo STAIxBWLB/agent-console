@@ -7,6 +7,7 @@ import { ASSET_TYPES, assetResultProblems, manifestProblems, providerProblems, w
 import { spaceSceneProblems } from "./space.ts";
 
 export { spaceSceneProblems } from "./space.ts";
+export { principalToolProblems } from "./plugins.ts";
 
 export interface ConformanceOptions {
   /** Family home passed to open(); a fresh temp directory by default. */
@@ -19,7 +20,7 @@ export interface ConformanceOptions {
 
 const GROUPS = ["decision", "review", "result", "candidate", "alert"];
 /** What the console passes as action meta (#27), so a plugin that reads meta.identity is checked as it runs. */
-const META = { identity: "local", node: "local", via: "console" } as const;
+const META = { identity: "local", node: "local", via: "console", actor: { kind: "person", id: "local" } } as const;
 const within = (v: unknown, max: number) => typeof v === "string" && v.length > 0 && v.length <= max;
 
 /** Problems with a verb's choice form against the #27 bounds; the shell skips an item whose form has any. */
@@ -227,7 +228,14 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
       expect(manifestProblems(plugin.manifest)).toEqual([]);
       expect(() => JSON.stringify(plugin.manifest)).not.toThrow();
     });
-    test("open() resolves to a provider", () => expect(providerProblems(provider)).toEqual([]));
+    test("open() resolves to a provider", () => expect(providerProblems(provider, plugin.manifest)).toEqual([]));
+    if (plugin.manifest.capabilities?.principal) test("principal snapshot ports answer objects within 5 s", async () => {
+      expect(typeof provider.principalSnapshot).toBe("function");
+      for (const panel of plugin.manifest.panels) {
+        const result = await withTimeout(provider.principalSnapshot!({ principal: "acon-conformance", panel: panel.id }), 5_000, "principalSnapshot");
+        expect(result && typeof result === "object" && !Array.isArray(result)).toBe(true);
+      }
+    });
     test("every panel answers a snapshot within 5 s", async () => {
       for (const panel of plugin.manifest.panels) {
         const result = await withTimeout(provider.snapshot({ after: 0, panel: panel.id }), 5_000, `snapshot ${panel.id}`);

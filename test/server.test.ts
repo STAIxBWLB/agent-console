@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { startServer } from "../src/server.ts";
 import type { PluginEntry } from "../src/plugins.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
+import { createPrincipalPlugin } from "./fixtures/principal-plugin.ts";
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 
 type Server = ReturnType<typeof startServer>;
@@ -444,7 +445,7 @@ describe("action meta under acon ui (#27 AC2)", () => {
     const answers = { scope: { selected: ["cli", "docs"] }, when: { selected: [], other: "Tuesday" } };
     const res = await post(server, "/p/ask/action", { action: "answer", id: "q1", answers, meta: { identity: "forged", node: "x", via: "console" } }, cookie);
     expect((await res.json() as { ok: boolean }).ok).toBe(true);
-    expect(plugin.calls.at(-1)).toEqual({ input: { action: "answer", id: "q1", answers, meta: { identity: "forged", node: "x", via: "console" } }, meta: { identity: "local", node: "local", via: "console" } });
+    expect(plugin.calls.at(-1)).toEqual({ input: { action: "answer", id: "q1", answers, meta: { identity: "forged", node: "x", via: "console" } }, meta: { identity: "local", node: "local", via: "console", actor: { kind: "person", id: "local" } } });
     // AC3 at the server: a stale answer returns the tool's error unchanged.
     const stale = await (await post(server, "/p/ask/action", { action: "answer", id: "q2", answers: { when: { selected: ["today"] } } }, cookie)).json() as { ok: boolean; error: string };
     expect(stale).toEqual({ ok: false, error: "This question was answered elsewhere; nothing was changed." });
@@ -480,4 +481,20 @@ describe("visual frame (#29)", () => {
     const { server } = await boot();
     expect((await fetch(`${server.origin}/visual/frame`, { headers: { Origin: "https://evil.example" } })).status).toBe(403);
   });
+});
+
+
+test("console HTTP requests cannot select principal ports or forge the actor", async () => {
+  const plugin = createPrincipalPlugin();
+  const provider = await plugin.open({ home: "/tmp", log: () => {} });
+  const server = startServer({ plugins: [{ tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider }], version: "t", pluginsDir: "/tmp/plugins", log: () => {} });
+  running.push(server);
+  const cookie = await login(server);
+  const spoof = { kind: "principal", id: "forged" };
+  const snapshot = await post(server, "/p/principal-demo/snapshot", { panel: "status", principal: "forged", actor: spoof }, cookie);
+  expect(snapshot.status).toBe(200);
+  const action = await post(server, "/p/principal-demo/action", { action: "status", principal: "forged", actor: spoof, meta: { actor: spoof } }, cookie);
+  expect(action.status).toBe(200);
+  expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action"]);
+  expect(plugin.calls[1]!.meta).toEqual({ identity: "local", node: "local", via: "console", actor: { kind: "person", id: "local" } });
 });

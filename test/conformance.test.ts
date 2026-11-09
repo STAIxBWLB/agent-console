@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { inboxItemProblems, registerConsoleConformance, reviewAnchorProblems, reviewCaseValue, reviewProblems, reviewThreadProblems, stableAtProblems, verbFormProblems } from "../src/conformance.ts";
+import { inboxItemProblems, principalToolProblems, registerConsoleConformance, reviewAnchorProblems, reviewCaseValue, reviewProblems, reviewThreadProblems, stableAtProblems, verbFormProblems } from "../src/conformance.ts";
+import { createPrincipalPlugin } from "./fixtures/principal-plugin.ts";
+import { dispatchConsoleSnapshot, dispatchConsoleAction, dispatchPrincipalSnapshot, dispatchPrincipalAction, type PluginEntry } from "../src/plugins.ts";
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
@@ -156,4 +158,41 @@ test("the demo review panel rejects onComment when the action fails, so the draf
   await expect(review!.onComment({ anchor: {}, body: "x" })).rejects.toThrow("offline");
   answer = { ok: true };
   await expect(review!.onComment({ anchor: {}, body: "x" })).resolves.toBeUndefined();
+});
+
+// #88 principal ports are a separate authority surface, even when a plugin declares both axes.
+registerConsoleConformance(createPrincipalPlugin());
+
+test("principal tool conformance names invalid namespace, duplicate, schema and readOnly declarations", () => {
+  const tool = { name: "demo.status", description: "Read status", inputSchema: { type: "object" }, readOnly: true };
+  expect(principalToolProblems([tool], "demo")).toEqual([]);
+  expect(principalToolProblems([{ ...tool, name: "other.status" }], "demo").join(" ")).toContain("demo.");
+  expect(principalToolProblems([{ ...tool, name: "demo." }], "demo")).not.toEqual([]);
+  expect(principalToolProblems([tool, tool], "demo").join(" ")).toContain("duplicated");
+  for (const inputSchema of [null, [], "object", new Date()]) expect(principalToolProblems([{ ...tool, inputSchema }], "demo").join(" ")).toContain("inputSchema");
+  expect(principalToolProblems([{ ...tool, readOnly: undefined }], "demo").join(" ")).toContain("readOnly");
+  expect(principalToolProblems([null], "demo")).not.toEqual([]);
+  expect(principalToolProblems({}, "demo")).not.toEqual([]);
+});
+
+test("principal and person dispatch use only their own fixture ports; inputs cannot select an actor", async () => {
+  const plugin = createPrincipalPlugin();
+  const provider = await plugin.open({ home: "/tmp", log: () => {} });
+  const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+  const meta = { identity: "verified", node: "local", via: "console" } as const;
+  await dispatchConsoleSnapshot(entry, { panel: "status", after: 0, principal: "forged", actor: { kind: "principal", id: "forged" } });
+  await dispatchConsoleAction(entry, { action: "status", actor: { kind: "principal", id: "forged" } }, meta);
+  expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action"]);
+  expect(plugin.calls[1]!.meta).toEqual({ ...meta, actor: { kind: "person", id: "verified" } });
+  const snapshot = await dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" });
+  const action = await dispatchPrincipalAction(entry, { principal: "assistant", tool: "principal-demo.status", input: { action: "status", principal: "forged", actor: { kind: "person", id: "forged" } } }, meta);
+  expect(plugin.calls.map((c) => c.port)).toEqual(["snapshot", "action", "principalSnapshot", "principalAction"]);
+  expect(plugin.calls[3]!.input.principal).toBe("assistant");
+  expect(plugin.calls[3]!.meta).toEqual({ ...meta, actor: { kind: "principal", id: "assistant" } });
+  for (const result of [snapshot, action as Record<string, unknown>]) {
+    expect((result.title as string).length).toBe(200);
+    expect((result.rows as unknown[]).length).toBe(200);
+  }
+  await expect(dispatchConsoleAction(entry, { action: "status" }, { ...meta, actor: { kind: "principal", id: "assistant" } })).rejects.toThrow("dispatchPrincipalAction");
+  expect(plugin.calls).toHaveLength(4);
 });

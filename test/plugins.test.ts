@@ -4,7 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFile
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { realpathSync } from "node:fs";
-import { apiRangeProblem, loadPlugins, manifestProblems, pluginDir, scanPlugins } from "../src/plugins.ts";
+import { apiRangeProblem, loadPlugins, manifestProblems, pluginDir, scanPlugins, providerProblems, dispatchConsoleSnapshot, dispatchPrincipalSnapshot, dispatchPrincipalAction, type PluginEntry } from "../src/plugins.ts";
+import { createPrincipalPlugin } from "./fixtures/principal-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
 const fixture = join(import.meta.dir, "fixtures", "demo-plugin.ts");
@@ -375,3 +376,58 @@ describe("api range and versioned registrations (#26)", () => {
   });
 });
 
+
+// #88 API 1 remains additive, while opt-in principal plugins must implement and own their ports.
+describe("principal plugin dispatch", () => {
+  test("a principal fixture loads with the existing hash-verified loader", async () => {
+    const module = join(mkdtempSync(join(tmpdir(), "acon-principal-")), "principal-plugin.ts");
+    writeFileSync(module, readFileSync(join(import.meta.dir, "fixtures", "principal-plugin.ts"), "utf8"));
+    const dir = home({ "principal-demo.json": { api: 1, tool: "principal-demo", module, sha256: sha(module) } });
+    const loaded = await loadPlugins(scanPlugins(dir), ctx(dir));
+    expect(loaded[0]!.status).toBe("ready");
+    expect(typeof loaded[0]!.provider!.principalAction).toBe("function");
+  });
+  test("missing principal ports and undeclared tools never fall back to console ports", async () => {
+    const plugin = createPrincipalPlugin();
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    const meta = { identity: "verified", node: "local", via: "console" } as const;
+    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "other.status", input: {} }, meta)).rejects.toThrow("not declared");
+    const { principalSnapshot, principalAction, ...consoleOnly } = provider;
+    expect(providerProblems(consoleOnly, plugin.manifest).join(" ")).toContain("principalSnapshot");
+    const broken = { ...entry, provider: consoleOnly };
+    await expect(dispatchPrincipalSnapshot(broken, { principal: "assistant", panel: "status" })).rejects.toThrow("no principalSnapshot");
+    await expect(dispatchPrincipalAction(broken, { principal: "assistant", tool: "principal-demo.status", input: {} }, meta)).rejects.toThrow("no principalAction");
+    expect(plugin.calls).toEqual([]);
+  });
+  test("old plugins still load and serve console calls but refuse all principal dispatch", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: "demo", file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    expect(providerProblems(provider, plugin.manifest)).toEqual([]);
+    expect(await dispatchConsoleSnapshot(entry, { panel: "notes", after: 0 })).toBeObject();
+    await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "notes" })).rejects.toThrow("not opted");
+    await expect(dispatchPrincipalAction(entry, { principal: "assistant", tool: "demo.status", input: {} }, { identity: "verified", node: "local", via: "console" })).rejects.toThrow("not opted");
+  });
+  test("principal failures and invalid results never trigger person-port retries", async () => {
+    const plugin = createPrincipalPlugin();
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    const input = { principal: "assistant", tool: "principal-demo.status", input: {} };
+    const meta = { identity: "verified", node: "local", via: "console" } as const;
+    provider.principalAction = async () => { throw new Error("principal unavailable; retry later"); };
+    await expect(dispatchPrincipalAction(entry, input, meta)).rejects.toThrow("principal unavailable");
+    provider.principalAction = async () => new Date() as never;
+    await expect(dispatchPrincipalAction(entry, input, meta)).rejects.toThrow("ActionResult");
+    provider.principalSnapshot = async () => [] as never;
+    await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "status" })).rejects.toThrow("plain JSON object");
+    expect(plugin.calls).toEqual([]);
+  });
+  test("principal capability validation enforces object and namespace shape", () => {
+    const manifest = createPrincipalPlugin().manifest;
+    expect(manifestProblems(manifest)).toEqual([]);
+    for (const principal of [null, [], { tools: "wrong" }, { tools: [{ name: "other.status", inputSchema: [], readOnly: "true" }] }]) {
+      expect(manifestProblems({ ...manifest, capabilities: { principal } })).not.toEqual([]);
+    }
+  });
+});

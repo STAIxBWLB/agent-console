@@ -3,8 +3,9 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { builtinModules } from "node:module";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
-import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, CONSOLE_FEATURES, PANEL_ID, TOOL_ID, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
+import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, CONSOLE_FEATURES, PANEL_ID, TOOL_ID, type ActionMeta, type ActionResult, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
 import { imageType } from "./assets.ts";
+import { isPlainObject, projectPublicValue, PUBLIC_CAPS } from "./public.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
 export const pluginDir = (home: string): string => join(home, "console", "plugins");
@@ -227,6 +228,10 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
   const actions = m.capabilities?.actions;
   if (actions !== undefined && (!Array.isArray(actions) || actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
   if (m.capabilities?.space !== undefined && typeof m.capabilities.space !== "boolean") out.push("capabilities.space must be a boolean");
+  if (m.capabilities?.principal !== undefined) {
+    if (!isPlainObject(m.capabilities.principal)) out.push("capabilities.principal must be an object; declare {tools: [...]} or omit it");
+    else out.push(...principalToolProblems(m.capabilities.principal.tools, m.tool ?? ""));
+  }
   if (m.commands !== undefined) {
     if (!Array.isArray(m.commands)) out.push("manifest.commands must be an array");
     else {
@@ -248,7 +253,7 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
   return out;
 }
 
-export function providerProblems(provider: unknown): string[] {
+export function providerProblems(provider: unknown, manifest?: ConsolePanelManifest): string[] {
   const p = provider as Partial<ConsoleProvider> | undefined;
   if (!p || typeof p !== "object") return ["open() must resolve to a provider object"];
   const out: string[] = [];
@@ -257,7 +262,70 @@ export function providerProblems(provider: unknown): string[] {
   if (typeof p.snapshot !== "function") out.push("provider.snapshot must be a function");
   if (typeof p.action !== "function") out.push("provider.action must be a function");
   if (p.asset !== undefined && typeof p.asset !== "function") out.push("provider.asset must be a function when present");
+  for (const port of ["principalSnapshot", "principalAction"] as const) {
+    if ((manifest?.capabilities?.principal !== undefined || p[port] !== undefined) && typeof p[port] !== "function") out.push(`provider.${port} must be a function; implement both principal ports when opting in`);
+  }
   return out;
+}
+
+/** Principal declarations are data, scoped to the registering plugin, never aliases for console actions. */
+export function principalToolProblems(tools: unknown, pluginId: string): string[] {
+  if (!Array.isArray(tools)) return ["capabilities.principal.tools must be an array; declare the plugin's principal tools"];
+  const out: string[] = [];
+  const names = new Set<string>();
+  for (const tool of tools) {
+    if (!isPlainObject(tool)) { out.push("principal tool must be an object; supply name, description, inputSchema and readOnly"); continue; }
+    const prefix = `${pluginId}.`;
+    if (typeof tool.name !== "string" || !tool.name.startsWith(prefix) || !ACTION_ID.test(tool.name.slice(prefix.length))) out.push(`principal tool name must be under ${prefix}; use ${prefix}<name>`);
+    else if (names.has(tool.name)) out.push(`principal tool ${tool.name} is duplicated; keep one declaration per name`);
+    else names.add(tool.name);
+    if (typeof tool.description !== "string" || !tool.description.trim()) out.push("principal tool description is required; describe what the tool does");
+    if (typeof tool.readOnly !== "boolean") out.push("principal tool readOnly must be a boolean; declare whether it can change state");
+    if (!isPlainObject(tool.inputSchema)) out.push("principal tool inputSchema must be an object; supply a JSON schema object");
+  }
+  return out;
+}
+
+/** Console-only dispatch. Input keys never select an authority or a provider port. */
+export async function dispatchConsoleSnapshot(entry: PluginEntry, input: { after: number; panel: string } & Record<string, unknown>): Promise<Record<string, unknown>> {
+  return entry.provider!.snapshot(input);
+}
+
+export async function dispatchConsoleAction(entry: PluginEntry, input: { action: string } & Record<string, unknown>, meta: ActionMeta): Promise<ActionResult> {
+  if (meta.actor?.kind === "principal") throw new Error("a principal cannot use console action dispatch; call dispatchPrincipalAction instead");
+  return entry.provider!.action(input, { identity: meta.identity, node: meta.node, via: meta.via, actor: { kind: "person", id: meta.identity } });
+}
+
+function principalProvider(entry: PluginEntry, principal: string): ConsoleProvider {
+  if (typeof principal !== "string" || !principal.trim() || principal.length > PUBLIC_CAPS.text) throw new Error("principal identity is missing or exceeds the public text cap; pass the node-authenticated principal id");
+  if (entry.status !== "ready" || entry.manifest?.tool !== entry.tool || !entry.manifest.capabilities?.principal || !entry.provider) throw new Error("plugin has not opted into principal calls; select a ready plugin declaring capabilities.principal");
+  const problems = principalToolProblems(entry.manifest.capabilities.principal.tools, entry.tool);
+  if (problems.length) throw new Error(problems.join("; "));
+  return entry.provider;
+}
+
+function principalResult(result: unknown): Record<string, unknown> {
+  if (!isPlainObject(result)) throw new Error("principal port returned a non-object result; return a plain JSON object from the plugin");
+  return projectPublicValue(result) as Record<string, unknown>;
+}
+
+/** Only the authenticated principal endpoint may call these; there is deliberately no console-port fallback. */
+export async function dispatchPrincipalSnapshot(entry: PluginEntry, input: { principal: string; panel: string }): Promise<Record<string, unknown>> {
+  const provider = principalProvider(entry, input.principal);
+  if (typeof provider.principalSnapshot !== "function") throw new Error("plugin has no principalSnapshot port; implement it before serving principal snapshots");
+  if (typeof input.panel !== "string" || !PANEL_ID.test(input.panel)) throw new Error("principal panel is invalid; pass a valid panel id to the principal snapshot port");
+  return principalResult(await provider.principalSnapshot({ principal: input.principal, panel: input.panel }));
+}
+
+export async function dispatchPrincipalAction(entry: PluginEntry, input: { principal: string; tool: string; input: Record<string, unknown> }, meta: ActionMeta): Promise<ActionResult> {
+  const provider = principalProvider(entry, input.principal);
+  if (!entry.manifest!.capabilities!.principal!.tools.some((tool) => tool.name === input.tool)) throw new Error("principal tool is not declared by this plugin; select a tool from capabilities.principal.tools");
+  if (typeof provider.principalAction !== "function") throw new Error("plugin has no principalAction port; implement it before serving principal tools");
+  if (!isPlainObject(input.input)) throw new Error("principal tool input is not an object; pass a JSON object matching its inputSchema");
+  const result = await provider.principalAction({ principal: input.principal, tool: input.tool, input: input.input },
+    { identity: meta.identity, node: meta.node, via: meta.via, actor: { kind: "principal", id: input.principal } });
+  if (!isPlainObject(result) || typeof result.ok !== "boolean") throw new Error("principalAction returned no boolean ok; return an ActionResult from the plugin");
+  return principalResult(result) as ActionResult;
 }
 
 /** Plugin asset types the console serves; SVG is only ever an attachment so its scripts never run in the console origin. */
@@ -343,7 +411,7 @@ async function loadOne(entry: PluginEntry, ctx: ConsoleContext): Promise<PluginE
     const problems = manifestProblems(plugin.manifest, entry.tool);
     if (problems.length) return { ...entry, status: "failed", reason: problems[0] };
     const provider = await withTimeout(plugin.open({ ...ctx, features: [...CONSOLE_FEATURES] }), OPEN_MS, "open()");
-    const pp = providerProblems(provider);
+    const pp = providerProblems(provider, plugin.manifest);
     if (pp.length) return { ...entry, status: "failed", reason: pp[0] };
     // The manifest goes to the browser as JSON; a value that cannot (BigInt, cycles) fails this plugin only.
     let manifest: ConsolePanelManifest;

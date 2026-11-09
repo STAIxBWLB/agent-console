@@ -266,7 +266,7 @@ describe("action meta under serve (#27 AC2)", () => {
     const forged = { identity: "someone-else", node: "elsewhere", via: "console" };
     const res = await call(server, "/p/ask/action", { jwt, body: { action: "seen", id: "r1", seenAt: "2026-11-02T00:00:00Z", meta: forged } });
     expect(res.status).toBe(200);
-    expect(plugin.calls.at(-1)!.meta).toEqual({ identity: "access:user-1", node: "local", via: "console" });
+    expect(plugin.calls.at(-1)!.meta).toEqual({ identity: "access:user-1", node: "local", via: "console", actor: { kind: "person", id: "access:user-1" } });
     expect(plugin.calls.at(-1)!.input.meta).toEqual(forged);
   });
 });
