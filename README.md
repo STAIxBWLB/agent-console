@@ -300,6 +300,42 @@ Versions and upgrades (#26):
 - Panels run under a strict CSP: no inline scripts or `style=` attributes, nothing from other origins. Style with the `--acon-*` tokens.
 - Space: declare `capabilities.space` and answer `{scene: SpaceScene}`. `registerConsoleConformance()` checks the public fields and bounds. The demo plugin includes a three-actor, four-zone fixture; production feeds are supplied by their plugins.
 
+### Producer-owned execution provenance
+
+A bare `{changed: false}` reply (with only an optional `cursor` key) means a conditional no-change response. The shell suppresses background delivery and replays the cached full snapshot after `show()`, or requests `after: 0` when no full snapshot is cached. Any additional key makes the reply a full snapshot, including legacy plugin data that happens to contain `changed: false`.
+
+Lineage and attempt comparison belong to the provider that owns the source records. Use `host.navigate(tool, panel, params)` with explicit owner/project selectors, and render bounded metadata through the existing detail/table/notice kit. Keep origin node, tool, project, exact reference revision/hash and source snapshot hash visible. A comparison has a selection set and source hash, not an invented single-record hash. Keep failed/unknown attempts, retry ancestry and unmeasured costs explicit; descriptive rows do not create a new winner or pooled result.
+
+`ExecutionReferenceV1` is `{v: 1, tool, projectKey, kind, id, revision?, sha256?}`. It is an opaque address, never a URL, asset path, script or authority token. Keep bytes/identity exact, select only a registered owner scope, and never resolve a reference by title, shared path or matching hash. Same-node tool navigation retains its owning node in the static shell; an explicitly qualified `node:tool` names that exact owner. An unavailable or unverified foreign owner must remain unavailable, not fall back to the local same-named tool. Only already authorized diagnostic operators may receive detailed missing/withheld reasons; ordinary callers see the same unavailable result.
+
+Readback receipts used for the synthetic fixtures:
+
+| Source | Shape and ceiling |
+| --- | --- |
+| [agent-hub H1/T2/T3 contract at b98faa0](https://github.com/STAIxBWLB/agent-hub/blob/b98faa060e579b7b4a7d0097fbbd2be61c4ca963/docs/design/execution-reference.md) ([#1336](https://github.com/STAIxBWLB/agent-hub/pull/1336), [#1341](https://github.com/STAIxBWLB/agent-hub/pull/1341), [#1358](https://github.com/STAIxBWLB/agent-hub/pull/1358)) | Source-owned refs, separate states/strengths, declared-external links, unavailable/changed cursor semantics; pages at most 100 nodes, 200 edges and 256 KiB. A declared task-to-attempt link does not fill the missing dispatch causality observation. |
+| [agent-research A1 pages/comparison at e525698](https://github.com/STAIxBWLB/agent-research/blob/e525698dd65f6cbec2a506c784a54318b135b2ad/src/provenance.ts) ([#95](https://github.com/STAIxBWLB/agent-research/pull/95), [#106](https://github.com/STAIxBWLB/agent-research/pull/106)) and [panel readback at defdc11](https://github.com/STAIxBWLB/agent-research/pull/108) | Native attempt ids, current/historical/changed/unavailable states, source-content/ledger-bound cursors, 100/200/256 KiB pages, at most eight selected comparison rows, recorded metrics/digests/costs and no new result authority. |
+
+`test/fixtures/lineage-plugin.ts` and `lineage-panel.js` reimplement synthetic ahub/ares/legacy providers locally; they neither import producer packages nor run producer readers, executors or artifact reads. The ahub fixture renders an H1-shaped page inside its declared Tasks panel; the ares fixture uses declared Lineage/Compare panels. These prove payload shape and console boundaries, not live producer reachability. The merged hub's dedicated `snapshot(panel: "lineage")` read port is not a declared panel and is still refused by this console's panel allowlist; its live addressability belongs to a separate contract follow-up. This fixture does not widen that allowlist.
+
+Poll only the selected view with its previous numeric `after` cursor. `changed: false` updates the cursor without notifying/rerendering a panel, fetching details or fanning out to other providers; old plugins with full replies still use identical-payload suppression. Fetch subsequent graph pages and source details only on explicit selection, and discard old-generation replies. Reads must not invoke actions. Keep controls at their owner; historical selections are non-actionable, read-only refuses before provider invocation, and a stale confirmation requires an explicit current-record refresh and a new preview/fingerprint exchange.
+
+Focused checks (no real family home or live producer records):
+
+```sh
+bun test test/lineage.test.ts test/lineage-shell.test.ts
+node scripts/ui-check-lineage.mjs /path/to/lineage-report
+```
+
+The browser probe discovers an existing Playwright install (`PLAYWRIGHT_MODULE` can select it); it installs nothing. `PLAYWRIGHT_EXECUTABLE_PATH` can select an existing Chromium/Chrome. It launches isolated H2 nodes and a fresh browser profile, records a JSON report and screenshots, then closes only its fixtures. Run it as the repo's single browser job under the resource policy.
+
+Bounded UI checklist:
+
+- At 375 and 1440 px in both themes, use Tab/Enter for task -> attempt -> comparison -> source evidence. Inspect the images for readable owner/project/hash, partial outcomes, retry/no-new-winner notices and no document overflow; DOM assertions alone are not visual proof.
+- Verify exact node b selection with the same ares id, and disabled unavailable/unsupported owner refs; do not infer foreign-node authority from the address. Verify historical, unsupported and normal legacy fallback views.
+- Let the next conditional poll finish: focus/render counts and detail counts must stay unchanged. A delayed previous selection cannot replace the current record or cursor. A 505-node synthetic source stays on bounded pages with explicit continuation, and comparison stays within eight records.
+- In read-only mode, action refusal must precede a provider call. A stale source/fingerprint cannot write; refreshing the current source and requesting a new preview is a separate explicit path.
+- Report source/fixture, hosted CI and actual browser/image inspection separately. Safari/VoiceOver and live producer integration remain unverified unless separately exercised; this probe does not establish them.
+
 ### Panel kit
 
 Each panel receives `host.ui`, typed as `ConsoleUi` from `@staix/agent-console/contract`. The kit returns DOM nodes and renders strings as text, including strings containing HTML. Use it through the host; panels do not import shell files. The contract compiles without the DOM lib: its panel types (`PanelElement`, `PanelButton`, `PanelForm`, `PanelNode`) are the DOM's `HTMLElement`, `HTMLButtonElement`, `HTMLFormElement` and `Node` when the consumer has the DOM lib, and the structural `ConsoleElement` and `ConsoleNode` otherwise.

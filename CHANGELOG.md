@@ -11,11 +11,13 @@
 
 ### Added
 
+- Add synthetic H1/A1 lineage and comparison integration fixtures with explicit owner/project/hash routing, bounded pages and lazy evidence reads, plus isolated compact/wide keyboard and visual checks (#63).
 - Serve authenticated MCP principal tools at `/principal/mcp` with a private live registry, verified Access or separate bearer identity, per-principal rate and concurrency limits, read-only filtering, bounded bodies/results and metadata-only audit. Add `acon principal list|off|on` and document the 2025-11-25 transport and registry schema (#88).
 - Add opt-in principal tool declarations, dedicated principal snapshot/action ports and bounded public JSON results. Console dispatch builds person actors; principal dispatch never falls back to console ports. The conformance kit validates principal declarations while API 1 plugins remain compatible (#88, contract slice).
 
 ### Fixed
 
+- Honor `changed: false` panel replies without notifying listeners or rerendering, while updating the conditional cursor and retaining legacy full-snapshot deduplication (#63).
 - Safely release queued diagram visibility callbacks after frame handover or a visible theme redraw, without dereferencing a cleared observer (#90).
 
 ## [0.1.8] - 2026-11-09
