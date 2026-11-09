@@ -149,8 +149,17 @@ try {
       assert.equal(after.nodes.a.ares.assets, 0); assert.equal(after.shellSecrets, 0);
       for (const node of Object.values(after.nodes)) for (const tool of Object.values(node)) { assert.equal(tool.writes, 0); assert.equal(tool.actions, 0); }
       assert.deepEqual(pageErrors, []);
+      const returnUrl = page.url();
+      const returned = page.waitForResponse(async (response) => response.request().method() === "POST" && response.url().startsWith(fixture.nodes.a) && response.url().includes("/snapshot") && response.request().postDataJSON().rootKind === "artifact" && response.request().postDataJSON().after > 0 && (await response.json()).changed === false);
+      await page.goto(fixture.origin + "/#/local/a:legacy/notes");
+      await ownerReady(page, "a:legacy");
+      await page.goto(returnUrl);
+      await returned;
+      await page.getByRole("heading", { name: "Source evidence", exact: true }).waitFor();
+      assert(!(await active(page).textContent()).includes("Loading lineage"), "Returning view stayed loading");
+      assert.equal(Number(await active(page).getAttribute("data-callbacks")), Number(rendered.callbacks) + 1, "Returning view did not replay exactly one full snapshot");
       await capture(page, `${width}-${theme}-evidence`);
-      report.journeys.push({ width, theme, keys, unchanged: true, detailsOnDemand: true, origin: "a/ares/study-alpha" });
+      report.journeys.push({ width, theme, keys, unchanged: true, returnToSameViewReplayed: true, detailsOnDemand: true, origin: "a/ares/study-alpha" });
     } finally { await context.close(); }
   }
   const context = await contextFor(1440, "light");

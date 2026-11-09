@@ -1550,7 +1550,7 @@ async function showTool(r) {
   if (!p) {
     const banner = h("p", { class: "notice", role: "status", hidden: true });
     const body = h("div", { class: "panel-body" });
-    p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0, lastSig: "" };
+    p = { tool: tool.tool, mount: h("div", { class: "panel-mount", "data-tool": tool.tool }, banner, body), banner, body, snapListeners: [], themeListeners: [], instance: null, panel: null, cursor: 0, next: 0, busy: false, loading: null, view: "", gen: 0, lastSig: "", lastData: null };
     state.panels.set(tool.tool, p);
     $("main").append(p.mount);
     const styleReady = staticTransport ? staticTransport.loadStyle(`/p/${tool.tool}/panel.css`, pinnedRefs) : Promise.resolve(document.head.append(h("link", { rel: "stylesheet", href: pluginPath(`/p/${tool.tool}/panel.css`) })));
@@ -1566,7 +1566,7 @@ async function showTool(r) {
   await p.loading;
   if (state.route.area !== "tool" || state.route.tool !== tool.tool || !p.instance) return;
   const view = JSON.stringify([r.panel, r.params]);
-  if (p.view !== view) { p.cursor = 0; p.view = view; p.gen += 1; }
+  if (p.view !== view) { p.cursor = 0; p.lastData = null; p.view = view; p.gen += 1; }
   p.panel = r.panel;
   p.lastSig = "";
   safe(tool.tool, "show", () => p.instance.show?.(r.panel, r.params));
@@ -1581,7 +1581,8 @@ async function pollPanel() {
   const tool = toolById(r.tool);
   p.busy = true;
   const gen = p.gen;
-  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after: p.cursor, panel: r.panel });
+  const after = p.cursor;
+  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel });
   p.busy = false;
   p.next = Date.now() + Math.min(60000, Math.max(2000, tool?.pollMs ?? 5000));
   // A response for an earlier panel or item never reaches the view now shown.
@@ -1590,12 +1591,22 @@ async function pollPanel() {
   if (res.status === 200) {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
-    if (res.data.changed === false) return;
+    let data = res.data;
+    if (data.changed === false) {
+      if (p.lastSig !== "") return;
+      if (!p.lastData) {
+        // Recover a full reply once when show() has no cached snapshot to replay.
+        if (after !== 0) { p.cursor = 0; p.next = 0; pollPanel(); }
+        return;
+      }
+      data = p.lastData;
+    }
     // Listeners hear only changed data, so an unchanged poll never re-renders the panel (focus and scroll stay).
-    const sig = JSON.stringify(res.data);
+    const sig = JSON.stringify(data);
     if (sig === p.lastSig) return;
     p.lastSig = sig;
-    for (const cb of p.snapListeners) safe(r.tool, "onSnapshot", () => cb(res.data));
+    p.lastData = data;
+    for (const cb of p.snapListeners) safe(r.tool, "onSnapshot", () => cb(data));
   } else if (res.status) {
     p.banner.hidden = false;
     p.banner.replaceChildren(icon("alert"), h("span", { text: `${tool?.title ?? r.tool} could not refresh. ` }), h("a", { href: hashFor("system"), text: "Details in System" }));
