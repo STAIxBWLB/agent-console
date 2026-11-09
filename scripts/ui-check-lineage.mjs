@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // #63 isolated producer-owned lineage proof. Playwright is discovered, never installed or a dependency.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -11,6 +11,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const output = resolve(process.argv[2] ?? "ui-check-lineage");
 const report = { captures: [], journeys: [], findings: [], source: "Synthetic H1/A1 metadata; no producer readers or live records", safariVoiceOver: "unverified" };
+const revision = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+report.sourceCommit = revision.status === 0 ? revision.stdout.trim() : "unverified";
+report.trackedSourceDirty = spawnSync("git", ["diff", "--quiet", "HEAD"], { cwd: root }).status !== 0;
 const tokens = { a: "lineage-fixture-a-" + "a".repeat(40), b: "lineage-fixture-b-" + "b".repeat(40) };
 async function playwrightModule() {
   const require = createRequire(join(root, "package.json"));
