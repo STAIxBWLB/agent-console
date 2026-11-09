@@ -169,7 +169,7 @@ acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.co
   - Browser sign-in (bearer mode only): a browser opening `/` unauthenticated is redirected to `/login`, a script-free form that takes the token and sets an `HttpOnly; SameSite=Strict` session cookie for 12 hours that stands for the token. The POST needs a configured `Origin`. Access and loopback nodes have no `/login`.
 - The verified identity (the Access `sub`, or `bearer`) takes the place of the ticket session. Confirm tokens for destructive actions are bound to it, so a preview confirmed by another identity is refused. The page skips the ticket step because `/session` answers `{ok: true, mode: "serve"}`.
 - CSP, headers, plugins, the confirm path and the 32 KB body limit are the same as under `acon ui`.
-- Read-only node: `--read-only` or `ACON_READ_ONLY=1` refuses console `/p/<tool>/action` requests and writable principal tools. Declared `readOnly` principal tools continue to execute `principalAction`; snapshots, search and assets remain available. `/tools` reports `readOnly: true`, and the shell shows a "Read-only" chip and disables verb, answer and confirm buttons.
+- Read-only node: `--read-only` or `ACON_READ_ONLY=1` refuses console `/p/<tool>/action` requests with 403 and `{ok: false, error: "read-only node"}`, before any confirm-token lookup, without calling the plugin or issuing a token. It also refuses writable principal tools. Authentication rules do not change. Declared `readOnly` principal tools continue to execute `principalAction`; snapshots, search and assets remain available. `/tools` reports `readOnly: true`, and the shell shows a "Read-only" chip and disables verb, answer and confirm buttons.
 
 ### Local Mac and other Macs over WARP
 
