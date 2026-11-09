@@ -39,12 +39,15 @@ export async function waitForCi(fetchRuns: () => Promise<CiRun[]>, opts: { deadl
   const now = opts.now ?? Date.now;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const end = now() + opts.deadlineMs;
+  let verdict: CiVerdict | undefined;
+  let lastError: unknown;
   for (;;) {
-    let verdict: CiVerdict = "missing";
-    try { verdict = ciVerdict(await fetchRuns()); } catch (e) { if (e instanceof FatalGateError) throw e; console.error(`release-gate: ${(e as Error).message}; retrying`); }
-    if ((verdict !== "pending" && verdict !== "missing") || now() >= end) return verdict;
+    try { verdict = ciVerdict(await fetchRuns()); } catch (e) { if (e instanceof FatalGateError) throw e; lastError = e; console.error(`release-gate: ${(e as Error).message}; retrying`); }
+    if ((verdict !== undefined && verdict !== "pending" && verdict !== "missing") || now() >= end) break;
     await sleep(opts.intervalMs);
   }
+  if (verdict === undefined) throw new Error(`GitHub API failed on every poll: ${String(lastError)}; re-run this release run`);
+  return verdict;
 }
 
 /** What to do about a non-green gate result. */
@@ -53,7 +56,7 @@ export function nextStep(verdict: CiVerdict, sha: string): string {
   switch (verdict) {
     case "red": return `Check failed on ${sha}; do not rerun it to force a release: ${redo}`;
     case "cancelled": return `Check on ${sha} was cancelled or skipped; rerun that run from the Actions tab, wait for it to pass, then re-run this release run`;
-    case "missing": return `${sha} has no push Check run (it was never the tip of a main push); delete the tag (git push origin :refs/tags/<tag>) and tag the current main head with \`bun scripts/release-tag.ts tag --push\``;
+    case "missing": return `${sha} has no push Check run (it was never the tip of a main push); delete the remote tag (git push origin :refs/tags/<tag>) and the local tag (git tag -d <tag>), then tag the current main head with \`bun scripts/release-tag.ts tag --push\``;
     case "pending": return `Check on ${sha} was still running at the deadline; wait for it to finish green, then re-run this release run`;
     default: return "";
   }

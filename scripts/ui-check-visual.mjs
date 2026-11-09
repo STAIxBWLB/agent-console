@@ -7,7 +7,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 
 function visualPanel(host) {
-  for (const [id, source] of [["valid", "flowchart LR\nA[Start]-->B[Done]"], ["broken", "flowchart LR\nA-->"], ["cap", "a".repeat(20 * 1024 + 1)]]) {
+  for (const [id, source] of [["valid", "flowchart TD\nA[Start]-->B[Review]-->C[Done]"], ["broken", "flowchart LR\nA-->"], ["cap", "a".repeat(20 * 1024 + 1)]]) {
     host.mount.append(host.ui.h("section", { "data-visual-case": id }, host.ui.visual({ kind: "mermaid", title: id, source })));
   }
 }
@@ -30,18 +30,24 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
   await writeFile(join(plugins, "demo.json"), JSON.stringify({ api: 1, tool: "demo", module, sha256: createHash("sha256").update(source).digest("hex") }), { mode: 0o600 });
   const port = await freePort();
   const origin = `http://127.0.0.1:${port}`;
-  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, AGENTHUB_HOME: home }, stdio: "ignore" });
+  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, AGENTHUB_HOME: home }, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-512); });
   let spawnError;
   child.on("error", (error) => { spawnError = error; });
   const stop = () => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM"); };
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, stop);
   report.visualChecks ??= [];
   try {
-    for (let i = 0; i < 100; i += 1) {
-      if (spawnError) throw spawnError;
-      try { if ((await fetch(`${origin}/healthz`)).status === 204) break; } catch { /* starting isolated server */ }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    let healthy = false;
+    const deadline = Date.now() + 10_000;
+    for (let i = 0; i < 100 && Date.now() < deadline; i += 1) {
+      if (spawnError) break;
+      try { if ((await fetch(`${origin}/healthz`, { signal: AbortSignal.timeout(Math.max(1, Math.min(1000, deadline - Date.now()))) })).status === 204) { healthy = true; break; } } catch { /* starting isolated server */ }
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(100, deadline - Date.now()))));
     }
+    if (spawnError) throw new Error(`acon serve could not be started with ${process.env.BUN_BIN ?? "bun"}: ${spawnError.message}; set BUN_BIN to a Bun executable`);
+    if (!healthy) throw new Error(`acon serve did not answer /healthz within 10 s; check BUN_BIN and the plugin manifest hash. Server stderr (last 512 characters): ${stderr.trim() || "(empty)"}; run bun bin/acon.js serve --port <port> by hand to see its startup error`);
     for (const suspendAnimationFrames of [false, true]) for (const theme of ["light", "dark"]) {
       const label = `visual-${theme}-${suspendAnimationFrames ? "suspended-raf" : "natural"}`;
       const context = await browser.newContext({ viewport: { width: 900, height: 1000 }, colorScheme: theme });
@@ -93,7 +99,23 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
         assert(probe.starts.some((s) => s.case === "valid" && s.hidden && s.height <= 2), "No loading frame was observed hidden at zero content height");
         assert(probe.replies.some((r) => r.case === "valid" && r.ok === true && r.elapsedMs < 5000), "No successful reply before timeout");
         assert(probe.replies.some((r) => r.case === "broken" && r.ok === false && r.elapsedMs < 4000), "Malformed reply was not prompt");
-        report.visualChecks.push({ label, ...probe, revealed, decoded });
+        // Keep the live panel mounted while System hides it, then request the opposite theme.
+        const changedTheme = theme === "light" ? "dark" : "light";
+        const beforeReplies = probe.replies.filter((r) => r.case === "valid").length;
+        await page.getByRole("link", { name: "System", exact: true }).click();
+        await page.waitForFunction(() => document.querySelector('[data-visual-case="valid"] iframe')?.offsetParent === null);
+        await page.getByRole("button", { name: changedTheme === "dark" ? "Dark" : "Light", exact: true }).click();
+        assert.equal(await frame.contentFrame().locator("html").getAttribute("class"), theme, "Hidden panel redrew before becoming visible");
+        await page.evaluate(() => { location.hash = "#/local/demo/visual"; });
+        await valid.scrollIntoViewIfNeeded();
+        await page.waitForFunction((before) => window.__visualProbe.replies.filter((r) => r.case === "valid").length > before, beforeReplies);
+        await frame.contentFrame().locator("#diagram img").evaluate((img) => img.decode());
+        const height = await frame.evaluate((el) => el.getBoundingClientRect().height);
+        const renderedTheme = await frame.contentFrame().locator("html").getAttribute("class");
+        assert(height > 80, `Reopened diagram was clipped to ${height} px`);
+        assert.equal(renderedTheme, changedTheme, "Reopened diagram did not adopt the requested theme");
+        const retheme = { hidden: true, requestedTheme: changedTheme, renderedTheme, height };
+        report.visualChecks.push({ label, ...probe, revealed, decoded, retheme });
         const file = `${label}.png`;
         await valid.scrollIntoViewIfNeeded();
         await page.screenshot({ path: join(output, file), fullPage: false });

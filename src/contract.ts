@@ -263,7 +263,7 @@ export interface ConsoleUi {
   bars(o: { items: { label: string; value: number; target?: number }[]; max?: number; caption: string }): PanelElement;
   /** A small line of the last 365 values at most. */
   spark(o: { values: number[]; caption: string }): PanelElement;
-  /** An image of this plugin's asset `id` (PNG or JPEG). Only asset ids are accepted, never URLs. */
+  /** An image of this plugin's asset `id` (PNG, JPEG or WebP). Only asset ids are accepted, never URLs. */
   img(o: { asset: string; alt: string }): PanelElement;
   /** A same-origin frame of this plugin's asset `id`, for PDF and text. */
   frame(o: { asset: string; title: string }): PanelElement;

@@ -8,7 +8,7 @@ permissions:
   contents: read
 concurrency:
   group: check-${{ github.ref }}
-  # Only PR runs cancel each other: a main push run is the release gate's evidence and must finish.
+  # In-progress main runs are not cancelled; a newer queued run can still replace an older pending run.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
@@ -49,5 +49,5 @@ jobs:
           RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
           echo "gating results: $RESULTS"
-          for r in $RESULTS; do [ "$r" = success ] || { echo "a gating job ended $r"; exit 1; }; done
-          [ -n "$RESULTS" ]
+          for r in $RESULTS; do [ "$r" = success ] || { echo "a gating job ended $r; open the failed check job log in this run"; exit 1; }; done
+          [ -n "$RESULTS" ] || { echo "no gating job ran; check the ci-ok needs list"; exit 1; }

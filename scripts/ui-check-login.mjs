@@ -39,7 +39,11 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   await writeFile(tokenFile, `${token}\n`, { mode: 0o600 });
   const port = await freePort();
   const origin = `http://100.96.0.1:${port}`;
-  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: "ignore" });
+  const child = spawn(process.env.BUN_BIN ?? "bun", [join(root, "bin", "acon.js"), "serve", "--port", String(port), "--origin", origin], { cwd: root, env: { ...env, ACON_TOKEN_FILE: tokenFile }, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr = (stderr + chunk.toString()).slice(-512); });
+  let spawnError;
+  child.on("error", (error) => { spawnError = error; });
   // Forwards every proxied request to the loopback node, keeping the WARP Host header.
   const proxy = createHttpServer((req, res) => {
     const target = new URL(req.url);
@@ -50,10 +54,15 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   await new Promise((done) => proxy.listen(0, "127.0.0.1", done));
   report.login = { origin: "http://100.96.0.1 (WARP address via forwarding proxy)", matrix: report.matrix, captures: 0, signedIn: false };
   try {
-    for (let i = 0; i < 50; i += 1) {
-      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).status === 204) break; } catch { /* not listening yet */ }
-      await new Promise((done) => setTimeout(done, 100));
+    let healthy = false;
+    const deadline = Date.now() + 10_000;
+    for (let i = 0; i < 100 && Date.now() < deadline; i += 1) {
+      if (spawnError) break;
+      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(Math.max(1, Math.min(1000, deadline - Date.now()))) })).status === 204) { healthy = true; break; } } catch { /* not listening yet */ }
+      await new Promise((done) => setTimeout(done, Math.max(0, Math.min(100, deadline - Date.now()))));
     }
+    if (spawnError) throw new Error(`acon serve could not be started with ${process.env.BUN_BIN ?? "bun"}: ${spawnError.message}; set BUN_BIN to a Bun executable`);
+    if (!healthy) throw new Error(`acon serve did not answer /healthz within 10 s; check BUN_BIN and the plugin manifest hash. Server stderr (last 512 characters): ${stderr.trim() || "(empty)"}; run bun bin/acon.js serve --port <port> by hand to see its startup error`);
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) {
       const scenario = { width, theme, textPercent };
       const context = await browser.newContext({ viewport: { width, height: 800 }, colorScheme: theme, reducedMotion: "reduce", proxy: { server: `http://127.0.0.1:${proxy.address().port}` } });

@@ -559,11 +559,12 @@ describe("ui.visual", () => {
       window: { addEventListener: (type: string, fn: (event: { source: unknown; data: unknown }) => void) => { if (type === "message") listeners.push(fn); } },
       setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimeout: () => {},
       queueMicrotask: (fn: () => void) => fn(),
-      ...(opts.io ? { IntersectionObserver: class { constructor(private cb: (e: { isIntersecting: boolean }[]) => void) { ioCallbacks.push(cb); } observe() {} disconnect() {} } } : {}),
+      ...(opts.io ? { IntersectionObserver: class { constructor(private cb: (e: { isIntersecting: boolean }[]) => void) { ioCallbacks.push(cb); } observe() {} disconnect() { disconnected.push(this.cb); } } } : {}),
     }) as ConsoleUi;
     const ioCallbacks: ((e: { isIntersecting: boolean }[]) => void)[] = [];
+    const disconnected: ((e: { isIntersecting: boolean }[]) => void)[] = [];
     const send = (src: unknown, data: unknown) => { for (const fn of listeners) fn({ source: src, data }); };
-    return { ui, posted, timers, frames, send, ioCallbacks };
+    return { ui, posted, timers, frames, send, ioCallbacks, disconnected };
   }
   for (const c of VISUAL_CASES) test(`shared visual case: ${c.id}`, () => {
     const { ui } = visualKit();
@@ -697,18 +698,27 @@ describe("ui.visual", () => {
     k.ioCallbacks[0]!([{ isIntersecting: true }]);
     k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
     k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 120 });
+    // A defers a hidden-frame theme change; hand-over must release that observer.
+    const frame = walk(a).find((n) => n.tagName === "IFRAME")!;
+    Object.defineProperty(frame, "offsetParent", { value: null, configurable: true });
+    mode = "dark";
+    onTheme!();
+    expect(k.ioCallbacks).toHaveLength(2);
+    expect(k.disconnected).not.toContain(k.ioCallbacks[1]!);
+    Object.defineProperty(frame, "offsetParent", { value: a });
     // A leaves the page; B takes the same pooled frame and renders.
     (walk(a).find((n) => n.tagName === "IFRAME")! as KitNode & { remove(): void }).remove();
     const b = node(k.ui.visual({ kind: "mermaid", source: "flowchart LR\n C-->D" }));
-    k.ioCallbacks[1]!([{ isIntersecting: true }]);
+    k.ioCallbacks[2]!([{ isIntersecting: true }]);
+    expect(k.disconnected).toContain(k.ioCallbacks[1]!);
     k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
     k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[1]!.msg.id, ok: true, height: 140 });
     expect(k.frames).toHaveLength(1);
-    mode = "dark";
+    mode = "light";
     onTheme!();
     // Exactly one redraw, and it is B's source.
     expect(k.posted).toHaveLength(3);
-    expect(k.posted[2]!.msg).toMatchObject({ source: "flowchart LR\n C-->D", theme: "dark" });
+    expect(k.posted[2]!.msg).toMatchObject({ source: "flowchart LR\n C-->D", theme: "light" });
     void b;
   });
 
@@ -733,11 +743,12 @@ describe("ui.visual", () => {
     expect(k.posted).toHaveLength(2);
   });
 
-  test("a theme change redraws connected diagrams in their frames, once per change", () => {
+  test("without IntersectionObserver, a theme change redraws even a hidden connected frame once per change", () => {
     let mode = "light";
     let onTheme: (() => void) | undefined;
     const k = visualKit({ theme: () => mode, onTheme: (cb: () => void) => { onTheme = cb; } });
     const r = node(k.ui.visual({ kind: "mermaid", source: flow }));
+    Object.defineProperty(walk(r).find((n) => n.tagName === "IFRAME")!, "offsetParent", { value: null });
     k.send(k.frames[0]!.win, { acon: "visual", ready: true, ok: true });
     expect(k.posted[0]!.msg.theme).toBe("light");
     k.send(k.frames[0]!.win, { acon: "visual", id: k.posted[0]!.msg.id, ok: true, height: 200 });

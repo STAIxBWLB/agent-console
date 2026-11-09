@@ -33,6 +33,8 @@ for (let i = 2; i < process.argv.length; i += 1) {
 if ([options.spaceMotionOnly, options.spaceViewsOnly, options.staticOnly, options.loginOnly, options.visualOnly].filter(Boolean).length > 1) throw new Error("Choose only one focused probe mode");
 if (options.artRoot && !options.spaceViewsOnly) throw new Error("--art-root requires --space-views-only");
 
+if (options.visualOnly && options.forceOverflow) throw new Error("--force-overflow has no overflow control in --visual-only; remove --force-overflow or choose a probe that checks overflow");
+
 async function findPlaywright() {
   const require = createRequire(join(root, "package.json"));
   if (process.env.PLAYWRIGHT_MODULE) {
