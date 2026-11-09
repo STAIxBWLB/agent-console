@@ -19,16 +19,17 @@ export interface PrincipalRecord {
 export interface PrincipalRegistry { version: 1; principals: PrincipalRecord[] }
 export class PrincipalError extends Error {}
 class PrincipalIdError extends PrincipalError {}
+class RegistryEditConflictError extends PrincipalError {}
 export class BodyError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 const registryPath = (home: string) => join(home, "console", "principals.json");
 const privateMode = (s: Stats) => s.isFile() && (s.mode & 0o777) === 0o600 && (typeof process.getuid !== "function" || s.uid === process.getuid()) && s.nlink === 1;
-function privateText(file: string): string {
+function privateText(file: string, compareUnsafeOnly = false): string {
   const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = fstatSync(fd);
-    if (!privateMode(stat) || stat.size > PRINCIPAL_INPUT_MAX) throw new PrincipalError("private file is unsafe");
+    if (!stat.isFile() || (!compareUnsafeOnly && !privateMode(stat)) || stat.size > PRINCIPAL_INPUT_MAX) throw new PrincipalError("private file is unsafe");
     const bytes = readFileSync(fd);
     if (bytes.length > PRINCIPAL_INPUT_MAX) throw new PrincipalError("private file is too large");
     return bytes.toString("utf8");
@@ -47,10 +48,11 @@ const toolName = (v: unknown): v is string => {
 };
 
 /** Re-read for each request: removed, disabled, replaced or unsafe registries never use cached authority. */
-export function readPrincipalRegistry(home: string): PrincipalRegistry {
+function readRegistrySnapshot(home: string): { text: string; registry: PrincipalRegistry } {
   try {
     privateDirectory(join(home, "console"));
-    const value: unknown = JSON.parse(privateText(registryPath(home)));
+    const text = privateText(registryPath(home));
+    const value: unknown = JSON.parse(text);
     if (!isPlainObject(value) || value.version !== 1 || !Array.isArray(value.principals) || Object.keys(value).some((k) => !["version", "principals"].includes(k))) throw new PrincipalError("invalid registry");
     const ids = new Set<string>(), credentials = new Set<string>();
     const principals = value.principals.map((p: unknown): PrincipalRecord => {
@@ -74,26 +76,29 @@ export function readPrincipalRegistry(home: string): PrincipalRegistry {
       }
       return { id: p.id, enabled: p.enabled, tools: [...new Set(p.tools as string[])], ratePerMinute: rate, ...(p.bearerTokenFile ? { bearerTokenFile: p.bearerTokenFile as string } : {}), ...(access ? { access } : {}) };
     });
-    return { version: 1, principals };
+    return { text, registry: { version: 1, principals } };
   } catch (error) {
     if (error instanceof PrincipalIdError) throw error;
     throw new PrincipalError("principal registry is missing, unsafe or invalid; check console/principals.json version 1, unique ids/credentials, tool lists, positive rates, owner and mode 0600");
   }
 }
 
+export function readPrincipalRegistry(home: string): PrincipalRegistry {
+  return readRegistrySnapshot(home).registry;
+}
+
 export function setPrincipalEnabled(home: string, id: string, enabled: boolean): void {
-  readPrincipalRegistry(home);
-  const before = privateText(registryPath(home));
-  const registry = readPrincipalRegistry(home);
+  const { text: before, registry } = readRegistrySnapshot(home);
   const record = registry.principals.find((p) => p.id === id);
   if (!record) throw new PrincipalError("principal id is not registered; run acon principal list and choose an existing id");
   record.enabled = enabled;
   const temporary = join(home, "console", `.principals-${randomUUID()}.tmp`);
   try {
     writeFileSync(temporary, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    if (privateText(registryPath(home)) !== before) throw new PrincipalError("principal registry changed during edit; reread it before retrying acon principal on/off");
+    if (privateText(registryPath(home)) !== before) throw new RegistryEditConflictError("principal registry changed during edit; reread it before retrying acon principal on/off");
     renameSync(temporary, registryPath(home));
-  } catch {
+  } catch (error) {
+    if (error instanceof RegistryEditConflictError) throw error;
     throw new PrincipalError("principal registry could not be safely updated; check ownership, mode 0600 and concurrent edits, then retry acon principal on/off");
   } finally { try { unlinkSync(temporary); } catch { /* renamed or never created */ } }
 }
@@ -138,7 +143,7 @@ export async function readBoundedJson(req: Request, limit: number, rejectPrototy
 }
 
 const digest = (token: string) => createHash("sha256").update(token).digest();
-async function identify(req: Request, serve: ServeOptions, registry: PrincipalRegistry): Promise<PrincipalRecord | null> {
+async function identify(req: Request, serve: ServeOptions, registry: PrincipalRegistry, log: (message: string) => void): Promise<PrincipalRecord | null> {
   if (serve.mode === "access") {
     const identity = await serve.verifyAccess?.(req);
     if (!identity) return null;
@@ -151,15 +156,22 @@ async function identify(req: Request, serve: ServeOptions, registry: PrincipalRe
   if (!token || serve.checkToken?.(token)) return null;
   const given = digest(token);
   const matches: PrincipalRecord[] = [];
-  for (const p of registry.principals) {
+  let unsafeMatch = false;
+  for (const [index, p] of registry.principals.entries()) {
     if (!p.enabled || !p.bearerTokenFile) continue;
     let expected: string;
     try { expected = privateText(p.bearerTokenFile).trim(); }
-    catch { throw new PrincipalError("principal token file is unsafe or unreadable; check its owner, regular-file type and mode 0600"); }
-    if (expected.length < 32 || /\s/.test(expected) || serve.checkToken?.(expected)) throw new PrincipalError("principal credential configuration is invalid; use a separate random token of at least 32 characters for each principal");
+    catch {
+      log(`principal bearer record ${index + 1} refused: token file is unsafe or unreadable; check its owner, regular-file type and mode 0600`);
+      // A readable unsafe regular file can only veto a duplicate, never grant identity.
+      try { if (timingSafeEqual(given, digest(privateText(p.bearerTokenFile, true).trim()))) unsafeMatch = true; } catch { /* Unreadable and non-regular files remain refused. */ }
+      continue;
+    }
+    if (expected.length < 32 || /\s/.test(expected) || serve.checkToken?.(expected)) { log(`principal bearer record ${index + 1} refused: credential configuration is invalid; use a separate random token of at least 32 characters`); continue; }
     if (timingSafeEqual(given, digest(expected))) matches.push(p);
   }
-  return matches.length === 1 ? matches[0]! : null;
+  if (matches.length > 1 || (unsafeMatch && matches.length > 0)) log("principal bearer credential matches multiple enabled records; configure unique tokens before retrying");
+  return !unsafeMatch && matches.length === 1 ? matches[0]! : null;
 }
 
 function auditFile(home: string): number {
@@ -171,10 +183,16 @@ function auditFile(home: string): number {
 }
 
 export interface PrincipalEndpointOptions {
-  home: string; serve: ServeOptions; getPlugins: () => Promise<PluginEntry[]>; version: string; callMs: number; now?: () => number;
+  home: string; serve: ServeOptions; getPlugins: () => Promise<PluginEntry[]>; version: string; callMs: number; log: (message: string) => void; now?: () => number;
 }
 export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req: Request) => Promise<Response> {
   const now = options.now ?? Date.now;
+  const reported = new Set<string>();
+  const log = (message: string) => {
+    if (reported.has(message)) return;
+    reported.add(message);
+    try { options.log(message); } catch { /* A failed diagnostic sink never grants identity. */ }
+  };
   const states = new Map<string, { start: number; count: number; active: number }>();
   const respond = (id: unknown, value: { result?: unknown; error?: { code: number; message: string } }, status = 200, overflowMessage = "principal response exceeds 256 KiB; reduce declared tools, descriptions or response metadata before retrying") => {
     let body = JSON.stringify({ jsonrpc: "2.0", id, ...value });
@@ -264,9 +282,13 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
     if (options.serve.mode === "loopback" || !["/principal/mcp", "/principal/health"].includes(path)) return error(null, -32601, "principal route is unavailable; use an authenticated serve node and /principal/mcp", 404);
     if (req.headers.has("origin")) return error(null, -32000, "principal routes do not accept browser origins; connect directly with principal credentials", 403);
     let registry: PrincipalRegistry, principal: PrincipalRecord | null;
-    try { registry = readPrincipalRegistry(options.home); principal = await identify(req, options.serve, registry); }
-    catch (failure) { return error(null, -32000, failure instanceof PrincipalError ? failure.message : "principal credentials or registry are unavailable; check private registry/token files, ownership, mode 0600 and separate credentials", 503); }
-    if (!principal) return error(null, -32000, "principal identity is unknown or disabled; ask the owner to register or enable the credential", 403);
+    const unidentified = () => error(null, -32000, "principal identity is unknown or disabled; ask the owner to register or enable the credential", 403);
+    try { registry = readPrincipalRegistry(options.home); principal = await identify(req, options.serve, registry, log); }
+    catch (failure) {
+      log(failure instanceof PrincipalError ? failure.message : "principal authentication dependency failed; check the registry and node authentication settings");
+      return unidentified();
+    }
+    if (!principal) return unidentified();
     const started = now();
     const attempt: Attempt = { tool: null, plugin: null };
     let fd: number | undefined;

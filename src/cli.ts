@@ -36,7 +36,7 @@ Usage:
 Plugins register a manifest under $AGENTHUB_HOME/console/plugins (default ~/.agenthub).
 Packages install to $AGENTHUB_HOME/console/pets/<id> or console/assets/<id>; ACON_ASSETS_INDEX overrides the index URL.
 serve auth: ACON_ACCESS_TEAM + ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN_FILE (bearer); required off loopback.
---read-only or ACON_READ_ONLY=1 refuses every plugin action; snapshots, search and assets keep working.
+--read-only or ACON_READ_ONLY=1 refuses console /p/<tool>/action requests and writable principal tools; declared readOnly principal tools, snapshots, search and assets remain available.
 The ui server exits 5 minutes after the last request; serve stays up.`;
 
 const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], principal: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };

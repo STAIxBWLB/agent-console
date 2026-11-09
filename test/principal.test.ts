@@ -1,10 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { startServer } from "../src/server.ts";
 import { serveConfig, type ServeOptions } from "../src/serve.ts";
-import { readBoundedJson, readPrincipalRegistry, setPrincipalEnabled, PRINCIPAL_INPUT_MAX, PRINCIPAL_OUTPUT_MAX } from "../src/principal.ts";
+import { readBoundedJson, readPrincipalRegistry, setPrincipalEnabled, PrincipalError, PRINCIPAL_INPUT_MAX, PRINCIPAL_OUTPUT_MAX } from "../src/principal.ts";
 import { createPrincipalPlugin } from "./fixtures/principal-plugin.ts";
 import type { PluginEntry } from "../src/plugins.ts";
 
@@ -85,14 +86,65 @@ describe("principal registry and bearer transport", () => {
   });
   test("unsafe registry/token modes, symlinks, malformed data and reused person tokens fail closed", async () => {
     const f = await boot();
-    chmodSync(f.file, 0o644); expect((await rpc(f.server, "tools/list")).status).toBe(503); chmodSync(f.file, 0o600);
-    chmodSync(f.token, 0o644); expect((await rpc(f.server, "tools/list")).status).toBe(503); chmodSync(f.token, 0o600);
-    writeFileSync(f.token, PERSON); expect((await rpc(f.server, "tools/list")).status).toBe(503); writeFileSync(f.token, TOKEN);
+    chmodSync(f.file, 0o644); expect((await rpc(f.server, "tools/list")).status).toBe(403); chmodSync(f.file, 0o600);
+    chmodSync(f.token, 0o644); expect((await rpc(f.server, "tools/list")).status).toBe(403); chmodSync(f.token, 0o600);
+    writeFileSync(f.token, PERSON); expect((await rpc(f.server, "tools/list")).status).toBe(403); writeFileSync(f.token, TOKEN);
     const saved = f.file + ".saved"; writeFileSync(saved, JSON.stringify(f.registry), { mode: 0o600 });
     rmSync(f.file); symlinkSync(saved, f.file); expect(() => readPrincipalRegistry(f.home)).toThrow("registry");
     rmSync(f.file); writeFileSync(f.file, '{"secret":"sentinel-bad-json"', { mode: 0o600 });
-    const result = await rpc(f.server, "tools/list"); expect(result.status).toBe(503); expect(await result.text()).not.toContain("sentinel-bad-json");
+    const result = await rpc(f.server, "tools/list"); expect(result.status).toBe(403); expect(await result.text()).not.toContain("sentinel-bad-json");
     expect(f.plugin.calls).toEqual([]);
+  });
+  test("unidentified callers always get the same 403, while configuration causes stay in the server log", async () => {
+    const f = await boot();
+    const unknown = await rpc(f.server, "tools/list", {}, { token: "unknown-credential" });
+    const neutral = await unknown.json(); expect(unknown.status).toBe(403);
+    rmSync(f.file);
+    const missing = await rpc(f.server, "tools/list"); expect(missing.status).toBe(403); expect(await missing.json()).toEqual(neutral);
+    expect(f.logs.join(" ")).toContain("principal registry is missing, unsafe or invalid");
+    f.save(); chmodSync(f.token, 0o644);
+    const unsafe = await rpc(f.server, "tools/list"); expect(unsafe.status).toBe(403); expect(await unsafe.json()).toEqual(neutral);
+    expect(f.logs.join(" ")).toContain("token file is unsafe or unreadable");
+    for (const secret of [TOKEN, PERSON, "unknown-credential"]) expect(f.logs.join(" ") + JSON.stringify(neutral)).not.toContain(secret);
+    expect(f.plugin.calls).toEqual([]);
+  });
+  test("anonymous health requests log each controlled cause once per endpoint", async () => {
+    const f = await boot();
+    const health = (token?: string) => fetch(`${f.server.origin}/principal/health`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const causes = () => f.logs.filter((line) => line.includes("principal registry") || line.includes("principal bearer"));
+    rmSync(f.file);
+    for (let i = 0; i < 50; i++) expect((await health()).status).toBe(403);
+    expect(causes()).toHaveLength(1);
+    f.save(); chmodSync(f.token, 0o644);
+    for (let i = 0; i < 50; i++) expect((await health("anonymous-token")).status).toBe(403);
+    expect(causes()).toHaveLength(2);
+    chmodSync(f.token, 0o600); writeFileSync(f.token, "too-short");
+    for (let i = 0; i < 5; i++) expect((await health("anonymous-token")).status).toBe(403);
+    expect(causes()).toHaveLength(3);
+    for (const secret of [TOKEN, "anonymous-token", "too-short"]) expect(causes().join(" ")).not.toContain(secret);
+  });
+  test("an unsafe bearer record is refused without blocking other safe principal records", async () => {
+    const f = await boot();
+    const unsafeToken = "unsafe-principal-placeholder-".repeat(3);
+    const unsafeFile = join(f.home, "unsafe-token"); writeFileSync(unsafeFile, unsafeToken, { mode: 0o644 });
+    f.registry.principals.unshift({ ...f.registry.principals[0]!, id: "unsafe", bearerTokenFile: unsafeFile }); f.save();
+    expect((await rpc(f.server, "tools/call", { name: "principal-demo.status" }, { token: unsafeToken })).status).toBe(403);
+    expect((await call(f.server)).status).toBe(200);
+    expect(f.plugin.calls).toHaveLength(1); expect(f.plugin.calls[0]!.meta?.identity).toBe("principal:assistant");
+    expect(f.logs.join(" ")).toContain("record 1 refused"); expect(f.logs.join(" ")).not.toContain(unsafeToken);
+    chmodSync(unsafeFile, 0o600); writeFileSync(unsafeFile, "too-short");
+    expect((await call(f.server)).status).toBe(200);
+    expect(f.logs.join(" ")).toContain("credential configuration is invalid");
+    expect(f.logs.join(" ")).not.toContain("too-short");
+    // Safe duplicate token values remain ambiguous and cannot select an arbitrary identity.
+    writeFileSync(unsafeFile, TOKEN);
+    expect((await call(f.server)).status).toBe(403);
+    expect(f.logs.join(" ")).toContain("multiple enabled records");
+    chmodSync(unsafeFile, 0o644);
+    expect((await call(f.server)).status).toBe(403);
+    expect(f.plugin.calls).toHaveLength(2);
+    writeFileSync(unsafeFile, unsafeToken);
+    expect((await call(f.server)).status).toBe(200);
   });
   test("registry edits, off/on and removed tool authority apply on the next request", async () => {
     const f = await boot();
@@ -224,8 +276,9 @@ describe("principal registry and bearer transport", () => {
       f.registry.principals[0]!.id = id; f.save();
       expect(() => readPrincipalRegistry(f.home)).toThrow("must start with a lowercase letter");
       const response = await rpc(f.server, "tools/list");
-      expect(response.status).toBe(503);
-      expect((await response.json()).error.message).toContain("choose an id such as assistant");
+      expect(response.status).toBe(403);
+      expect((await response.json()).error.message).not.toContain("lowercase");
+      expect(f.logs.join(" ")).toContain("choose an id such as assistant");
     }
     f.registry.principals[0]!.id = "assistant-1"; f.save();
     expect(readPrincipalRegistry(f.home).principals[0]!.id).toBe("assistant-1");
@@ -270,6 +323,8 @@ describe("principal registry and bearer transport", () => {
     const text = list.stdout.toString(); expect(text).not.toContain(f.token); expect(text).not.toContain(TOKEN); expect(JSON.parse(text).principals[0].id).toBe("assistant");
     expect(run("off", "assistant").exitCode).toBe(0); expect(readPrincipalRegistry(f.home).principals[0]!.enabled).toBe(false);
     expect(run("on", "assistant").exitCode).toBe(0); expect(readPrincipalRegistry(f.home).principals[0]!.enabled).toBe(true);
+    const help = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "bin", "acon.js"), "help"], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: f.home, AGENTHUB_HOME: f.home }, stdout: "pipe", stderr: "pipe" });
+    expect(help.exitCode).toBe(0); expect(help.stdout.toString()).not.toContain("refuses every plugin action"); expect(help.stdout.toString()).toContain("declared readOnly principal tools");
     const missing = run("off", "missing");
     expect(missing.exitCode).toBe(1); expect(missing.stderr.toString()).toContain("not registered");
   });
@@ -304,6 +359,11 @@ test("Access maps verified common_name/email, rejects unknown or forged JWTs, an
   const as = (token: string) => ({ "cf-access-jwt-assertion": token });
   expect((await rpc(server, "tools/list", {}, { extra: as(service) })).status).toBe(200);
   expect((await rpc(server, "tools/list", {}, { extra: as(user) })).status).toBe(200);
+  const browserHealth = await fetch(`${server.origin}/principal/health`, { headers: as(user) });
+  expect(browserHealth.status).toBe(204); expect(browserHealth.headers.get("set-cookie")).toBeNull();
+  expect((await fetch(`${server.origin}/principal/health`, { headers: { Cookie: `CF_Authorization=${user}` } })).status).toBe(403);
+  const browserPost = await rpc(server, "tools/list", {}, { extra: { ...as(user), Origin: ORIGIN } });
+  expect(browserPost.status).toBe(403); expect(browserPost.headers.get("access-control-allow-origin")).toBeNull();
   const result = await rpc(server, "tools/call", { name: "principal-demo.status", arguments: { principal: "forged" } }, { extra: as(service) });
   expect(result.status).toBe(200);
   expect(plugin.calls[0]!.meta?.identity).toBe("principal:service");
@@ -314,4 +374,24 @@ test("Access maps verified common_name/email, rejects unknown or forged JWTs, an
   const consoleRequest = await fetch(`${server.origin}/tools`, { method: "POST", headers: { Origin: ORIGIN, "Content-Type": "application/json", ...as(service) }, body: "{}" });
   expect(consoleRequest.status).toBe(401);
   expect(plugin.calls.map((c) => c.port)).toEqual(["principalAction"]);
+});
+
+for (const concurrent of [false, true]) test(`registry toggle uses one validated snapshot and preserves edit-conflict cause (concurrent=${concurrent})`, () => {
+  const source = readFileSync(join(import.meta.dir, "..", "src", "principal.ts"), "utf8");
+  const code = source.slice(source.indexOf("export function setPrincipalEnabled("), source.indexOf("/** Bounded bytes")).replace("export function", "function");
+  const before = JSON.stringify({ version: 1, principals: [{ id: "assistant", enabled: true }] });
+  const external = JSON.stringify({ version: 1, principals: [{ id: "assistant", enabled: true }], externalEdit: true });
+  let current = before, staged = "", snapshots = 0, checks = 0, renames = 0, cleanups = 0;
+  class Conflict extends PrincipalError {}
+  const javascript = new Bun.Transpiler({ loader: "ts" }).transformSync(`${code}\nglobalThis.fixtureToggle = setPrincipalEnabled;`);
+  const toggle = runInNewContext(`${javascript}\nglobalThis.fixtureToggle`, {
+    PrincipalError, RegistryEditConflictError: Conflict, JSON, join, randomUUID: () => "fixture", registryPath: () => "fixture-registry",
+    readRegistrySnapshot: () => { snapshots++; return { text: before, registry: JSON.parse(before) }; },
+    privateText: () => { checks++; return current; },
+    writeFileSync: (_file: string, text: string) => { staged = text; if (concurrent) current = external; },
+    renameSync: () => { renames++; current = staged; }, unlinkSync: () => { cleanups++; },
+  }) as (home: string, id: string, enabled: boolean) => void;
+  if (concurrent) { expect(() => toggle("fixture-home", "assistant", false)).toThrow("registry changed during edit; reread"); expect(current).toBe(external); expect(renames).toBe(0); }
+  else { toggle("fixture-home", "assistant", false); expect(JSON.parse(current).principals[0].enabled).toBe(false); expect(renames).toBe(1); }
+  expect(snapshots).toBe(1); expect(checks).toBe(1); expect(cleanups).toBe(1);
 });
