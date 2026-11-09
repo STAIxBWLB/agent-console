@@ -6,6 +6,8 @@ import { readFileSync, statSync } from "node:fs";
  * Only builtins: WebCrypto verifies the Access JWT, node:crypto compares the bearer token.
  */
 
+export interface VerifiedAccessIdentity { sub: string; email?: string; commonName?: string }
+
 export type Authenticate = (req: Request) => Promise<string | null>;
 export interface ServeOptions {
   hostname: string;
@@ -20,6 +22,8 @@ export interface ServeOptions {
   readOnly?: boolean;
   /** #65, bearer mode only: checks a token typed into `/login`, which then gets a session cookie. */
   checkToken?: (token: string) => boolean;
+  /** Verified Access claims for principal registry mapping, never raw identity headers. */
+  verifyAccess?: (req: Request) => Promise<VerifiedAccessIdentity | null>;
 }
 
 const SKEW_S = 60;
@@ -54,7 +58,7 @@ export function normalizeTeam(team: string): string | null {
 export interface AccessVerifierOptions { team: string; aud: string; certsUrl?: string; now?: () => number; fetchImpl?: typeof fetch }
 
 /** RS256 Cloudflare Access JWT verification against the team JWKS, cached and refreshed on an unknown kid. */
-export function accessVerifier(o: AccessVerifierOptions): (jwt: string) => Promise<{ sub: string } | string> {
+export function accessVerifier(o: AccessVerifierOptions): (jwt: string) => Promise<VerifiedAccessIdentity | string> {
   const team = normalizeTeam(o.team);
   if (!team) throw new Error("ACON_ACCESS_TEAM must be a team domain such as <team>.cloudflareaccess.com");
   const issuer = `https://${team}`;
@@ -111,11 +115,12 @@ export function accessVerifier(o: AccessVerifierOptions): (jwt: string) => Promi
     if (!(aud === o.aud || (Array.isArray(aud) && aud.includes(o.aud)))) return "wrong audience";
     if (payload.iss !== issuer) return "wrong issuer";
     const t = now() / 1000;
-    if (typeof payload.exp !== "number" || t > payload.exp + SKEW_S) return "expired";
-    if (payload.nbf !== undefined && (typeof payload.nbf !== "number" || t < payload.nbf - SKEW_S)) return "not yet valid";
+    if (typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || t > payload.exp + SKEW_S) return "expired";
+    if (payload.nbf !== undefined && (typeof payload.nbf !== "number" || !Number.isFinite(payload.nbf) || t < payload.nbf - SKEW_S)) return "not yet valid";
     const sub = typeof payload.sub === "string" && payload.sub ? payload.sub : typeof payload.email === "string" && payload.email ? payload.email : null;
-    if (!sub) return "no subject";
-    return { sub };
+    const commonName = typeof payload.common_name === "string" && payload.common_name ? payload.common_name : undefined;
+    if (!sub && !commonName) return "no subject";
+    return { sub: sub ?? "", ...(typeof payload.email === "string" && payload.email ? { email: payload.email } : {}), ...(commonName ? { commonName } : {}) };
   };
 }
 
@@ -174,11 +179,16 @@ function authConfig(args: ServeArgs, env: Record<string, string | undefined>, ce
   if (team && aud) {
     let verify: ReturnType<typeof accessVerifier>;
     try { verify = accessVerifier({ team, aud, ...(certsUrl ? { certsUrl } : {}) }); } catch (error) { return (error as Error).message; }
-    return { hostname, port, origins, hosts, mode: "access", authenticate: async (req) => {
+    const verifyAccess = async (req: Request): Promise<VerifiedAccessIdentity | null> => {
       const jwt = req.headers.get("cf-access-jwt-assertion");
       if (!jwt) return null;
       const result = await verify(jwt);
-      return typeof result === "string" ? null : `access:${result.sub}`;
+      return typeof result === "string" ? null : result;
+    };
+    return { hostname, port, origins, hosts, mode: "access", verifyAccess, authenticate: async (req) => {
+      const identity = await verifyAccess(req);
+      // A service token can act only through principal routes, never with console/person authority.
+      return !identity || identity.commonName ? null : `access:${identity.sub}`;
     } };
   }
   if (tokenFile) {

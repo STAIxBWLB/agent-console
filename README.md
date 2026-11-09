@@ -31,6 +31,8 @@ bun add -g @staix/agent-console
 acon ui                       # opens the browser with a one-time link
 acon ui --no-open --json
 acon plugins                  # registered plugins and their hash check
+acon principal list           # safe metadata for server principals
+acon principal off <id>       # disable a principal
 ```
 
 All commands, as `acon help` prints them:
@@ -47,6 +49,9 @@ acon token new [--file PATH] [--force]
 acon setup launchd [--label ID] [--apply] [serve flags]
                                print a LaunchAgent plist for acon serve; --apply installs and loads it
 acon plugins [--json]          list registered plugins and verify their module hashes
+acon principal list [--json]   list server principals (safe metadata only)
+acon principal off <id>        disable a server principal
+acon principal on <id>         enable a server principal
 acon install <name|https URL|dir> [--force]
                                install a pet or asset package
 acon install --list [--json]   list the packages in the index
@@ -151,6 +156,7 @@ Rules:
 
 `acon serve` (H1) is the resident form of the console for a node behind a reverse tunnel or on an internal server. `acon ui` is unchanged.
 
+
 ```sh
 acon serve [--host 127.0.0.1] [--port 8787] [--origin https://console.example.com]... [--read-only] [--json]
 ```
@@ -180,6 +186,34 @@ ACON_TOKEN_FILE=~/.agenthub/console/token \
 ```
 
 On this Mac open `http://127.0.0.1:8790`. On another Mac with WARP connected, open `http://100.96.0.68:8791` and paste the token (`pbcopy < ~/.agenthub/console/token` on this Mac). WARP encrypts that traffic. `0.0.0.0` also listens on the LAN, where every request still needs the token, but sign in only through the WARP address, because the LAN carries plain http.
+
+### Run as a server principal
+
+Use server principals for scoped machine access to the MCP endpoint. They are separate from browser/person sessions and use the same running server on its configured port; person-facing routes and metadata keep their existing identity and port behavior. A principal is recorded as `principal:<id>` in action metadata; audit records use the registered principal id.
+
+Register principals in `$AGENTHUB_HOME/console/principals.json` (default `~/.agenthub/console/principals.json`), a version 1 JSON registry owned by the server user with mode 0600. Each record declares an `id`, `enabled`, `tools` allowlist and optional `ratePerMinute` (default 60). Keep each principal's bearer token in its own regular, mode 0600 file with at least 32 characters; never reuse a personal token. `acon principal list [--json]` prints only id, enabled state, tools and rate limit. It omits token paths and credential identity. Use `acon principal off <id>` and `acon principal on <id>` to change enabled state; the server rereads the registry on every principal request, so disabling takes effect without restart.
+
+The principal endpoint uses the node's configured Access or bearer mode. Bearer mode uses a separate token file per principal. Cloudflare Access identity mappings use the verified JWT `common_name` claim for service-token client ids and `email` for people. Cookies do not authenticate principal requests, and any `Origin` is refused; they do not use CORS. Unauthenticated loopback mode serves no principal routes (404), even if a registry exists. Requests must send `Accept: application/json, text/event-stream`; request bodies use `application/json`. The MCP endpoint supports explicit initialize, tools/list and tools/call for protocol version `2025-11-25`, plus `notifications/initialized`; newer protocol versions are not implemented. `GET /principal/mcp` returns 405 (there is no SSE stream), and authenticated `GET /principal/health` returns 204.
+
+The registry is an object with version 1 and a principals array. Each record uses exactly one credential mapping: bearerTokenFile, or access with exactly one of email and serviceTokenId. Token paths must be absolute. Access values are identities from verified JWTs, never raw client-id headers. Example (placeholder paths and identities):
+
+```json
+{
+  "version": 1,
+  "principals": [
+    { "id": "assistant", "enabled": true, "tools": ["ahub.status"], "ratePerMinute": 60, "bearerTokenFile": "/private/console/assistant-token" },
+    { "id": "service", "enabled": false, "tools": ["ahub.status"], "access": { "serviceTokenId": "client-id.access" } },
+    { "id": "user-principal", "enabled": false, "tools": [], "access": { "email": "user@example.com" } }
+  ]
+}
+```
+
+Create the registry with mode 0600 before starting principal clients; unsafe, symlinked, malformed or missing registry/token files fail closed. Unknown or disabled identities receive 403. The principal registry narrows plugin declarations and never grants a tool the plugin refuses. Removing a record or token also revokes the next request. In-flight requests are allowed to finish; off prevents subsequent calls.
+
+The effective tool set is the intersection of the registry allowlist and each plugin's principal declarations. Read-only mode hides writable tools and rejects their calls. Limits are 60 requests per minute by default, 2 concurrent requests, 64 KiB input and 256 KiB output. Each authenticated MCP POST, including refused requests, writes an audit record to `console/logs/principal.jsonl` and contain only time, principal, tool, plugin, outcome and latencyMs; keep this file private.
+
+Protocol and identity references: [MCP 2025-11-25 transports](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) and [Cloudflare Access JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/).
+
 
 ### LaunchAgent (macOS)
 
