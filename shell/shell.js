@@ -653,7 +653,7 @@ function visualView(payload, kit, frames, theme) {
       frames.release(frame);
       if (frame.owner !== entry) return; // the frame moved to another diagram meanwhile
       if (!data.ok) {
-        frames.live.delete(entry);
+        entry.drop();
         frame.owner = null;
         frame.el.remove();
         fallback(data.error === "timeout" ? "The diagram took longer than 5 seconds, so it is shown as text." : "The diagram could not be drawn, so it is shown as text.");
@@ -671,8 +671,13 @@ function visualView(payload, kit, frames, theme) {
   };
   // Redraw in the frame it owns when the console theme changes; a detached or handed-over diagram drops out.
   const entry = {
+    drop() {
+      visibilityObserver?.disconnect();
+      visibilityObserver = null;
+      frames.live.delete(entry);
+    },
     retheme(mode) {
-      if (!frame || frame.owner !== entry || !frame.el.isConnected) { visibilityObserver?.disconnect(); visibilityObserver = null; frames.live.delete(entry); return; }
+      if (!frame || frame.owner !== entry || !frame.el.isConnected) { entry.drop(); return; }
       wantedTheme = mode;
       if (mode === shownTheme || frame.busy) return; // a busy frame picks up wantedTheme when it finishes
       if (frame.el.offsetParent === null && typeof IntersectionObserver === "function") {
@@ -698,7 +703,7 @@ function visualView(payload, kit, frames, theme) {
     started = true;
     frame = frames.take();
     // Hand-over: the frame's previous diagram stops redrawing into it.
-    if (frame.owner) frames.live.delete(frame.owner);
+    if (frame.owner) frame.owner.drop();
     frame.owner = entry;
     frame.el.setAttribute("title", p.title ? String(p.title) : "Diagram");
     frame.el.classList.add("ui-visual-loading");

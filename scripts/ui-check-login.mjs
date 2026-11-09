@@ -55,10 +55,11 @@ export async function runLoginCheck({ browser, root, report, output, forceOverfl
   report.login = { origin: "http://100.96.0.1 (WARP address via forwarding proxy)", matrix: report.matrix, captures: 0, signedIn: false };
   try {
     let healthy = false;
-    for (let i = 0; i < 100; i += 1) {
+    const deadline = Date.now() + 10_000;
+    for (let i = 0; i < 100 && Date.now() < deadline; i += 1) {
       if (spawnError) break;
-      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`)).status === 204) { healthy = true; break; } } catch { /* not listening yet */ }
-      await new Promise((done) => setTimeout(done, 100));
+      try { if ((await fetch(`http://127.0.0.1:${port}/healthz`, { signal: AbortSignal.timeout(Math.max(1, Math.min(1000, deadline - Date.now()))) })).status === 204) { healthy = true; break; } } catch { /* not listening yet */ }
+      await new Promise((done) => setTimeout(done, Math.max(0, Math.min(100, deadline - Date.now()))));
     }
     if (spawnError) throw new Error(`acon serve could not be started with ${process.env.BUN_BIN ?? "bun"}: ${spawnError.message}; set BUN_BIN to a Bun executable`);
     if (!healthy) throw new Error(`acon serve did not answer /healthz within 10 s; check BUN_BIN and the plugin manifest hash. Server stderr (last 512 characters): ${stderr.trim() || "(empty)"}; run bun bin/acon.js serve --port <port> by hand to see its startup error`);

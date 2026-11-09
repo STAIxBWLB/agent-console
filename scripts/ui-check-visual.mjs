@@ -40,10 +40,11 @@ async open() { return {assets:{js:${JSON.stringify(`export default ${visualPanel
   report.visualChecks ??= [];
   try {
     let healthy = false;
-    for (let i = 0; i < 100; i += 1) {
+    const deadline = Date.now() + 10_000;
+    for (let i = 0; i < 100 && Date.now() < deadline; i += 1) {
       if (spawnError) break;
-      try { if ((await fetch(`${origin}/healthz`)).status === 204) { healthy = true; break; } } catch { /* starting isolated server */ }
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      try { if ((await fetch(`${origin}/healthz`, { signal: AbortSignal.timeout(Math.max(1, Math.min(1000, deadline - Date.now()))) })).status === 204) { healthy = true; break; } } catch { /* starting isolated server */ }
+      await new Promise((resolve) => setTimeout(resolve, Math.max(0, Math.min(100, deadline - Date.now()))));
     }
     if (spawnError) throw new Error(`acon serve could not be started with ${process.env.BUN_BIN ?? "bun"}: ${spawnError.message}; set BUN_BIN to a Bun executable`);
     if (!healthy) throw new Error(`acon serve did not answer /healthz within 10 s; check BUN_BIN and the plugin manifest hash. Server stderr (last 512 characters): ${stderr.trim() || "(empty)"}; run bun bin/acon.js serve --port <port> by hand to see its startup error`);
