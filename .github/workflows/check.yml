@@ -33,7 +33,9 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      - run: bun run check
+      # check includes the pinned 0.1.8 type bridge and published-kit runtime compatibility tests.
+      - name: Check (including N-1 compatibility with 0.1.8)
+        run: bun run check
       - run: npm pack --dry-run --ignore-scripts
 
   # The one required check for main (#64): fails on any non-success gating result, skips and cancels included.
