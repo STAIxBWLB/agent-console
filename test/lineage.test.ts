@@ -103,6 +103,8 @@ describe("synthetic H1/A1 lineage integration", () => {
     expect(comparison.rows[2]!.attempts[0]).toMatchObject({ status: "unknown", metrics: [], costs: { wallMilliseconds: "unknown", storageBytes: "unknown", compute: "unknown" } });
     expect(comparison.aggregation.reasons).toContain("protocol-mismatch");
     expect(comparison.aggregation.reasons).toContain("retries-or-repeated-samples-not-independent");
+    const repeated = await f.read({ panel: "compare", attempts: [LINEAGE_ATTEMPTS[0], LINEAGE_ATTEMPTS[4]].join(",") });
+    expect(repeated).toMatchObject({ comparison: { aggregation: { compatible: false, reasons: ["retries-or-repeated-samples-not-independent"] } } });
     expect(await f.read({ panel: "compare", attempts: LINEAGE_ATTEMPTS.concat("f".repeat(16)).join(",") })).toMatchObject({ state: "unavailable" });
     expect(await f.read({ panel: "compare", attempts: LINEAGE_ATTEMPTS[0] + "," + LINEAGE_ATTEMPTS[0] })).toMatchObject({ state: "unavailable" });
     expect(f.actions).toEqual([]); expect(f.writes).toEqual([]);

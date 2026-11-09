@@ -133,7 +133,7 @@ try {
       const rendered = await active(page).evaluate((el) => ({ callbacks: el.dataset.callbacks, renders: el.dataset.renders }));
       // Wait for the bounded conditional poll itself, not a fixed delay or another provider fan-out.
       await page.waitForResponse(async (response) => {
-        if (!response.url().startsWith(fixture.nodes.a) || !response.url().includes("/snapshot")) return false;
+        if (response.request().method() !== "POST" || !response.url().startsWith(fixture.nodes.a) || !response.url().includes("/snapshot")) return false;
         const input = response.request().postDataJSON(); if (input.rootKind !== "artifact" || input.after <= 0) return false;
         return (await response.json()).changed === false;
       });
