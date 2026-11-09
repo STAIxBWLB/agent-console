@@ -23,6 +23,7 @@ describe("synthetic H1/A1 lineage integration", () => {
     expect(task).toMatchObject({ origin: { node: "a", tool: "ahub", projectKey: "hub-alpha" }, selection: { v: 1, tool: "ahub", kind: "task", id: "42" }, lineage: { state: "available", truncated: false } });
     const links = task.links as { label: string; ref?: unknown; target: { node: string; tool: string; panel: string; params: Record<string, string> } }[];
     const attemptLink = links.find((link) => link.label === "Open research attempt")!;
+    expect(links.find((link) => link.label === "Offline owner reference")).toMatchObject({ availability: "unavailable", target: { node: "offline", tool: "ares" } });
     const attempt = await ares.read(attemptLink.target.params);
     expect(attempt).toMatchObject({ origin: { node: "a", tool: "ares", projectKey: "study-alpha" }, selection: attemptLink.ref, state: "current" });
     const graph = attempt.lineage as Page;

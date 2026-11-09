@@ -52,11 +52,12 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
       const dispatch = ref("ahub", "dispatch", "dispatch-42");
       const attempt = ref("ares", "attempt", LINEAGE_ATTEMPTS[0]!);
       const foreignAttempt = { ...attempt, sha256: hash(["b", "ares", "attempt", LINEAGE_ATTEMPTS[0]!, generation]) };
+      const offlineAttempt = { ...attempt, sha256: hash(["offline", "ares", "attempt", attempt.id, generation]) };
       const lineage = { state: "available", nodes: [{ ref: task, state: "waiting_review", strength: "declared" }, { ref: dispatch, state: "delivered", strength: "host-observed" }, { ref: attempt, state: "declared_unresolved", strength: "declared" }], edges: [{ from: task, to: dispatch, relation: "dispatched", strength: "host-observed" }, { from: task, to: attempt, relation: "declared-external", strength: "declared" }], truncated: false };
       return respond({ title: "Task 42", state: "current", selection: task, lineage, summary: "The task-to-attempt link is declared; no dispatch-to-attempt causality receipt is claimed.", canAct: true, actionInput: { action: "bind", projectId: "project-alpha", instanceId: `instance-${node}`, taskId: "42", sourceSha256: sourceHash() }, links: [
         link("Open research attempt", "ares", "lineage", rootParams(attempt), attempt),
         link("Open same attempt on node b", "ares", "lineage", rootParams(foreignAttempt), foreignAttempt, "b"),
-        { label: "Offline owner reference", availability: "unavailable", ref: attempt },
+        { label: "Offline owner reference", availability: "unavailable", ref: offlineAttempt, target: target("ares", "lineage", rootParams(offlineAttempt), "offline") },
         { label: "Unsupported reference", availability: "unsupported", ref: { ...attempt, kind: "future-kind" } },
       ] });
     }

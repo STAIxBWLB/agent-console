@@ -138,7 +138,7 @@ export default (host) => {
     if (Array.isArray(payload.links) && payload.links.length) {
       controls.push(section("References", [ui.h("div", { class: "ui-detail-actions" }, ...payload.links.map((link) => {
         if (link.availability !== "available" || !link.target) {
-          return ui.h("div", {}, ui.notice("Reference unavailable or unsupported.", "warn"), button(link.label, undefined, true));
+          return ui.h("div", {}, ui.notice("Reference unavailable or unsupported.", "warn"), ...(link.target ? [text("p", `Owner: ${link.target.node}/${link.target.tool} · Project: ${unknown(link.ref?.projectKey)}`)] : []), ...(link.ref ? [disclosure("Reference identity", text("p", refLabel(link.ref)))] : []), button(link.label, undefined, true));
         }
         const target = link.target;
         const tool = target.node === host.node ? target.tool : `${target.node}:${target.tool}`;
