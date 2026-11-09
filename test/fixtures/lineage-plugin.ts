@@ -104,14 +104,19 @@ export function createLineageFixture(options: { tool: "ahub" | "ares" | "legacy"
       page = continuation?.page ?? -1;
       if (!continuation || continuation.root !== hash(selection) || continuation.generation !== generation) return respond({ title: "Sources changed", state: "changed", study, lineage: { v: 1, status: "changed", sourceSha256: sourceHash(), ledgerPosition: generation * 100, nodes: [], edges: [], issues: [{ code: "source-changed", message: "Restart from the first page of this same source." }], totals: null, truncated: false }, canAct: false, links: [] });
     }
-    const proof = { file: "runs/run-1/attempts/0000000000000001.json", sha256: selection.sha256, ledgerIndex: 1, recordType: "attempt.recorded" };
+    const proofFor = (value: FixtureRef) => ({
+      file: value.kind === "attempt" ? `runs/run-1/attempts/${value.id}.json` : value.kind === "artifact" ? (value.id === LINEAGE_ARTIFACT ? value.id : `artifacts/${value.id}.json`) : "study.json",
+      sha256: value.sha256, revision: value.revision, recordType: `${value.kind}.recorded`,
+    });
+    // Relationship observations have no separate source record in this synthetic fixture.
+    const edgeProof = { file: "unknown", sha256: "unknown" };
     const count = Math.min(LINEAGE_BOUNDS.nodes, (options.size ?? 505) - page * LINEAGE_BOUNDS.nodes);
     const explicitAttempt = ref("ares", "attempt", LINEAGE_ATTEMPTS[0]!, version);
     const explicitArtifact = ref("ares", "artifact", LINEAGE_ARTIFACT, version);
     const hasProducedEdge = rooted && (input.rootKind === "artifact" || input.rootId === LINEAGE_ATTEMPTS[0]);
     const selectedRefs = hasProducedEdge ? [explicitAttempt, explicitArtifact] : [selection];
-    const nodes = (rooted ? selectedRefs : Array.from({ length: count }, (_, index) => (page === 0 && index === 0 ? selection : ref("ares", "artifact", `artifact-${page * LINEAGE_BOUNDS.nodes + index - 1}`)))).map((value) => ({ ref: value, state: version === 0 ? "historical" : "current", availability: value.kind === "artifact" ? "not-read" : "available", proof }));
-    const edges = hasProducedEdge ? [{ from: explicitAttempt, to: explicitArtifact, relation: "produced", proof }] : rooted ? [] : nodes.filter((item) => item.ref.kind === "artifact").map((item) => ({ from: selection, to: item.ref, relation: "contains", proof }));
+    const nodes = (rooted ? selectedRefs : Array.from({ length: count }, (_, index) => (page === 0 && index === 0 ? selection : ref("ares", "artifact", `artifact-${page * LINEAGE_BOUNDS.nodes + index - 1}`)))).map((value) => ({ ref: value, state: version === 0 ? "historical" : "current", availability: value.kind === "artifact" ? "not-read" : "available", proof: proofFor(value) }));
+    const edges = hasProducedEdge ? [{ from: explicitAttempt, to: explicitArtifact, relation: "produced", proof: edgeProof }] : rooted ? [] : nodes.filter((item) => item.ref.kind === "artifact").map((item) => ({ from: selection, to: item.ref, relation: "contains", proof: edgeProof }));
     const truncated = !rooted && page + 1 < pages;
     const nextCursor = truncated ? cursorFor(page + 1) : undefined;
     const lineage = { v: 1, status: "ok", sourceSha256: sourceHash(), ledgerPosition: generation * 100, nodes, edges, issues: [], totals: { nodes: rooted ? nodes.length : options.size ?? 505, edges: rooted ? edges.length : (options.size ?? 505) - 1 }, truncated, ...(truncated ? { nextCursor } : {}) };

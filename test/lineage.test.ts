@@ -45,6 +45,31 @@ describe("synthetic H1/A1 lineage integration", () => {
     for (const params of [{ taskId: "42" }, { projectId: "project-alpha", taskId: "42" }, { projectId: "project-alpha", instanceId: "instance-b", taskId: "42" }]) expect(await hub.read(params)).toEqual(unavailable);
     expect(hub.actions).toEqual([]); expect(hub.writes).toEqual([]);
   });
+  test("each node proof belongs to its ref and revision, while unobserved edge proofs are unknown", async () => {
+    const f = await opened("ares");
+    type Ref = { kind: string; id: string; revision: string; sha256: string };
+    type Proof = { file: string; sha256: string; revision?: string };
+    type Graph = { nodes: { ref: Ref; proof: Proof }[]; edges: { proof: Proof }[] };
+    const graph = (await f.read()).lineage as Graph;
+    for (const row of graph.nodes.slice(0, 3)) {
+      expect(row.proof.sha256).toBe(row.ref.sha256);
+      expect(row.proof.revision).toBe(row.ref.revision);
+      expect(row.proof.file).toBe(row.ref.kind === "study" ? "study.json" : `artifacts/${row.ref.id}.json`);
+    }
+    expect(graph.nodes[1]!.proof.sha256).not.toBe(graph.nodes[2]!.proof.sha256);
+    for (const revision of ["0", "1"]) {
+      const rooted = (await f.read({ rootKind: "artifact", rootId: LINEAGE_ARTIFACT, rootRevision: revision })).lineage as Graph;
+      expect(rooted.nodes.map((row) => row.ref.kind)).toEqual(["attempt", "artifact"]);
+      for (const row of rooted.nodes) {
+        expect(row.proof.sha256).toBe(row.ref.sha256);
+        expect(row.proof.revision).toBe(revision);
+        expect(row.proof.file).toBe(row.ref.kind === "attempt" ? `runs/run-1/attempts/${row.ref.id}.json` : LINEAGE_ARTIFACT);
+      }
+      expect(rooted.nodes[0]!.proof.sha256).not.toBe(rooted.nodes[1]!.proof.sha256);
+      expect(rooted.edges[0]!.proof).toEqual({ file: "unknown", sha256: "unknown" });
+    }
+    expect(graph.edges[0]!.proof).toEqual({ file: "unknown", sha256: "unknown" });
+  });
   test("same native identity on two nodes is not interchangeable", async () => {
     const a = await opened("ares", "a"), b = await opened("ares", "b");
     const refA = a.ref("attempt", LINEAGE_ATTEMPTS[0]!);

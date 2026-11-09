@@ -222,7 +222,7 @@ try {
 } catch (error) { report.findings.push(error.message); }
 finally {
   await browser?.close(); lines?.close();
-  if (child && child.exitCode === null && child.signalCode === null) { const stopped = new Promise((resolve) => child.once("exit", resolve)); child.kill("SIGTERM"); await stopped; }
+  if (child && child.exitCode === null && child.signalCode === null) { const stopped = new Promise((resolve) => child.once("exit", resolve)); child.kill("SIGTERM"); await Promise.race([stopped, new Promise((resolve) => setTimeout(resolve, 2000))]); if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
   if (scratch) await rm(scratch, { recursive: true, force: true });
   report.passed = report.findings.length === 0;
   await mkdir(output, { recursive: true }); await writeFile(join(output, "report.json"), JSON.stringify(report, null, 2) + "\n");
