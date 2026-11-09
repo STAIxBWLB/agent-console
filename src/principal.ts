@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { ACTION_ID, TOOL_ID } from "./contract.ts";
-import { dispatchPrincipalAction, withTimeout, type PluginEntry } from "./plugins.ts";
+import { dispatchPrincipalAction, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
 import { isPlainObject, PUBLIC_CAPS } from "./public.ts";
 import type { ServeOptions } from "./serve.ts";
 
@@ -168,7 +168,7 @@ function auditFile(home: string): number {
 }
 
 export interface PrincipalEndpointOptions {
-  home: string; serve: ServeOptions; getPlugins: () => Promise<PluginEntry[]>; version: string; now?: () => number;
+  home: string; serve: ServeOptions; getPlugins: () => Promise<PluginEntry[]>; version: string; callMs: number; now?: () => number;
 }
 export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req: Request) => Promise<Response> {
   const now = options.now ?? Date.now;
@@ -198,6 +198,8 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
     state.count++;
     if (state.active >= 2) return error(null, -32000, "principal concurrency limit of 2 reached; wait for an in-flight request before retrying", 429);
     state.active++;
+    const slot = state;
+    let releaseOnReturn = true;
     try {
       if (path === "/principal/health") return req.method === "GET" ? new Response(null, { status: 204, headers: HEADERS }) : error(null, -32600, "principal health requires GET; send GET /principal/health", 405);
       if (req.method !== "POST") return error(null, -32600, "this MCP endpoint has no SSE listener; send a JSON-RPC request with POST /principal/mcp", 405);
@@ -233,14 +235,25 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
       const args = params.arguments === undefined ? {} : params.arguments;
       if (!isPlainObject(args)) return error(id, -32602, "tool arguments must be an object; follow the declared inputSchema");
       if (["confirmed", "fingerprint", "confirmToken"].some((key) => key in args)) return error(id, -32602, "principal arguments contain person confirmation fields; remove confirmed, fingerprint and confirmToken and request person approval through the console");
+      const running = Promise.resolve().then(() => dispatchPrincipalAction(selection.plugin, { principal: principal.id, tool: selection.tool.name, input: args }, "local"));
       try {
-        const result = await dispatchPrincipalAction(selection.plugin, { principal: principal.id, tool: selection.tool.name, input: args }, "local");
+        const result = await withTimeout(running, options.callMs, "principal tool");
         attempt.outcome = result.ok ? "ok" : "error";
         const response = respond(id, { result: { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result, isError: !result.ok } });
         if (response.status === 502) attempt.outcome = "output-limit";
         return response;
-      } catch { attempt.outcome = "error"; return error(id, -32000, "principal tool failed and its outcome may be unknown; check the principal tool status before retrying or request person approval in the console", 502); }
-    } finally { state.active--; }
+      } catch (failure) {
+        if (failure instanceof TimeoutError) {
+          attempt.outcome = "timeout";
+          releaseOnReturn = false;
+          // The HTTP deadline does not cancel plugin work. Keep its slot until it actually settles.
+          void running.then(() => { slot.active--; }, () => { slot.active--; });
+          return error(id, -32000, `principal tool timed out after ${options.callMs / 1000} s; outcome may be unknown; check the tool status before retrying`, 504);
+        }
+        attempt.outcome = "error";
+        return error(id, -32000, "principal tool failed and its outcome may be unknown; check the principal tool status before retrying or request person approval in the console", 502);
+      }
+    } finally { if (releaseOnReturn) slot.active--; }
   }
 
   return async (req) => {

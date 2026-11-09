@@ -291,7 +291,7 @@ export function startServer(options: ServerOptions) {
     return new Response(null, { status: 303, headers: { ...HEADERS, Location: "/", "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${LOGIN_MS / 1000}` } });
   }
 
-  const principalEndpoint = serve && serve.mode !== "loopback" ? createPrincipalEndpoint({ home: options.home ?? dirname(dirname(options.pluginsDir)), serve, getPlugins: async () => { await refresh(); return [...tools.values()]; }, version: options.version, now }) : undefined;
+  const principalEndpoint = serve && serve.mode !== "loopback" ? createPrincipalEndpoint({ home: options.home ?? dirname(dirname(options.pluginsDir)), serve, getPlugins: async () => { await refresh(); return [...tools.values()]; }, version: options.version, callMs, now }) : undefined;
 
   async function handle(req: Request): Promise<Response> {
       const url = new URL(req.url);

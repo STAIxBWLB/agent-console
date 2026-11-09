@@ -25,7 +25,7 @@ function fixture() {
   const save = () => writeFileSync(file, JSON.stringify(registry), { mode: 0o600 }); save();
   return { home, token, person, file, registry, save };
 }
-async function boot(options: { readOnly?: boolean; rate?: number; now?: () => number; mode?: "bearer" | "loopback" } = {}) {
+async function boot(options: { readOnly?: boolean; rate?: number; now?: () => number; mode?: "bearer" | "loopback"; callMs?: number } = {}) {
   const f = fixture();
   if (options.rate) { f.registry.principals[0]!.ratePerMinute = options.rate; f.save(); }
   const config = serveConfig({ origins: [ORIGIN] }, options.mode === "loopback" ? {} : { ACON_TOKEN_FILE: f.person });
@@ -34,7 +34,7 @@ async function boot(options: { readOnly?: boolean; rate?: number; now?: () => nu
   const provider = await plugin.open({ home: f.home, log: () => {} });
   const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
   const logs: string[] = [];
-  const server = startServer({ home: f.home, plugins: [entry], version: "test", pluginsDir: join(f.home, "console", "plugins"), log: (s) => logs.push(s), now: options.now, serve: { ...config, port: 0, readOnly: options.readOnly } });
+  const server = startServer({ home: f.home, plugins: [entry], version: "test", pluginsDir: join(f.home, "console", "plugins"), log: (s) => logs.push(s), now: options.now, callMs: options.callMs, serve: { ...config, port: 0, readOnly: options.readOnly } });
   servers.push(server);
   return { ...f, server, plugin, provider, logs };
 }
@@ -154,6 +154,42 @@ describe("principal registry and bearer transport", () => {
     await ready;
     try { expect((await call(f.server)).status).toBe(429); expect(active).toBe(2); }
     finally { release(); await Promise.all([first, second]); }
+  });
+  test("never-settling principal calls time out and audit once without releasing their slots", async () => {
+    const f = await boot({ callMs: 20 });
+    let started = 0;
+    f.provider.principalAction = () => { started++; return new Promise(() => {}); };
+    const replies = await Promise.all([call(f.server), call(f.server)]);
+    for (const reply of replies) {
+      expect(reply.status).toBe(504);
+      const body = await reply.json();
+      expect(body.error.message).toContain("timed out after 0.02 s");
+      expect(body.error.message).toContain("outcome may be unknown");
+      expect(body.error.message).toContain("check the tool status before retrying");
+    }
+    expect(audit(f.home).map((r) => r.outcome)).toEqual(["timeout", "timeout"]);
+    expect((await call(f.server)).status).toBe(429);
+    setPrincipalEnabled(f.home, "assistant", false);
+    expect((await call(f.server)).status).toBe(403);
+    setPrincipalEnabled(f.home, "assistant", true);
+    expect((await call(f.server)).status).toBe(429);
+    expect(started).toBe(2);
+  });
+  test("timed-out slots are released only when their underlying calls resolve or reject", async () => {
+    const f = await boot({ callMs: 20 });
+    const pending: { resolve: (value: { ok: true }) => void; reject: (error: Error) => void }[] = [];
+    f.provider.principalAction = () => new Promise((resolve, reject) => { pending.push({ resolve, reject }); });
+    const replies = await Promise.all([call(f.server), call(f.server)]);
+    expect(replies.map((r) => r.status)).toEqual([504, 504]);
+    expect((await call(f.server)).status).toBe(429);
+    expect(pending).toHaveLength(2);
+    f.provider.principalAction = async () => ({ ok: true });
+    pending[0]!.resolve({ ok: true });
+    expect((await call(f.server)).status).toBe(200);
+    pending[1]!.reject(new Error("late private failure"));
+    expect((await call(f.server)).status).toBe(200);
+    expect(audit(f.home).filter((r) => r.outcome === "timeout")).toHaveLength(2);
+    expect(f.logs.join(" ")).not.toContain("late private failure");
   });
   test("64 KiB input including chunked streams, 32 KiB console bodies, and 256 KiB output are bounded", async () => {
     const f = await boot();
