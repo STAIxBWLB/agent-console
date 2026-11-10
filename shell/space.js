@@ -1,3 +1,4 @@
+import { createSpaceTeam } from "./space-team.js";
 import { createSpaceViewController } from "./space-view.js";
 
 // Private shell module. Public collaboration facts enter through the space snapshot allowlist.
@@ -5,16 +6,16 @@ export const SPACE_CAPS = { actors: 96, cards: 200, links: 128 };
 const ACTOR_WIDTH = 180, ACTOR_STEP = 200, ZONE_WIDTH = 234, ZONE_STEP = 250;
 
 export function mergeSpaceScenes(entries) {
-  const model = { groups: [], actors: [], zones: [], cards: [], links: [], dropped: { actors: 0, cards: 0, links: 0 }, failed: [], received: 0, sampledAt: 0, samples: new Map() };
+  const model = { groups: [], actors: [], zones: [], cards: [], links: [], dropped: { actors: 0, cards: 0, links: 0 }, failed: [], pending: 0, received: 0, sampledAt: 0, samples: new Map() };
   for (const [tool, entry] of [...entries].sort(([a], [b]) => a.localeCompare(b))) {
     if (entry.failed) model.failed.push(tool);
     const scene = entry.scene;
-    if (!scene) continue;
+    if (!scene) { model.pending += 1; continue; }
     model.received += 1;
     model.samples.set(tool, entry.sampledAt ?? 0);
     model.sampledAt = Math.max(model.sampledAt, entry.sampledAt ?? 0);
     const key = (id) => `${tool}:${id}`;
-    const groups = scene.groups?.length ? scene.groups.map((g) => ({ id: key(g.id), title: g.title })) : [{ id: key("~tool"), title: tool }];
+    const groups = scene.groups?.length ? scene.groups.slice(0, SPACE_CAPS.cards).map((g) => ({ id: key(g.id), title: g.title })) : [{ id: key("~tool"), title: tool }];
     model.groups.push(...groups);
     const group = (item) => scene.groups?.length ? (item.group ? key(item.group) : undefined) : groups[0].id;
     const target = (link) => ({ tool, panel: link.panel, ...(link.params ? { params: link.params } : {}) });
@@ -31,9 +32,6 @@ export function mergeSpaceScenes(entries) {
     model.dropped[k] += Math.max(0, model[k].length - SPACE_CAPS[k]);
     model[k] = model[k].slice(0, SPACE_CAPS[k]);
   }
-  model.groups = model.groups.slice(0, SPACE_CAPS.cards);
-  const groups = new Set(model.groups.map((g) => g.id));
-  for (const item of [...model.actors, ...model.zones, ...model.cards]) if (item.group && !groups.has(item.group)) delete item.group;
   const actors = new Set(model.actors.map((a) => a.id));
   const cards = new Set(model.cards.map((c) => c.id));
   for (const actor of model.actors) if (actor.card && !cards.has(actor.card)) delete actor.card;
@@ -123,15 +121,18 @@ export function createSpaceRenderer(root, host) {
   const project = h("select", { id: "space-project", "aria-label": "Project", onchange: () => choose({ group: project.value }) });
   const header = h("header", { class: "space-header" }, h("h1", { class: "lead", id: "space-lead", text: "Space" }), summary,
     h("div", { class: "space-header-controls" }, tabs, h("label", { class: "space-project-label", for: "space-project" }, "Project", project)));
+  const teamRoot = h("section", { class: "space-team" });
+  const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const placeholder = h("p", { class: "notice", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
-  root.replaceChildren(header, placeholder, notice, content, empty);
-  let selection = { view: "room", group: "", state: "" };
-  let savedView = "room";
+  root.replaceChildren(header, placeholder, notice, teamRoot, content, empty, detailRoot);
+  let selection = { view: "team", group: "", state: "", actor: "" };
+  let savedView = "team";
+  let returnPoint = null, restorePoint = null, detailSignature = "";
   try { const saved = localStorage.getItem("acon.space.view"); if (["team", "flow", "board", "room"].includes(saved)) savedView = saved; } catch { /* Persistence is optional. */ }
   const sectionButtons = new Map(), summaryButtons = new Map();
   function choose(patch) {
-    const next = { ...selection, ...patch };
+    const next = { ...selection, actor: "", ...patch };
     host.navigateSpace?.(Object.fromEntries(Object.entries(next).filter(([, value]) => value)));
   }
   for (const [id, title] of [["team", "Team"], ["flow", "Flow"], ["board", "Board"], ["room", "Room"]]) {
@@ -145,21 +146,22 @@ export function createSpaceRenderer(root, host) {
   const groupSummary = h("button", { class: "btn", type: "button", "aria-label": "Clear project and state filters", onclick: () => choose({ group: "", state: "" }) });
   summary.append(groupSummary);
   function setRoute(params = {}) {
-    selection = { view: ["team", "flow", "board", "room"].includes(params.view) ? params.view : savedView,
+    if (selection.actor && !params.actor) { restorePoint = returnPoint ?? { pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft }; returnPoint = null; }
+    selection = { actor: params.actor ?? "", view: ["team", "flow", "board", "room"].includes(params.view) ? params.view : savedView,
       group: params.group ?? "", state: ["working", "waiting", "blocked", "away", "idle"].includes(params.state) ? params.state : "" };
     if (selection.view !== savedView) {
       savedView = selection.view;
       try { localStorage.setItem("acon.space.view", savedView); } catch { /* Optional persistence. */ }
     }
   }
-  const views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError });
+  let views = null;
   const actorNodes = new Map(), cardNodes = new Map(), zoneNodes = new Map(), linkNodes = new Map(), rosterNodes = new Map();
   const entries = new Map();
   const seenMessages = new Map(), samples = new Map();
   let signature = "", groupSignature = "", layout = null, lastModel = null;
   const setStyle = (el, name, value) => { if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value); };
   const setText = (el, value) => { if (el.textContent !== value) el.textContent = value; };
-  const target = (key) => { const entry = entries.get(key); if (entry) host.navigate(entry.link.tool, entry.link.panel, entry.link.params); };
+  const target = (key, invoker) => { const entry = entries.get(key); if (!entry) return; if (key.startsWith("actor:")) openActor(entry.id, invoker); else host.navigate(entry.link.tool, entry.link.panel, entry.link.params); };
   const image = (el, variable, pack, name) => setStyle(el, variable, pack?.images.includes(name) ? `url("${location.origin}/assets/${pack.id}/${name}")` : "none");
   const prune = (nodes, keys) => { for (const [key, entry] of nodes) if (!keys.has(key)) { entry.roster?.remove(); (entry.el ?? entry).remove(); nodes.delete(key); } };
   const place = (el, position) => { if (position) setStyle(el, "transform", `translate(${position.x}px, ${position.y}px)`); };
@@ -168,6 +170,64 @@ export function createSpaceRenderer(root, host) {
     const pet = pets.find((p) => p.id === actor.pet) ?? (pets.length ? pets[hash(actor.id) % pets.length] : null);
     return pet ? host.petSprite(pet, actor.stale ? "idle" : poseFor[actor.state]) : h("span", { class: "space-token", "aria-hidden": "true", text: actor.name.slice(0, 1).toUpperCase() });
   };
+  const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose });
+  function openActor(id, element) {
+    if (!selection.actor) returnPoint = { element, actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
+    choose({ actor: id });
+  }
+  function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
+  const onDetailKey = (event) => {
+    if (!selection.actor || root.hidden) return;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeActor(); }
+    if (event.key === "Tab") {
+      const buttons = [...detailRoot.querySelectorAll("button,a[href],input,select,textarea,[tabindex]")].filter((el) => !el.disabled && el.offsetParent !== null);
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+  };
+  document.addEventListener("keydown", onDetailKey, true);
+  function renderDetail(model) {
+    const actor = model.actors.find((a) => a.id === selection.actor);
+    const card = model.cards.find((c) => c.id === actor?.card);
+    const links = model.links.filter((l) => ["overlap", "conflict", "cohort"].includes(l.kind) && (l.from === actor?.id || l.to === actor?.id));
+    const partners = links.map((l) => ({ kind: l.kind, actor: model.actors.find((a) => a.id === (l.from === actor.id ? l.to : l.from)) }));
+    const group = model.groups.find((g) => g.id === actor?.group);
+    const sig = JSON.stringify([selection.actor, actor, card, partners, group, Boolean(model.pending)]);
+    if (sig === detailSignature) return;
+    detailSignature = sig;
+    const wasHidden = detailRoot.hidden;
+    detailRoot.hidden = !selection.actor;
+    for (const element of [header, placeholder, notice, teamRoot, content, empty]) element.inert = Boolean(selection.actor);
+    if (!selection.actor) return;
+    const back = h("button", { type: "button", class: "btn space-detail-back", text: "Back to Space", onclick: closeActor });
+    if (!actor) {
+      detailRoot.replaceChildren(back, h("h2", { id: "space-agent-title", text: "Agent detail" }), h("p", { class: "notice", text: model.pending ? "Waiting for agent data." : "Agent not in the current scene; close this detail and choose an available agent." }));
+    } else {
+      const title = h("h2", { id: "space-agent-title", text: actor.name });
+      const since = actor.since ? Math.max(0, Math.floor((Date.now() - Date.parse(actor.since)) / 60000)) : null;
+      const elapsed = since === null ? "" : since < 1 ? "State changed less than a minute ago" : `State changed ${since} minutes ago`;
+      const marks = actor.marks.map((m) => h("span", { class: "chip", text: `${m.kind}: ${m.text}` }));
+      detailRoot.replaceChildren(back, h("header", { class: "space-agent-detail-header" }, h("span", { class: "space-team-avatar" }, sprite(actor)), title,
+        h("p", { text: group?.title ?? "Ungrouped" }), h("div", { class: "space-team-roles" }, (actor.roles ?? []).map((r) => h("span", { class: "chip", text: r }))),
+        h("p", { text: `${stateGlyph[actor.state]} ${stateText[actor.state]}${actor.stale ? " (last reported, stale)" : ""}` }), ...(elapsed ? [h("p", { class: "sub", text: elapsed })] : [])),
+        h("div", { class: "space-agent-detail-body" }, h("section", {}, h("h3", { text: "Current task" }), card ? h("button", { type: "button", class: "btn", text: card.title, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) }) : h("p", { class: "sub", text: "No current task reported." })),
+          h("section", {}, h("h3", { text: "Marks" }), ...marks),
+          h("section", {}, h("h3", { text: "Partners" }), ...(partners.length ? partners.map((p) => h("p", { text: `${p.kind}: ${p.actor?.name ?? "Unknown actor"}` })) : [h("p", { class: "sub", text: "No current partners reported." })])),
+          h("section", {}, h("h3", { text: "Interactions" }), h("p", { class: "sub", text: "History appears once observed." })),
+          h("button", { type: "button", class: "btn", text: `Open in ${actor.link.tool}`, onclick: () => host.navigate(actor.link.tool, actor.link.panel, actor.link.params) })));
+    }
+    if (wasHidden) back.focus({ preventScroll: true });
+  }
+  function restore() {
+    if (!restorePoint) return;
+    const point = restorePoint; restorePoint = null;
+    const element = point.element?.isConnected ? point.element : point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null;
+    (element ?? root.querySelector(`[data-space-section-tab="${selection.view}"]`))?.focus({ preventScroll: true });
+    const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
+    scroll.scrollTop = point.sceneTop; scroll.scrollLeft = point.sceneLeft;
+    window.scrollTo(point.pageX, point.pageY);
+  }
   function update(model, force = false) {
     lastModel = model;
     const pack = host.packs()[0];
@@ -186,7 +246,7 @@ export function createSpaceRenderer(root, host) {
     signature = sig;
     root.dataset.spaceSection = selection.view;
     const room = selection.view === "room";
-    content.hidden = !room; placeholder.hidden = room;
+    content.hidden = !room; teamRoot.hidden = selection.view !== "team"; placeholder.hidden = room || selection.view === "team";
     setText(placeholder, `${selection.view[0].toUpperCase() + selection.view.slice(1)} view is not available yet. Room shows the current scene.`);
     for (const [id, button] of sectionButtons) button.setAttribute("aria-pressed", String(id === selection.view));
     const grouped = filterSpaceModel(model, selection.group, "");
@@ -195,31 +255,36 @@ export function createSpaceRenderer(root, host) {
       button.setAttribute("aria-pressed", String(selection.state === state));
     }
     setText(groupSummary, `${model.groups.length} projects`);
+    groupSummary.setAttribute("aria-label", `${model.groups.length} projects, clear project and state filters`);
     const nextGroups = JSON.stringify(model.groups);
     if (nextGroups !== groupSignature) {
       groupSignature = nextGroups;
       project.replaceChildren(h("option", { value: "", text: "All projects" }), ...model.groups.map((g) => h("option", { value: g.id, text: g.title })));
     }
     project.value = selection.group;
-    const unknownGroup = selection.group && !model.groups.some((g) => g.id === selection.group);
+    const unknownGroup = !model.pending && selection.group && !model.groups.some((g) => g.id === selection.group);
+    renderDetail(model);
     model = filterSpaceModel(model, selection.group, selection.state);
-    image(plane, "--space-floor", pack, "floor"); image(wall, "--space-wall", pack, "wall");
-    plane.dataset.pack = pack?.id ?? "fallback";
-    if (pack) setStyle(plane, "background-size", `${pack.tile[0]}px ${pack.tile[1]}px`);
-    else setStyle(plane, "background-size", "64px 32px");
+    if (selection.view === "team") team.update({ ...model, groups: selection.group ? model.groups.filter((g) => g.id === selection.group) : model.groups });
     const hidden = Object.entries(model.dropped).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k} omitted`);
     const message = [...(unknownGroup ? ["Project not in the current scene; showing none. Choose All projects."] : []), ...(model.failed.length ? ["Some space data could not refresh. Last reported states are marked stale; details are in System."] : []), ...hidden].join(" ");
     if (notice.hidden !== !message) notice.hidden = !message;
     setText(notice, message);
     const nothing = !model.actors.length && !model.cards.length;
     if (empty.hidden !== (!nothing || !room || Boolean(unknownGroup))) empty.hidden = !nothing || !room || Boolean(unknownGroup);
+    if (!room) { views?.suspend(); restore(); return; }
+    if (!views) views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError });
+    image(plane, "--space-floor", pack, "floor"); image(wall, "--space-wall", pack, "wall");
+    plane.dataset.pack = pack?.id ?? "fallback";
+    if (pack) setStyle(plane, "background-size", `${pack.tile[0]}px ${pack.tile[1]}px`);
+    else setStyle(plane, "background-size", "64px 32px");
     entries.clear();
     for (const actor of model.actors) {
       entries.set(`actor:${actor.id}`, actor);
       let n = actorNodes.get(actor.id);
       if (!n) {
         const name = h("strong"), status = h("span", { class: "row-sub" }), marks = h("span", { class: "space-marks" }), visual = h("span", { class: "space-visual" });
-        const el = h("button", { type: "button", class: "space-actor", "data-key": actor.id, onclick: () => target(`actor:${actor.id}`) }, visual, name, status, marks);
+        const el = h("button", { type: "button", class: "space-actor", "data-key": actor.id, onclick: (event) => target(`actor:${actor.id}`, event.currentTarget) }, visual, name, status, marks);
         plane.append(el); n = { el, name, status, marks, visual, sig: "" }; actorNodes.set(actor.id, n);
       }
       const card = model.cards.find((c) => c.id === actor.card);
@@ -235,7 +300,7 @@ export function createSpaceRenderer(root, host) {
         image(n.visual, "--space-desk", pack, "desk");
       }
       let r = rosterNodes.get(`actor:${actor.id}`);
-      if (!r) { r = h("button", { type: "button", class: "space-roster-actor btn", "data-key": actor.id, onclick: () => target(`actor:${actor.id}`) }); roster.append(r); rosterNodes.set(`actor:${actor.id}`, r); }
+      if (!r) { r = h("button", { type: "button", class: "space-roster-actor btn", "data-key": actor.id, onclick: (event) => target(`actor:${actor.id}`, event.currentTarget) }); roster.append(r); rosterNodes.set(`actor:${actor.id}`, r); }
       setText(r, `${displayName}: ${text}`);
     }
     for (const zone of model.zones) {
@@ -302,6 +367,7 @@ export function createSpaceRenderer(root, host) {
       actors: actorMetrics,
       cards: cardMetrics,
       zones: [...zoneNodes].map(([id, n]) => ({ id, el: n.el, width: n.el.offsetWidth, height: n.el.offsetHeight })) });
+    restore();
   }
   let geometry = "";
   const observer = new ResizeObserver(() => {
@@ -311,5 +377,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden) update(lastModel, true);
   });
   observer.observe(root);
-  return { update, setRoute, get viewStats() { return views.stats; }, destroy() { observer.disconnect(); views.destroy(); root.replaceChildren(); } };
+  return { update, setRoute, hide() { views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); views?.destroy(); root.replaceChildren(); } };
 }

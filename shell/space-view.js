@@ -13,8 +13,8 @@ export function createSpaceViewController(host) {
   const mount = h("div", { class: "space-webgl", "aria-hidden": "true", hidden: true });
   stage.prepend(mount);
   const fallback = h("p", { class: "notice space-view-notice", role: "status", hidden: true });
-  const viewLabel = h("span", { text: "View" });
-  const choices = h("div", { class: "space-view-choices", role: "group", "aria-label": "Space view" }, viewLabel);
+  const viewLabel = h("span", { text: "Scene style" });
+  const choices = h("div", { class: "space-view-choices", role: "group", "aria-label": "Scene style" }, viewLabel);
   const controls = h("div", { class: "space-camera", role: "group", "aria-label": "Room camera" });
   const bar = h("div", { class: "space-view-bar" }, choices, controls);
   const selection = h("p", { class: "space-selection sub", hidden: true });
@@ -25,10 +25,10 @@ export function createSpaceViewController(host) {
   try { saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("acon.space.view") ?? "flat"; } catch { /* Storage may be disabled. */ }
   let state = null, webgl = null, lastReady = null, generation = 0, destroyed = false;
   let camera = { yaw: 45, pitch: 60, zoom: 1 };
-  let cameraTouched = false;
+  let cameraTouched = false, suspended = false;
   const buttons = new Map();
   for (const [id, label] of [["flat", "Flat"], ["room", "Room"], ...(available ? [["3d", "3D"]] : [])]) {
-    const button = h("button", { type: "button", class: "btn", text: label, "data-space-view": id, "aria-pressed": "false", onclick: () => select(id) });
+    const button = h("button", { type: "button", class: "btn", text: label, "aria-label": `${label} scene style`, "data-space-view": id, "aria-pressed": "false", onclick: () => select(id) });
     choices.append(button); buttons.set(id, button);
   }
   const rotate = (step) => { cameraTouched = true; camera = { ...camera, yaw: camera.yaw + step }; apply(); };
@@ -68,7 +68,7 @@ export function createSpaceViewController(host) {
     scroll.scrollLeft = 0; scroll.scrollTop = 0;
   };
   function apply() {
-    if (!state || destroyed) return;
+    if (!state || destroyed || suspended) return;
     root.dataset.spaceView = view; plane.dataset.view = view;
     for (const [id, button] of buttons) button.setAttribute("aria-pressed", String(id === view));
     controls.hidden = view === "flat"; mount.hidden = view !== "3d";
@@ -144,7 +144,7 @@ export function createSpaceViewController(host) {
     plane.style.removeProperty("width"); plane.style.removeProperty("min-width");
     if (state) plane.style.height = `${state.layout.height}px`;
     apply();
-    if (view === "3d" && !webgl) {
+    if (view === "3d" && !webgl && !suspended) {
       try {
         const { createSpace3D } = await import("/space3d.js");
         if (id !== generation || destroyed) return;
@@ -160,7 +160,8 @@ export function createSpaceViewController(host) {
   const resize = new ResizeObserver(() => { if (view !== "flat") apply(); }); resize.observe(scroll);
   const theme = new MutationObserver(() => { if (view === "3d") apply(); }); theme.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
   return {
-    update(next) { state = next; if (!root.dataset.spaceView) select(["flat", "room", "3d"].includes(saved) ? saved : "flat"); else apply(); },
+    update(next) { suspended = false; state = next; if (!root.dataset.spaceView) select(["flat", "room", "3d"].includes(saved) ? saved : "flat"); else if (view === "3d" && !webgl) select("3d"); else apply(); },
+    suspend() { if (suspended) return; suspended = true; generation += 1; webgl?.destroy(); webgl = null; lastReady = null; lastProjection = null; mount.replaceChildren(); delete mount.dataset.ready; },
     select,
     get stats() { return { view, renderCount: webgl?.renderCount ?? 0, pendingFrames: webgl?.pendingFrames ?? 0, modelCount: webgl?.modelCount ?? 0, boxCount: webgl?.boxCount ?? 0 }; },
     destroy() { destroyed = true; generation += 1; resize.disconnect(); theme.disconnect(); scroll.removeEventListener("keydown", onKey); webgl?.destroy(); plane.removeEventListener("focusin", describe); plane.removeEventListener("pointerover", describe); plane.removeEventListener("focusout", clearDescription); plane.removeEventListener("pointerout", clearDescription); bar.remove(); selection.remove(); fallback.remove(); }
