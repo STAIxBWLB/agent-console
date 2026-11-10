@@ -173,3 +173,33 @@ test("an unchanged Team snapshot expires open detail history and peer counts", (
   h.renderer.update(scene);
   expect(h.writes).toBe(expired);
 });
+
+test("project-filtered Recent activity retains ungrouped endpoints and follows actor filters", () => {
+  const h = harness();
+  const scene = { ...h.model,
+    groups: [...h.model.groups, { id: "demo:other", title: "Other" }],
+    actors: [
+      ...h.model.actors.map((actor: any) => ({ ...actor, group: undefined })),
+      ...h.model.actors.map((actor: any) => ({ ...actor, id: `${actor.id}:other`, group: "demo:other" })),
+    ], links: [],
+  };
+  h.renderer.setRoute({ view: "flow", group: "demo:alpha" });
+  h.renderer.update(scene);
+  const changed = { ...scene, links: [
+    { ...message("ungrouped"), from: "demo:one", to: "demo:two", label: "Ungrouped exchange" },
+    { ...message("other"), from: "demo:one:other", to: "demo:two:other", label: "Other project exchange" },
+  ] };
+  h.renderer.update(changed);
+  const flow = h.root.querySelector(".space-flow")!;
+  expect(flow.querySelectorAll(".space-flow-actor")).toHaveLength(2);
+  expect(flow.querySelectorAll(".space-flow-edge")).toHaveLength(1);
+  const activity = () => flow.querySelector(".space-flow-activity")!;
+  expect(activity().textContent).toContain("Ungrouped exchange");
+  expect(activity().textContent).not.toContain("Other project exchange");
+  h.renderer.setRoute({ view: "flow", group: "demo:alpha", state: "working" });
+  h.renderer.update(changed);
+  expect(activity().textContent).toContain("Ungrouped exchange");
+  h.renderer.setRoute({ view: "flow", group: "demo:alpha", state: "away" });
+  h.renderer.update(changed);
+  expect(activity().textContent).toContain("No activity observed yet.");
+});

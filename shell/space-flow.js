@@ -100,8 +100,7 @@ export function createSpaceFlow(root, host) {
     if (!visible || destroyed) return;
     const at = displayAt, events = host.activity.events();
     const actorIds = new Set(model.actors.map((actor) => actor.id));
-    const recent = events.filter((event) => (!group || event.fromGroup === group || event.toGroup === group) &&
-      (!state || actorIds.has(event.from) || actorIds.has(event.to)));
+    const recent = events.filter((event) => actorIds.has(event.from) || actorIds.has(event.to));
     const edges = flowEdges(model, events, at);
     const snapshot = [group, state, model.groups, model.actors, edges, recent.map((event) => [event, flowRelativeTime(event.observedAt, at)])];
     const next = JSON.stringify(snapshot);
