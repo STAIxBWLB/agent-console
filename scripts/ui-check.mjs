@@ -11,6 +11,7 @@ import { runVisualCheck } from "./ui-check-visual.mjs";
 import { runLoginCheck } from "./ui-check-login.mjs";
 import { runSpaceFoundation } from "./ui-check-space-foundation.mjs";
 import { runSpaceTeam } from "./ui-check-space-team.mjs";
+import { runSpaceFlow } from "./ui-check-space-flow.mjs";
 import { runStaticCheck } from "./ui-check-static.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -1254,6 +1255,7 @@ try {
     await runSpaceViews(ticket);
     await runSpaceFoundation({ browser, ticket, report, output: options.output });
     await runSpaceTeam({ browser, ticket, report, output: options.output });
+    await runSpaceFlow({ browser, ticket, report, output: options.output });
   }
   if (!focused || options.visualOnly) await runVisualCheck({ browser, root, report, output: options.output, env, scratch });
   if (!focused || options.loginOnly) await runLoginCheck({ browser, root, report, output: options.output, forceOverflow: options.forceOverflow, env, scratch });

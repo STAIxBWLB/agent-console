@@ -11,6 +11,8 @@
 
 ### Added
 
+- Add the Space Flow view with per-project actors, directed 15-minute message counts, distinct relationship strokes and recent activity. Keep at most 200 public link events for 30 minutes in page memory, and show per-peer counts and the last 10 events in agent detail. Suspend the minute refresh while Flow is hidden (#101).
+
 - Make Team the default Space view while honoring a saved view choice in `acon.space.section`; the Space header now scrolls with the page. Add per-group attention and active-agent summaries, collapsed idle/away rows, and namespaced actor detail routes with responsive presentation and focus restoration; keep the roster in Room. Extend the browser probe for Team/detail navigation and persistence, including a reload with `view` removed (#101).
 - Add optional public Space groups, actor roles and state-change timestamps, with a group filter and Room as the default view. Raise caps to 96 actors and 128 links; save the Flat/Room/3D sub-toggle separately as `acon.space.roomView`. These API 1 fields are additive: N-1 compatibility is unaffected because older consoles ignore unknown optional fields.
 - Add synthetic H1/A1 lineage and comparison integration fixtures with explicit owner/project/hash routing, bounded pages and lazy evidence reads, plus isolated compact/wide keyboard and visual checks (#63).

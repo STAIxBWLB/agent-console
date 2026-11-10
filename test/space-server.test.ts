@@ -50,6 +50,7 @@ test("space capability authorizes its snapshot and transport drops private field
   expect(result.dropped).toEqual({ actors: 0, cards: 0, links: 0 });
   plugin.manifest.capabilities!.space = false;
   expect((await post("/p/demo/snapshot", { panel: "space" })).status).toBe(400);
+  expect(await (await get("/space-flow.js")).text()).toContain("createSpaceFlow");
   expect((await get("/space-team.js")).headers.get("content-type")).toContain("javascript");
   expect((await get("/space.js")).headers.get("content-type")).toContain("javascript");
 });
