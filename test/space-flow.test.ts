@@ -203,3 +203,19 @@ test("project-filtered Recent activity retains ungrouped endpoints and follows a
   h.renderer.update(changed);
   expect(activity().textContent).toContain("No activity observed yet.");
 });
+
+test("Flow pet inventory changes refresh avatars with unchanged facts and stable focus", () => {
+  const h = harness({ pets: [{ id: "first" }] });
+  h.renderer.setRoute({ view: "flow" }); h.renderer.update(h.model);
+  const flow = h.root.querySelector(".space-flow")!;
+  expect(flow.querySelectorAll('[data-pet="first"]')).toHaveLength(2);
+  const actor = flow.querySelector('[data-flow-focus="actor:demo:one"]')!;
+  expect(actor.getAttribute("data-state")).toBe("working");
+  expect(actor.getAttribute("data-stale")).toBe("false");
+  actor.focus();
+  h.setPets([{ id: "second" }]); h.renderer.update(h.model);
+  expect(flow.querySelectorAll('[data-pet="first"]')).toHaveLength(0);
+  expect(flow.querySelectorAll('[data-pet="second"]')).toHaveLength(2);
+  expect(h.doc.activeElement.getAttribute("data-flow-focus")).toBe("actor:demo:one");
+  const writes = h.writes; h.renderer.update({ ...h.model, sampledAt: 2 }); expect(h.writes).toBe(writes);
+});

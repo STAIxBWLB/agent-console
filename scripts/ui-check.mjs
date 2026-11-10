@@ -10,6 +10,13 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runVisualCheck } from "./ui-check-visual.mjs";
 import { runLoginCheck } from "./ui-check-login.mjs";
+
+// A route handler still running when its probe closes the context rejects with a disposed-context
+// error. That is a teardown race, not a finding; any other unhandled rejection still stops the run.
+process.on("unhandledRejection", (error) => {
+  if (/Request context disposed|Target page, context or browser has been closed/.test(String(error?.message ?? error))) return;
+  throw error;
+});
 import { runSpaceFoundation } from "./ui-check-space-foundation.mjs";
 import { runSpaceTeam } from "./ui-check-space-team.mjs";
 import { runSpaceFlow } from "./ui-check-space-flow.mjs";
@@ -124,7 +131,8 @@ const artRoot = ${JSON.stringify(options.artRoot)};
 const assetsDir = artRoot ? join(artRoot,"assets") : join(home,"console","assets");
 const petsDir = artRoot ? join(artRoot,"pets") : join(home,"console","pets");
 if(!artRoot) {
-writeAssetPack(assetsDir,"office",{models:{desk:"desk.glb",shelf:"desk.glb",board:"desk.glb"}});
+const packDir = writeAssetPack(assetsDir,"office",{images:{floor:"floor.png",desk:"desk.png",wall:"wall.png",board:"board.png",shelf:"shelf.png"},models:{desk:"desk.glb",shelf:"desk.glb",board:"desk.glb"}});
+for (const name of ["wall","board","shelf"]) writeFileSync(join(packDir,name+".png"),pngImage(8,8));
 const petDir = join(petsDir,"fixture-pet");
 mkdirSync(petDir,{recursive:true});
 writeFileSync(join(petDir,"pet.json"),JSON.stringify({id:"fixture-pet",displayName:"Fixture pet",spriteVersionNumber:2,spritesheetPath:"spritesheet.png"}));
@@ -248,7 +256,7 @@ function measurePage() {
   const shown = (el) => {
     const rect = el.getBoundingClientRect();
     const style = getComputedStyle(el);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && !el.closest("[hidden]");
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && !el.closest("[hidden],.space-roster");
   };
   const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : el.className ? `.${String(el.className).trim().replace(/\s+/g, ".")}` : ""}`;
   if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) findings.push({ kind: "horizontal-scroll", detail: `Document width ${document.documentElement.scrollWidth} exceeds viewport ${document.documentElement.clientWidth}` });
@@ -267,6 +275,8 @@ function measurePage() {
   for (const selector of textSelectors) {
     for (const el of surface.querySelectorAll(selector)) {
       if (!shown(el)) continue;
+      // Compact name tags intentionally clamp; the full name is checked in the actor popover.
+      if (el.matches(".space-actor-name")) continue;
       const range = document.createRange();
       range.selectNodeContents(el);
       const rects = [...range.getClientRects()].filter((rect) => rect.width && rect.height);
@@ -276,6 +286,10 @@ function measurePage() {
         (el.scrollHeight > el.clientHeight + 1 && ["hidden", "clip"].includes(ownStyle.overflowY));
       while (ancestor && surface.contains(ancestor)) {
         const style = getComputedStyle(ancestor);
+        // Content beyond this scroll viewport is reachable by scrolling, not clipped text.
+        // Keep checking its own card/zone bounds up to this boundary; viewport containment
+        // is checked separately by checkRoomSurface.
+        if (ancestor.classList.contains("space-scroll") && ["auto", "scroll"].includes(style.overflowX)) break;
         const clipsX = ["hidden", "clip"].includes(style.overflowX);
         const clipsY = ["hidden", "clip"].includes(style.overflowY);
         if (clipsX || clipsY) {
@@ -306,10 +320,9 @@ function measurePage() {
   for (let i = 0; i < controls.length; i += 1) for (let j = i + 1; j < controls.length; j += 1) {
     const a = controls[i]; const b = controls[j];
     if (a.contains(b) || b.contains(a)) continue;
-    // Camera views intentionally occlude depth-ordered scene controls. Their projection,
-    // retained keyboard order and equivalent roster are checked by runSpaceViews instead.
-    // Normal shell controls and the roster retain the strict pairwise overlap check.
-    if (a.closest("[data-space-view='room'] .space-plane,[data-space-view='3d'] .space-plane") && b.closest("[data-space-view='room'] .space-plane,[data-space-view='3d'] .space-plane")) continue;
+    // Projected 3D targets retain depth occlusion; their screen projection and keyboard order
+    // are checked separately. CSS Room billboards keep the strict overlap check.
+    if (a.closest("[data-space-view='3d'] .space-plane") && b.closest("[data-space-view='3d'] .space-plane")) continue;
     const ar = visibleBox(a); const br = visibleBox(b);
     if (Math.min(ar.right, br.right) - Math.max(ar.left, br.left) > 2 && Math.min(ar.bottom, br.bottom) - Math.max(ar.top, br.top) > 2) findings.push({ kind: "overlapping-controls", detail: `${describe(a)} overlaps ${describe(b)}` });
   }
@@ -459,11 +472,129 @@ async function waitSpacePoll(page) {
   return responses.flatMap((response) => response.status() === 200 ? [] : [{ kind: "space-poll-failed", detail: `${new URL(response.url()).pathname}: ${response.status()}` }]);
 }
 
+// The scene is the only Room scroll region. This check stays under the shell CSP.
+async function checkRoomSurface(page) {
+  return page.locator("#view-space").evaluate((view) => {
+    const findings = [];
+    const scroll = view.querySelector(".space-scroll"), content = view.querySelector(".space-content");
+    if (!scroll || !content) return [{ kind: "space-room-viewport", detail: "Room scene scroller or content is missing" }];
+    const box = scroll.getBoundingClientRect(), viewBox = view.getBoundingClientRect();
+    const main = view.closest("main"), bottomPadding = main ? Number.parseFloat(getComputedStyle(main).paddingBottom) || 0 : 0;
+    const columnBottom = view.closest(".column")?.getBoundingClientRect().bottom ?? innerHeight;
+    if (document.documentElement.scrollWidth > innerWidth + 1 || document.documentElement.scrollHeight > innerHeight + 1) findings.push({ kind: "space-room-page-scroll", detail: `Page ${document.documentElement.scrollWidth}x${document.documentElement.scrollHeight} exceeds ${innerWidth}x${innerHeight}` });
+    if (box.left < -1 || box.right > innerWidth + 1 || box.top < -1 || box.bottom > innerHeight + 1 || box.width < viewBox.width - 2 || columnBottom - box.bottom > bottomPadding + 3) findings.push({ kind: "space-room-viewport", detail: `Scene box ${JSON.stringify({ left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width })}, Room width ${viewBox.width}` });
+    for (const element of [view.closest(".column"), main, view, content].filter(Boolean)) {
+      const css = getComputedStyle(element);
+      if ((["auto", "scroll"].includes(css.overflowY) && element.scrollHeight > element.clientHeight + 1) || (["auto", "scroll"].includes(css.overflowX) && element.scrollWidth > element.clientWidth + 1)) findings.push({ kind: "space-room-nested-scroll", detail: `${element.tagName.toLowerCase()}.${element.className} scrolls outside the scene` });
+    }
+    if (!content.contains(view.querySelector(".space-view-bar"))) findings.push({ kind: "space-room-controls", detail: "Scene style controls are outside Room content" });
+    const alternative = view.querySelector(".space-room-text-view");
+    if (!alternative || alternative.offsetParent === null) findings.push({ kind: "space-text-alternative", detail: "Room has no visible Team text alternative" });
+    const actors = [...view.querySelectorAll(".space-actor")];
+    if (view.dataset.spaceView !== "3d") {
+      for (const actor of actors) {
+        const name = actor.querySelector(".space-actor-name"), css = name && getComputedStyle(name);
+        const width = actor.offsetWidth, bound = 144 * (Number.parseFloat(getComputedStyle(document.documentElement).fontSize) / 14);
+        if (!name || actor.querySelector(".row-sub,.space-marks") || width > bound + 1) findings.push({ kind: "space-compact-avatar", detail: `${actor.dataset.key}: width ${width}, expanded card content present` });
+        if (name && css && name.getBoundingClientRect().height > Number.parseFloat(css.lineHeight) * 2 + 1) findings.push({ kind: "space-name-tag", detail: `${actor.dataset.key}: name exceeds two lines` });
+      }
+      const buttons = [...view.querySelectorAll(".space-actor,.space-card")];
+      for (let i = 0; i < buttons.length; i++) for (let j = i + 1; j < buttons.length; j++) {
+        const a = buttons[i].getBoundingClientRect(), b = buttons[j].getBoundingClientRect();
+        if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2) findings.push({ kind: "space-room-billboard-overlap", detail: `${buttons[i].dataset.key} overlaps ${buttons[j].dataset.key}` });
+      }
+    }
+    return findings;
+  });
+}
+
+async function checkRoomPopover(page) {
+  const findings = [];
+  const popup = page.locator(".space-actor-popover:not([hidden])");
+  const actor = page.locator(".space-actor[data-key='demo:claude']");
+  try {
+    await actor.hover(); await popup.waitFor();
+    const hover = await popup.evaluate((node) => { const box = node.getBoundingClientRect(); return { text: node.textContent, id: node.id, role: node.getAttribute("role"), fits: box.left >= 0 && box.top >= 0 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1 }; });
+    if (!hover.fits || hover.role !== "tooltip" || !hover.text.includes("claude") || !hover.text.includes("planner") || !hover.text.includes("reviewer")) findings.push({ kind: "space-actor-popover", detail: JSON.stringify(hover) });
+    const state = await actor.getAttribute("data-state");
+    if (!hover.text.includes(state)) findings.push({ kind: "space-popover-state", detail: `Popover is missing the reported ${state} state` });
+    const task = page.locator(".space-card[data-key='demo:n1'] .space-card-label");
+    if (await task.count()) {
+      const title = (await task.textContent()).replace(/^demo \/ /, "");
+      if (!hover.text.includes(title)) findings.push({ kind: "space-popover-task", detail: `Popover does not contain the current task: ${title}` });
+    }
+    if ((await actor.getAttribute("aria-describedby")) !== hover.id) findings.push({ kind: "space-popover-description", detail: "Avatar does not reference its full popover description" });
+    await page.mouse.move(0, 0); await page.locator(".space-actor-popover").waitFor({ state: "hidden" });
+    await actor.focus(); await popup.waitFor();
+    await page.keyboard.press("Escape"); await page.locator(".space-actor-popover").waitFor({ state: "hidden" });
+    if (!(await actor.evaluate((node) => document.activeElement === node))) findings.push({ kind: "space-popover-keyboard", detail: "Dismissing the popover moved avatar focus" });
+    await page.keyboard.press("Enter"); await page.locator(".space-agent-detail:not([hidden])").waitFor();
+    await page.locator(".space-detail-back").click(); await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
+    if (!(await actor.evaluate((node) => document.activeElement === node))) findings.push({ kind: "space-avatar-detail-return", detail: "Detail Back did not restore the avatar invoker" });
+    const approvals = page.locator(".space-actor[data-key='demo:codex']");
+    await approvals.hover(); await popup.waitFor();
+    if (!(await popup.textContent()).includes("1 approval")) findings.push({ kind: "space-popover-badges", detail: "Popover is missing the actor approval badge" });
+  } catch (error) { findings.push({ kind: "space-popover-probe", detail: error.message.slice(0, 1500) }); }
+  finally {
+    await page.mouse.move(0, 0);
+    await page.locator(".space-scroll").focus();
+    await page.locator(".space-actor-popover").waitFor({ state: "hidden" }).catch(() => {});
+  }
+  return findings;
+}
+
+// Stress the complete public-fact description without giving tooltip focus away from its invoker.
+async function runLongRoomPopover(ticket) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 560 }, colorScheme: "light", reducedMotion: "reduce" });
+  const page = await context.newPage(); page.setDefaultTimeout(12000);
+  const name = "Long public actor ".padEnd(200, "n"), task = "Long public task ".padEnd(200, "t");
+  const roles = Array.from({ length: 4 }, (_, index) => `role-${index}-`.padEnd(32, "r"));
+  const marks = [{ kind: "inbox", text: "inbox ".padEnd(200, "i") }, { kind: "approval", text: "approval ".padEnd(200, "a") }];
+  try {
+    await page.route("**/p/demo/snapshot", async (route) => {
+      if (route.request().postDataJSON()?.panel !== "space") { await route.continue(); return; }
+      const response = await fetchFullSnapshot(route), body = await response.json();
+      if (body.scene) {
+        const actor = body.scene.actors.find((item) => item.id === "claude");
+        actor.name = name; actor.roles = roles; actor.marks = marks;
+        const card = body.scene.cards.find((item) => item.id === actor.card); if (card) card.title = task;
+      }
+      await fulfillSnapshotFixture(route, response, body);
+    });
+    await page.goto((await ticket()).url);
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; location.hash = "#/local/space?view=room"; });
+    await page.locator(".space-actor").nth(5).waitFor();
+    const actor = page.locator('.space-actor[data-key="demo:claude"]');
+    await actor.focus();
+    const popup = page.locator(".space-actor-popover:not([hidden])"); await popup.waitFor();
+    const content = await popup.evaluate((node) => {
+      const box = node.getBoundingClientRect(), task = node.querySelector(".space-popover-task");
+      return { text: node.textContent, roles: [...node.querySelectorAll(".space-team-role")].map((role) => role.textContent),
+        overflow: getComputedStyle(node).overflowY, height: node.clientHeight, scrollHeight: node.scrollHeight,
+        fits: box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight + 1 && box.right <= innerWidth + 1,
+        taskUnclipped: task.scrollHeight <= task.clientHeight + 1, horizontal: node.scrollWidth <= node.clientWidth + 1 };
+    });
+    if (!content.fits || !content.horizontal || !content.taskUnclipped || !["auto", "scroll"].includes(content.overflow) || content.scrollHeight <= content.height || ![name, task, ...marks.map((mark) => mark.text)].every((text) => content.text.includes(text)) || JSON.stringify(content.roles) !== JSON.stringify(roles)) throw new Error(`Long public facts are not all reachable: ${JSON.stringify(content)}`);
+    await page.keyboard.press("End");
+    const keyboard = await popup.evaluate((node) => ({ bottom: node.scrollTop + node.clientHeight >= node.scrollHeight - 1, focus: document.activeElement?.dataset.key }));
+    if (!keyboard.bottom || keyboard.focus !== "demo:claude") throw new Error(`Keyboard tooltip scroll lost focus or facts: ${JSON.stringify(keyboard)}`);
+    await page.keyboard.press("Home"); await popup.hover(); await page.mouse.wheel(0, 10000); await settle(page);
+    const pointer = await popup.evaluate((node) => ({ bottom: node.scrollTop + node.clientHeight >= node.scrollHeight - 1, focus: document.activeElement?.dataset.key }));
+    if (!pointer.bottom || pointer.focus !== "demo:claude") throw new Error(`Pointer tooltip scroll lost focus or facts: ${JSON.stringify(pointer)}`);
+    const screenshot = "room-long-popover-200-short.png";
+    await page.screenshot({ path: join(options.output, screenshot) });
+    report.captures.push({ key: "room-long-popover-200-short", screenshot, width: 1440, theme: "light", textPercent: 200, view: "space-popover" });
+    report.roomLongPopover = { fits: content.fits, scrollHeight: content.scrollHeight, height: content.height, keyboard, pointer };
+    await page.keyboard.press("Escape"); await page.locator(".space-actor-popover").waitFor({ state: "hidden" });
+  } catch (error) { report.findings.push({ kind: "space-long-popover", detail: error.message.slice(0, 2000) }); }
+  finally { await context.close(); }
+}
+
 async function checkSpace(page, scenario, resources, packed) {
   await page.locator("#areas a[href='#/local/space']").waitFor();
   await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
   await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
-  await page.waitForFunction(() => document.querySelectorAll("#view-space .space-actor").length === 6);
+  await page.locator("#view-space .space-actor").nth(5).waitFor();
   await settle(page);
   const facts = await page.locator("#view-space").evaluate((view, expectPack) => {
     const findings = [];
@@ -488,36 +619,38 @@ async function checkSpace(page, scenario, resources, packed) {
     if (plane?.dataset.pack !== (expectPack ? "office" : "fallback")) findings.push({ kind: "space-pack", detail: `Expected ${expectPack ? "office" : "fallback"} plane, got ${plane?.dataset.pack ?? "no plane"}` });
     const imageStyles = [...view.querySelectorAll("*")].map((node) => getComputedStyle(node).backgroundImage).filter((image) => image !== "none");
     const hasFloor = imageStyles.some((image) => image.includes("/assets/office/floor"));
-    const hasDesk = imageStyles.some((image) => image.includes("/assets/office/desk"));
-    if (expectPack && (!hasFloor || !hasDesk)) findings.push({ kind: "space-pack-images", detail: `Installed pack background use: floor=${hasFloor}, desk=${hasDesk}` });
+    const hasWall = imageStyles.some((image) => image.includes("/assets/office/wall"));
+    const hasZoneFurniture = ["board", "shelf"].every((name) => imageStyles.some((image) => image.includes(`/assets/office/${name}`)));
+    if (expectPack && (!hasFloor || !hasWall || !hasZoneFurniture)) findings.push({ kind: "space-pack-images", detail: `Installed pack background use: floor=${hasFloor}, wall=${hasWall}, zones=${hasZoneFurniture}` });
     if (!expectPack && imageStyles.some((image) => image.includes("/assets/"))) findings.push({ kind: "space-fallback", detail: "No-pack scene still references an asset image" });
     const scroll = view.querySelector(".space-scroll"); const roster = view.querySelector(".space-roster");
     if (!scroll || !roster) findings.push({ kind: "space-equivalent", detail: "Scene scroll box or text roster missing" });
     else {
-      if (innerWidth <= 720 && roster.getBoundingClientRect().bottom > scroll.getBoundingClientRect().top + 1) findings.push({ kind: "space-phone-roster", detail: "Phone roster does not lead above the visual scene" });
+      if (roster.querySelector("button,a[href],input,select,textarea,[tabindex]")) findings.push({ kind: "space-hidden-roster-focus", detail: "The screen-reader roster contains an invisible focus target" });
+      if (!view.querySelector(".space-room-text-view")) findings.push({ kind: "space-text-alternative", detail: "Room has no visible Team text alternative control" });
       if (scroll.scrollWidth > scroll.clientWidth + 1 && !["auto", "scroll"].includes(getComputedStyle(scroll).overflowX)) findings.push({ kind: "space-scroll-container", detail: "Wide scene lacks its own horizontal scroll box" });
     }
-    const moving = [...view.querySelectorAll(".pet-sprite,[data-pose]")].filter((node) => {
+    const moving = [...view.querySelectorAll(".pet-sprite,[data-pose],.space-activity-dot")].filter((node) => {
       const css = getComputedStyle(node);
       return css.animationName !== "none" && css.animationDuration.split(",").some((duration) => Number.parseFloat(duration) > 0);
     });
     if (matchMedia("(prefers-reduced-motion: reduce)").matches && moving.length) findings.push({ kind: "space-reduced-motion", detail: `${moving.length} sprites still animate` });
-    return { findings, actorKeys, cardKeys, zoneKeys, rosterActors, rosterZones, pack: plane?.dataset.pack, hasFloor, hasDesk };
+    return { findings, actorKeys, cardKeys, zoneKeys, rosterActors, rosterZones, pack: plane?.dataset.pack, hasFloor, hasWall, hasZoneFurniture };
   }, packed);
   const metadata = await page.evaluate(async () => {
     const response = await fetch("/tools", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const data = await response.json();
     return { status: response.status, assetPacks: data.assetPacks ?? [], pets: (data.pets ?? []).map((pet) => pet.id) };
   });
-  const findings = [...facts.findings];
+  const findings = [...facts.findings, ...await checkRoomSurface(page), ...await checkRoomPopover(page)];
   if (metadata.status !== 200 || JSON.stringify(metadata.pets) !== JSON.stringify(["fixture-pet"])) findings.push({ kind: "space-fixture-pets", detail: "Fixture server did not expose only its explicit synthetic pet" });
   if (packed && (metadata.assetPacks.length !== 1 || metadata.assetPacks[0]?.id !== "office")) findings.push({ kind: "space-fixture-pack", detail: "Installed fixture pack missing from /tools" });
   if (!packed && metadata.assetPacks.length) findings.push({ kind: "space-fixture-pack", detail: "Fallback fixture server unexpectedly lists packs" });
   if (packed) {
     try {
-      await page.waitForFunction(() => ["floor", "desk"].every((name) => performance.getEntriesByType("resource").some((entry) => new URL(entry.name).pathname === `/assets/office/${name}`)));
-    } catch { findings.push({ kind: "space-image-request", detail: "Installed floor and desk did not both finish loading" }); }
-    for (const name of ["floor", "desk"]) if (!resources.some((entry) => entry.path === `/assets/office/${name}` && entry.status === 200)) findings.push({ kind: "space-image-response", detail: `No successful /assets/office/${name} response` });
+      await page.waitForFunction(() => ["floor", "wall", "board", "shelf"].every((name) => performance.getEntriesByType("resource").some((entry) => new URL(entry.name).pathname === `/assets/office/${name}`)));
+    } catch { findings.push({ kind: "space-image-request", detail: "Installed floor, wall and zone furniture did not all finish loading" }); }
+    for (const name of ["floor", "wall", "board", "shelf"]) if (!resources.some((entry) => entry.path === `/assets/office/${name}` && entry.status === 200)) findings.push({ kind: "space-image-response", detail: `No successful /assets/office/${name} response` });
     if (!resources.some((entry) => entry.path === "/pets/fixture-pet/sheet" && entry.status === 200)) findings.push({ kind: "space-image-response", detail: "No successful synthetic pet sheet response" });
   } else if (resources.some((entry) => entry.path.startsWith("/assets/"))) findings.push({ kind: "space-fallback-request", detail: "No-pack context requested an asset image" });
 
@@ -548,15 +681,12 @@ async function checkSpace(page, scenario, resources, packed) {
 
   await page.locator("#view-space:not([hidden]) .space-actor[data-key='demo:claude']").click();
   await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
-  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor") === "demo:claude");
+  if (await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor")) !== "demo:claude") report.findings.push({ capture: `${scenario.width}-${scenario.theme}-${scenario.textPercent}-${packed ? "space" : "space-fallback"}`, kind: "space-actor-detail-route", detail: "Actor click did not select the namespaced actor route" });
   await page.locator(".space-detail-back").click();
   await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
   await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
   await page.locator("#view-space:not([hidden]) .space-card[data-key='echo:n2']").click();
-  await page.waitForFunction(() => {
-    const [route, query = ""] = location.hash.split("?");
-    return route === "#/local/echo/notes" && new URLSearchParams(query).get("id") === "n2";
-  });
+  await page.waitForURL((url) => { const [route, query = ""] = url.hash.split("?"); return route === "#/local/echo/notes" && new URLSearchParams(query).get("id") === "n2"; });
   await page.locator(".panel-mount:not([hidden]) .ui-detail").waitFor();
   await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
   await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
@@ -894,6 +1024,8 @@ async function runSpaceMotion(ticket) {
     }, options.forceOverflow);
     await page.locator("#view-space .space-actor").nth(5).waitFor();
     findings.push(...await waitSpacePoll(page));
+    findings.push(...await checkRoomSurface(page));
+    findings.push(...await waitSpacePoll(page));
     const actorCount = await page.locator("#view-space .space-actor").count();
     if (actorCount !== 6) findings.push({ kind: "space-motion-actors", detail: `Expected six namespaced actors, got ${actorCount}` });
     evidence.initial = await page.locator("#view-space").evaluate((view) => {
@@ -915,6 +1047,8 @@ async function runSpaceMotion(ticket) {
     if (initial.idle?.row !== 0 || initial.idle.animation !== "none") findings.push({ kind: "space-idle-motion", detail: `Idle sprite is not a static row 0: ${JSON.stringify(initial.idle)}` });
     if (initial.messageLabels.length) findings.push({ kind: "space-initial-message-replay", detail: `First settled snapshot replayed message history: ${initial.messageLabels.join(", ")}` });
 
+    // Measure the first settled paint before popover/detail interactions change route state.
+    findings.push(...await checkRoomPopover(page));
     stage = 1;
     messageAt = new Date().toISOString(); // Constant for all following polls of this fact stage.
     findings.push(...await waitSpacePoll(page));
@@ -1071,12 +1205,17 @@ async function runSpaceViews(ticket) {
     await page.locator(".space-scroll").focus();
     for (let index = 0; index < keys.length; index += 1) {
       await page.keyboard.press("Tab");
-      const current = await page.evaluate(() => { const el = document.activeElement, css = getComputedStyle(el); const description = document.querySelector(".space-selection"); return { key: el.dataset.key, outline: css.outlineStyle !== "none" && Number.parseFloat(css.outlineWidth) > 0 && description && !description.hidden && description.textContent === el.getAttribute("aria-label") }; });
+      const current = await page.evaluate(() => {
+        const el = document.activeElement, css = getComputedStyle(el), actor = el.matches(".space-actor");
+        const description = document.querySelector(actor ? ".space-actor-popover" : ".space-selection");
+        const described = description && !description.hidden && (actor ? el.getAttribute("aria-describedby") === description.id : description.textContent === el.getAttribute("aria-label"));
+        return { key: el.dataset.key, outline: css.outlineStyle !== "none" && Number.parseFloat(css.outlineWidth) > 0 && described };
+      });
       actual.push(current.key); visibleFocus &&= current.outline;
     }
     return { expected: keys, actual, visibleFocus, passed: JSON.stringify(keys) === JSON.stringify(actual) && visibleFocus };
   };
-  for (const width of [375, 1440]) for (const theme of ["light", "dark"]) for (const textPercent of [100, 200]) {
+  for (const width of [375, 768, 1024, 1440]) for (const theme of ["light", "dark"]) for (const textPercent of [100, 200]) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme: theme, reducedMotion: "reduce" });
     const page = await context.newPage(); page.setDefaultTimeout(12000);
     const findings = [], requests = [], errors = [];
@@ -1092,6 +1231,15 @@ async function runSpaceViews(ticket) {
       }, { size: textPercent, force: options.forceOverflow });
       await page.locator(".space-actor").nth(5).waitFor();
       await page.locator(".space-card").nth(5).waitFor();
+      findings.push(...await checkRoomSurface(page), ...await checkRoomPopover(page));
+      if (width === 375 && theme === "light" && textPercent === 100) {
+        await page.locator(".space-room-text-view").click();
+        await page.locator(".space-team:not([hidden])").waitFor();
+        await page.locator(".space-content").waitFor({ state: "hidden" });
+        await page.locator("[data-space-section-tab='room']").click();
+        await page.locator(".space-content:not([hidden]) .space-actor").first().waitFor();
+        evidence.textAlternative = "Team round trip";
+      }
       const keys = await page.locator(".space-plane button").evaluateAll((nodes) => nodes.map((n) => n.dataset.key));
       await page.locator("[data-space-view='room']").click();
       await settle(page);
@@ -1110,10 +1258,12 @@ async function runSpaceViews(ticket) {
           }).filter((p) => p.x < -1 || p.y < -1 || p.right > p.sw + 1 || p.bottom > p.sh + 1);
         })(),
       }));
+      findings.push(...await checkRoomSurface(page));
       if (evidence.room.outside.length) findings.push({ kind: "space-room-clipped", detail: JSON.stringify(evidence.room.outside.slice(0, 6)) });
       if (JSON.stringify(keys) !== JSON.stringify(evidence.room.keys) || evidence.room.view !== "room" || evidence.room.preserve !== "preserve-3d" || evidence.room.transform === "none" || evidence.room.transition !== "0s") findings.push({ kind: "space-room-contract", detail: JSON.stringify(evidence.room) });
       await page.locator(".space-scroll").focus(); await page.keyboard.press("ArrowRight"); await settle(page);
       const rotated = await page.locator(".space-plane").evaluate((el) => getComputedStyle(el).transform);
+      findings.push(...await checkRoomSurface(page));
       if (rotated === evidence.room.transform) findings.push({ kind: "space-room-keyboard", detail: "ArrowRight did not rotate the Room camera" });
       if (requests.some((r) => (r.path.startsWith("/vendor/") && !r.path.startsWith("/vendor/icons/")) || r.path === "/space3d.js")) findings.push({ kind: "space-lazy-vendor", detail: "Flat or Room loaded WebGL code" });
       await page.locator(".space-scroll").scrollIntoViewIfNeeded();
@@ -1134,6 +1284,7 @@ async function runSpaceViews(ticket) {
           ...view.querySelector(".space-webgl").dataset };
       });
       evidence.initial3d = await geometry();
+      findings.push(...await checkRoomSurface(page));
       await page.locator(".space-camera button").filter({ hasText: "Rotate left" }).click(); await settle(page);
       evidence.rotated3d = await geometry();
       // Navigating to Space while on Space (navigate() on the same hash calls route()) forces a refresh with unchanged
@@ -1164,6 +1315,7 @@ async function runSpaceViews(ticket) {
       // At the default camera each model must read as furniture, not a few pixels: 40 px on its longer side on
       // desktop. A 375 px phone fits a 10-unit floor into ~340 px, so its floor is 24 px; zoom in for detail there.
       // 200% text grows the DOM-measured layout (not the furniture), so the floor applies at 100% text; 200% is recorded.
+      if (!options.artRoot && !requests.some((entry) => entry.path === "/assets/office/desk" && entry.status === 200)) findings.push({ kind: "space-3d-desk-response", detail: "3D did not load its installed desk texture" });
       const modelFloor = width >= 1024 ? 40 : 24;
       if (textPercent === 100 && Number(evidence.initial3d.modelCount) > 0 && !(Number(evidence.initial3d.modelMinPx) >= modelFloor)) findings.push({ kind: "space-model-size", detail: `smallest model ${evidence.initial3d.modelMinPx}px on its longer side (needs ${modelFloor}); ${evidence.initial3d.modelSides}` });
       await page.locator(".space-scroll").scrollIntoViewIfNeeded();
@@ -1255,6 +1407,7 @@ try {
   if (!focused || options.spaceMotionOnly) await runSpaceMotion(ticket);
   if (!focused || options.spaceViewsOnly) {
     await runSpaceViews(ticket);
+    await runLongRoomPopover(ticket);
     await runSpaceFoundation({ browser, ticket, report, output: options.output });
     await runSpaceTeam({ browser, ticket, report, output: options.output });
     await runSpaceFlow({ browser, ticket, report, output: options.output });

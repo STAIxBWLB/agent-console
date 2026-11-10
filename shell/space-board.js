@@ -39,17 +39,19 @@ export function createSpaceBoard(root, host) {
       "data-board-focus": `card:${card.id}`, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) },
     h("strong", { text: card.title }), h("span", { class: "space-board-tone", text: tone })));
     if (owner) article.append(h("button", { type: "button", class: "space-board-owner", "data-space-actor": owner.id,
+      "data-state": owner.state, "data-stale": String(Boolean(owner.stale)),
       "data-board-focus": `owner:${card.id}`, onclick: (event) => host.openActor(owner.id, event.currentTarget),
-      "aria-label": `Agent details: ${owner.name}` },
+      "aria-label": `Agent details: ${owner.name}, ${owner.state}${owner.stale ? " (last reported, stale)" : ""}` },
     h("span", { class: "space-team-avatar", "aria-hidden": "true" }, host.sprite(owner)),
-    h("span", { text: `${owner.name}${owner.stale ? " (stale)" : ""}` })));
+    h("span", { class: "space-activity-dot", "aria-hidden": "true" }),
+    h("span", { text: `${owner.name} · ${owner.state}${owner.stale ? " (stale)" : ""}` })));
     else article.append(h("p", { class: "sub space-board-unassigned", text: "Unassigned" }));
     return article;
   }
 
   function update(model, group = "", state = "") {
     if (!visible || destroyed) return;
-    const next = JSON.stringify([group, state, model.groups, model.zones, model.cards, model.actors]);
+    const next = JSON.stringify([group, state, host.petIds?.() ?? [], model.groups, model.zones, model.cards, model.actors]);
     if (next === signature) return;
     signature = next;
     const active = root.ownerDocument.activeElement;
