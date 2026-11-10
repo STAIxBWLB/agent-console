@@ -219,3 +219,10 @@ test("Team labels stale actors like Room and detail",()=>{
   expect(tile.getAttribute("data-stale")).toBe("true");
   expect(tile.textContent).toContain("(last reported, stale)");
 });
+test("a Team Board/Flow shortcut moves focus to the selected section tab",()=>{
+  const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
+  const shortcut=h.root.querySelector('[data-team-focus="shortcut:demo:alpha:board"]')!;shortcut.focus();
+  shortcut.onclick?.({});expect(h.nav.at(-1)).toMatchObject({view:"board",group:"demo:alpha"});
+  h.renderer.setRoute({view:"board",group:"demo:alpha"});h.renderer.update(h.model);
+  expect(h.doc.activeElement.getAttribute("data-space-section-tab")).toBe("board");
+});

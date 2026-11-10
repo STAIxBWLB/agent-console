@@ -260,6 +260,9 @@ export function createSpaceRenderer(root, host) {
     root.dataset.spaceSection = selection.view;
     const room = selection.view === "room";
     content.hidden = !room; teamRoot.hidden = selection.view !== "team"; placeholder.hidden = room || selection.view === "team";
+    // A section switch (e.g. a Team Board/Flow shortcut) must not leave focus on a now-hidden control.
+    const active = document.activeElement;
+    if (active && active !== root && root.contains(active) && !detailRoot.contains(active) && active.offsetParent === null) sectionButtons.get(selection.view)?.focus({ preventScroll: true });
     setText(placeholder, `${selection.view[0].toUpperCase() + selection.view.slice(1)} view is not available yet. Room shows the current scene.`);
     for (const [id, button] of sectionButtons) button.setAttribute("aria-pressed", String(id === selection.view));
     const grouped = filterSpaceModel(model, selection.group, "");
