@@ -1,4 +1,5 @@
 // acon shell (H0). Vanilla ES module under a strict CSP: no inline code, and data is rendered as text, never as markup.
+import { snapshotHeaders } from "./snapshot-headers.js";
 import { ICONS as TABLER } from "./vendor/icons/icons.js";
 const NODE = "local";
 const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["result", "Results"], ["candidate", "Candidates"], ["alert", "Alerts"]];
@@ -795,10 +796,10 @@ let staticTransport = null;
 const pinnedRefs = new Map();
 const pluginPath = (path) => staticTransport ? staticTransport.resource(path, pinnedRefs) : path.replace(/^\/p\/([a-z][a-z0-9-]{1,15})\//, (whole, id) => (pinnedRefs.has(id) ? `/p/${pinnedRefs.get(id)}/` : whole));
 
-async function post(path, body = {}) {
+async function post(path, body = {}, requestHeaders = {}) {
   if (staticTransport) {
     state.lastRequest = Date.now();
-    const response = await staticTransport.post(path, body, pinnedRefs);
+    const response = await staticTransport.post(path, body, pinnedRefs, requestHeaders);
     if (response.status === 200) state.lastOk = Date.now();
     return response;
   }
@@ -806,7 +807,7 @@ async function post(path, body = {}) {
   state.lastRequest = Date.now();
   let res;
   try {
-    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin", cache: "no-store" });
+    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", ...requestHeaders }, body: JSON.stringify(body), credentials: "same-origin", cache: "no-store" });
   } catch {
     state.offline = true;
     renderLive();
@@ -817,7 +818,8 @@ async function post(path, body = {}) {
   let data = null;
   try { data = await res.json(); } catch { /* non-JSON error body */ }
   if (res.status === 401 && path !== "/session") endSession("This console session ended.");
-  return { status: res.status, data: data ?? { ok: false, error: `HTTP ${res.status}` } };
+  return { status: res.status, data: data ?? { ok: false, error: `HTTP ${res.status}` },
+    headers: snapshotHeaders(res) };
 }
 function clientError(tool, where, error) {
   state.clientErrors.unshift({ at: new Date().toISOString(), tool, where, message: String(error?.message ?? error).split("\n")[0].slice(0, 200) });
@@ -905,7 +907,8 @@ let railSig = "";
 function renderRail() {
   const r = state.route;
   const count = needsMeCount();
-  document.title = count ? `acon (${count})` : "acon";
+  const title = count ? `acon (${count})` : "acon";
+  if (document.title !== title) document.title = title;
   renderPet();
   const issues = state.serverErrors.length + state.clientErrors.length + state.tools.filter((t) => t.status !== "ready").length + (state.node?.pluginsError ? 1 : 0);
   const sig = JSON.stringify([r.area, r.tool, count, issues, spaceTools().length > 0, readyTools().map((t) => [t.tool, t.title, t.icon])]);
@@ -1006,40 +1009,59 @@ function validItem(i) {
     && (i.seen === undefined || Boolean(i.seen && str(i.seen.action)));
 }
 let inboxSeq = 0;
+function adaptivePollMs(pollMs, duration = 0) {
+  return Math.min(60000, Math.max(2000, pollMs ?? 5000, Math.max(0, duration) * 3));
+}
 const inboxApplied = new Map();
 // #60: at most one inbox snapshot in flight per tool. A tick shares a slow tool's pending request; an explicit refresh
 // waits for it, then polls once (shared by every caller waiting on the same request).
 const inboxFlight = new Map();
 function inboxOnce(t, fresh) {
   const flight = inboxFlight.get(t.tool);
-  if (flight) return fresh ? (flight.follow ??= flight.done.catch(() => {}).then(() => inboxOnce(t, false))) : flight.done;
+  if (flight) return fresh ? (flight.follow ??= flight.done.catch(() => {}).then(() => inboxOnce(t, true))) : flight.done;
+  if (!fresh && Date.now() < (state.inbox.get(t.tool)?.next ?? 0)) return Promise.resolve();
   const seq = ++inboxSeq;
   const done = inboxFetch(t, seq).finally(() => inboxFlight.delete(t.tool));
   inboxFlight.set(t.tool, { done });
   return done;
 }
+function renderInboxSources() {
+  renderRail(); renderMini();
+  if (state.route.area === "inbox") renderInbox();
+  if (state.peekKey?.startsWith("item:")) renderPeek();
+}
 async function pollInbox(fresh = true) {
   const tools = readyTools().filter((t) => t.capabilities?.inbox);
+  let removed = false;
+  for (const tool of [...state.inbox.keys()]) if (!tools.some((t) => t.tool === tool)) { state.inbox.delete(tool); removed = true; }
+  if (removed) renderInboxSources();
   await Promise.all(tools.map((t) => inboxOnce(t, fresh)));
-  for (const tool of [...state.inbox.keys()]) if (!tools.some((t) => t.tool === tool)) state.inbox.delete(tool);
-  renderRail();
-  renderMini();
+  // Time-dependent snoozes can expire even when every provider result is unchanged.
+  renderRail(); renderMini();
   if (state.route.area === "inbox") renderInbox();
   if (state.peekKey?.startsWith("item:")) renderPeek();
 }
 async function inboxFetch(t, seq) {
-  const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox" });
+  const previous = state.inbox.get(t.tool);
+  const startedAt = Date.now();
+  const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox" }, previous?.version ? { "X-Acon-Known": previous.version } : {});
   // An older response that arrives late never overwrites a newer one.
   if ((inboxApplied.get(t.tool) ?? 0) > seq) return;
   inboxApplied.set(t.tool, seq);
+  const next = startedAt + Math.max(INBOX_MS, adaptivePollMs(t.pollMs ?? INBOX_MS, Date.now() - startedAt));
+  const version = r.headers?.["x-acon-version"] ?? "";
   if (r.status === 200 && Array.isArray(r.data.items)) {
     const items = r.data.items.filter(validItem);
     if (items.length !== r.data.items.length) clientError(t.tool, "inbox", new Error(`${r.data.items.length - items.length} malformed inbox items were skipped`));
-    state.inbox.set(t.tool, { items, failed: false });
+    state.inbox.set(t.tool, { items, failed: false, next, version });
+  } else if (r.status === 200 && r.data.changed === false && r.data.ok !== false && previous) {
+    state.inbox.set(t.tool, { ...previous, failed: false, next, version });
   } else {
-    const old = state.inbox.get(t.tool);
-    state.inbox.set(t.tool, { items: old?.items ?? [], failed: true });
+    state.inbox.set(t.tool, { items: previous?.items ?? [], failed: true, next, version: "" });
   }
+  // A fast tool becomes usable without waiting for the slowest provider; known replies write nothing.
+  const current = state.inbox.get(t.tool);
+  if (!previous || previous.failed !== current.failed || JSON.stringify(previous.items) !== JSON.stringify(current.items)) renderInboxSources();
 }
 function sortedItems() {
   const items = visibleItems();
@@ -1567,7 +1589,7 @@ async function showTool(r) {
   await p.loading;
   if (state.route.area !== "tool" || state.route.tool !== tool.tool || !p.instance) return;
   const view = JSON.stringify([r.panel, r.params]);
-  if (p.view !== view) { p.cursor = 0; p.lastData = null; p.view = view; p.gen += 1; }
+  if (p.view !== view) { p.cursor = 0; p.version = ""; p.lastData = null; p.view = view; p.gen += 1; }
   p.panel = r.panel;
   p.lastSig = "";
   safe(tool.tool, "show", () => p.instance.show?.(r.panel, r.params));
@@ -1576,21 +1598,25 @@ async function showTool(r) {
 }
 async function pollPanel() {
   const r = state.route;
-  if (r.area !== "tool") return;
+  if (r.area !== "tool" || document.visibilityState !== "visible") return;
   const p = state.panels.get(r.tool);
   if (!p?.instance || p.busy || Date.now() < p.next) return;
   const tool = toolById(r.tool);
   p.busy = true;
   const gen = p.gen;
   const after = p.cursor;
-  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel });
+  const startedAt = Date.now();
+  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel }, p.version ? { "X-Acon-Known": p.version } : {});
   p.busy = false;
-  p.next = Date.now() + Math.min(60000, Math.max(2000, tool?.pollMs ?? 5000));
+  p.next = startedAt + adaptivePollMs(tool?.pollMs, Date.now() - startedAt);
+  const resume = p.resume; p.resume = false;
+  if (resume && document.visibilityState === "visible") { p.next = 0; queueMicrotask(() => pollPanel()); }
   // A response for an earlier panel or item never reaches the view now shown.
   if (state.route.tool !== r.tool) return;
   if (gen !== p.gen) { p.next = 0; pollPanel(); return; }
   if (res.status === 200) {
-    p.banner.hidden = true;
+    p.version = res.headers?.["x-acon-version"] ?? "";
+    if (!p.banner.hidden) p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
     let data = res.data;
     if (data.changed === false && Object.keys(data).every((key) => key === "changed" || key === "cursor")) {
@@ -1608,8 +1634,11 @@ async function pollPanel() {
     p.lastSig = sig;
     p.lastData = data;
     for (const cb of p.snapListeners) safe(r.tool, "onSnapshot", () => cb(data));
-  } else if (res.status) {
-    p.banner.hidden = false;
+  } else {
+    // Any failed reply, a transport failure (status 0) included, drops the conditional version.
+    p.version = "";
+    if (!res.status) return;
+    if (p.banner.hidden) p.banner.hidden = false;
     p.banner.replaceChildren(icon("alert"), h("span", { text: `${tool?.title ?? r.tool} could not refresh. ` }), h("a", { href: hashFor("system"), text: "Details in System" }));
   }
 }
@@ -1886,26 +1915,31 @@ function renderSpace(force = false) {
   spaceRenderer.update(spaceModule.mergeSpaceScenes(state.space), force);
 }
 async function pollSpace() {
-  if (state.route.area !== "space" || !spaceRenderer || state.ended) return;
+  if (state.route.area !== "space" || !spaceRenderer || state.ended || document.visibilityState !== "visible") return;
   await Promise.all(spaceTools().map(async (tool) => {
     let entry = state.space.get(tool.tool);
     if (!entry) { entry = { scene: null, cursor: 0, next: 0, busy: false, failed: false }; state.space.set(tool.tool, entry); }
     if (entry.busy || Date.now() < entry.next) return;
     const startedAt = Date.now();
-    const interval = Math.min(60000, Math.max(2000, tool.pollMs ?? 5000));
     const due = entry.next || startedAt;
-    entry.next = due + (Math.floor((startedAt - due) / interval) + 1) * interval;
     entry.busy = true;
-    const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor });
+    const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor }, entry.version ? { "X-Acon-Known": entry.version } : {});
     entry.busy = false;
+    const interval = adaptivePollMs(tool.pollMs, Date.now() - startedAt);
+    // Preserve cadence across 1 s tick jitter instead of drifting into a skipped poll.
+    entry.next = due + (Math.floor((startedAt - due) / interval) + 1) * interval;
+    const resume = entry.resume; entry.resume = false;
+    if (resume && document.visibilityState === "visible") { entry.next = 0; queueMicrotask(() => pollSpace()); }
     entry.reported = true;
-    if (res.status === 200 && res.data.scene) {
+    if (res.status === 200 && res.data.ok !== false && (res.data.scene || (entry.scene && res.data.changed === false))) {
+      // Motion measures observations, not repeated/jumping cache sample timestamps.
       entry.sampledAt = Date.now();
-      entry.scene = res.data.scene;
-      entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 };
+      if (res.data.scene) { entry.scene = res.data.scene; entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 }; }
       if (Number.isSafeInteger(res.data.cursor)) entry.cursor = res.data.cursor;
+      entry.version = res.headers?.["x-acon-version"] ?? "";
+      // SWR grace is healthy reuse, not a failed refresh. Only unsuccessful replies fail a source.
       entry.failed = false;
-    } else entry.failed = true;
+    } else { entry.failed = true; entry.version = ""; }
   }));
   renderSpace();
 }
@@ -2234,13 +2268,26 @@ function tick() {
   // A Mini in Picture-in-Picture stays live while this tab is hidden.
   if (document.visibilityState === "visible" || pip) {
     renderLive();
-    if (now >= state.nextInbox) { state.nextInbox = now + INBOX_MS; pollInbox(false).catch((error) => clientError("acon", "inbox", error)); }
+    if (now >= state.nextInbox) { state.nextInbox = now + 1000; pollInbox(false).catch((error) => clientError("acon", "inbox", error)); }
     // #60: a slow /tools is not stacked by the next tick.
     if (now >= state.nextTools && !state.toolsBusy) { state.nextTools = now + TOOLS_MS; state.toolsBusy = true; loadTools().finally(() => { state.toolsBusy = false; }); }
     pollPanel();
     pollSpace();
   } else if (now - state.lastRequest >= PING_MS) post("/ping");
 }
+
+function resumeVisiblePolling() {
+  if (state.ended || document.visibilityState !== "visible") return;
+  if (state.route.area === "tool") {
+    const panel = state.panels.get(state.route.tool);
+    if (panel) { if (panel.busy) panel.resume = true; else panel.next = 0; }
+    void pollPanel();
+  } else if (state.route.area === "space") {
+    for (const entry of state.space.values()) { if (entry.busy) entry.resume = true; else entry.next = 0; }
+    void pollSpace();
+  }
+}
+document.addEventListener("visibilitychange", resumeVisiblePolling);
 
 async function boot() {
   applyTheme();
@@ -2256,7 +2303,7 @@ async function boot() {
     if (!readyTools().length) location.hash = hashFor("system");
     route();
     state.nextTools = Date.now() + TOOLS_MS;
-    state.nextInbox = Date.now() + INBOX_MS;
+    state.nextInbox = Date.now() + 1000;
     setInterval(tick, 1000);
     await pollInbox();
     renderLive();
@@ -2275,7 +2322,7 @@ async function boot() {
   if (!(await loadTools())) { if (!state.ended) endSession("The console could not start."); return; }
   state.nextTools = Date.now() + TOOLS_MS;
   route();
-  state.nextInbox = Date.now() + INBOX_MS;
+  state.nextInbox = Date.now() + 1000;
   setInterval(tick, 1000);
   try { await pollInbox(); } catch (error) { clientError("acon", "inbox", error); }
   renderLive();

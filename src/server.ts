@@ -102,7 +102,7 @@ export function startServer(options: ServerOptions) {
   const log = options.log ?? ((line: string) => console.error(`acon: ${line}`));
   const startedAt = new Date(now()).toISOString();
   const serve = options.serve;
-  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-team.js": ["space-team.js", "text/javascript; charset=utf-8"], "/space-board.js": ["space-board.js", "text/javascript; charset=utf-8"], "/space-flow.js": ["space-flow.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
+  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/snapshot-headers.js": ["snapshot-headers.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-team.js": ["space-team.js", "text/javascript; charset=utf-8"], "/space-board.js": ["space-board.js", "text/javascript; charset=utf-8"], "/space-flow.js": ["space-flow.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
   const files: Record<string, { body: string; type: string; frame?: true }> = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
   // Sandboxed visual frame: fixed files only, served with FRAME_CSP and framable by the console itself.
   files["/visual/frame"] = { body: asset("visual-frame.html"), type: "text/html; charset=utf-8", frame: true };
@@ -182,7 +182,9 @@ export function startServer(options: ServerOptions) {
     ? { tool: p.tool, ref: p.ref ?? p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, commands: p.manifest.commands ?? [], capabilities: p.manifest.capabilities ?? {} }
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
-  async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {
+  async function snapshot(entry: PluginEntry, input: Record<string, unknown>, known: string | null) {
+    // Conditional transport is header-only; every body field remains plugin input.
+    if (known !== null && !/^[0-9a-f]{64}$/.test(known)) return reject(400, "X-Acon-Known must be a SHA-256 version from X-Acon-Version");
     const caps = entry.manifest!.capabilities ?? {};
     const panel = input.panel;
     const allowed = declaresPanel(entry.manifest!, panel);
@@ -201,11 +203,16 @@ export function startServer(options: ServerOptions) {
           const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, request));
           if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
           if (result.ok === false || panel !== "space" || caps.space !== true) return result;
+          const cursor = Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {};
+          // A Space cursor-only reply carries no scene to project. Keep its bounded transport fields.
+          if (result.changed === false && result.scene === undefined) return { changed: false, ...cursor };
           const clean = sanitizeSpaceScene(result.scene);
-          return { ok: true, ...clean, ...(Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {}) };
+          return { ok: true, ...clean, ...(result.changed === false ? { changed: false } : {}), ...cursor };
         } });
-      return json(reply.value, 200, { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs),
-        "X-Acon-Sampled-At": new Date(reply.sampledAt).toISOString() });
+      // A producer cursor/changed:false reply is authoritative, including legacy full replies.
+      const unchanged = known === reply.version && reply.value.changed !== false && reply.value.ok !== false;
+      return json(unchanged ? { changed: false } : reply.value, 200, { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs),
+        "X-Acon-Sampled-At": new Date(reply.sampledAt).toISOString(), "X-Acon-Version": reply.version });
     } catch (error) {
       record(entry.tool, `snapshot ${panel}`, error);
       return reject(502, `${entry.tool} could not refresh; details are in System`);
@@ -323,8 +330,8 @@ export function startServer(options: ServerOptions) {
       if (serve && req.method === "OPTIONS") {
         const method = req.headers.get("access-control-request-method");
         const headers = (req.headers.get("access-control-request-headers") ?? "").toLowerCase().split(",").map((h) => h.trim()).filter(Boolean);
-        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization/content-type only");
-        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Max-Age": "300" } });
+        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type", "x-acon-known"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization, content-type or x-acon-known");
+        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Acon-Known", "Access-Control-Max-Age": "300" } });
       }
       prune(resources);
       const grant = resources.get(url.searchParams.get("acon_resource") ?? "");
@@ -445,7 +452,7 @@ export function startServer(options: ServerOptions) {
       }
       const entry = pluginEntry();
       if (!entry) return unknownTool();
-      return plugin![2] === "snapshot" ? snapshot(entry, input) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
+      return plugin![2] === "snapshot" ? snapshot(entry, input, req.headers.get("x-acon-known")) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
   }
   const server = Bun.serve({
     hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",
@@ -462,7 +469,7 @@ export function startServer(options: ServerOptions) {
         if (requestOrigin && serve.origins.includes(requestOrigin)) {
           response.headers.set("Access-Control-Allow-Origin", requestOrigin);
           response.headers.set("Access-Control-Allow-Credentials", "true");
-          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms, X-Acon-Sampled-At");
+          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms, X-Acon-Sampled-At, X-Acon-Version");
         }
       }
       return response;

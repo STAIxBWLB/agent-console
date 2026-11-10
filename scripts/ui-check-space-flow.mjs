@@ -1,4 +1,5 @@
 // #101 Delivery 3: public-link observations, Flow layout and detail return paths.
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
@@ -88,14 +89,14 @@ async function changedLinkProbe({ browser, ticket, report }) {
       try { input = route.request().postDataJSON(); } catch { await route.continue(); return; }
       if (input?.panel !== "space") { await route.continue(); return; }
       const observedStage = stage;
-      const response = await route.fetch();
+      const response = await fetchFullSnapshot(route);
       const body = await response.json();
       if (body.scene) {
         if (observedStage >= 1) body.scene.links.push({ kind: "message", from: "claude", to: "codex", label: "Flow changed-link probe", at });
         if (observedStage >= 2) body.scene.actors.find((actor) => actor.id === "local").name = "Flow rerender probe";
         if (observedStage >= 3) body.scene.links.push({ kind: "message", from: "codex", to: "local", label: "Flow hidden-link probe", at });
       }
-      await route.fulfill({ response, json: body });
+      await fulfillSnapshotFixture(route, response, body);
     });
     await enterFlow(page, ticket, 100);
     await page.evaluate(() => {
@@ -140,6 +141,36 @@ async function changedLinkProbe({ browser, ticket, report }) {
   } finally { await context.close(); }
 }
 
+// Preserve SWR headers in this protocol case. Body-rewriting motion fixtures
+// intentionally remove upstream metadata because it no longer describes their body.
+async function staleGraceProbe({ browser, ticket, report, output }) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, colorScheme: "light", reducedMotion: "reduce" });
+  const page = await context.newPage();
+  page.setDefaultTimeout(12000);
+  const sampledAt = new Date(Date.now() - 10000).toISOString();
+  let replies = 0;
+  try {
+    await page.route("**/p/*/snapshot", async (route) => {
+      if (route.request().postDataJSON()?.panel !== "space") { await route.continue(); return; }
+      const response = await fetchFullSnapshot(route);
+      replies++;
+      // No body mutation: the upstream version remains valid. SWR reuses a good sample.
+      await route.fulfill({ response, headers: { ...response.headers(), "x-acon-cache": "stale", "x-acon-sampled-at": sampledAt } });
+    });
+    await enterFlow(page, ticket, 100);
+    assert.equal(await page.locator(".space-flow-actor").filter({ hasText: /\(stale\)/ }).count(), 0, "Routine SWR marked healthy actors stale");
+    assert.equal(await page.locator("#view-space > .notice").filter({ hasText: "could not refresh" }).isVisible(), false, "Routine SWR showed a failure banner");
+    const writes = await unchangedWrites(page);
+    assert(replies >= 4, "SWR probe did not preserve headers across both producers and a repeat poll");
+    const screenshot = "space-swr-grace.png";
+    await page.screenshot({ path: join(output, screenshot), fullPage: true });
+    report.captures.push({ key: "space-swr-grace", screenshot, width: 1440, theme: "light", textPercent: 100, view: "space-flow" });
+    report.spaceCacheFreshness = { cacheHeader: "stale", sampledAt, replies, failureBanner: false, staleActors: 0, unchangedWrites: writes };
+  } catch (error) {
+    report.findings.push({ kind: "space-swr-grace", detail: error.message });
+  } finally { await context.close(); }
+}
+
 export async function runSpaceFlow({ browser, ticket, report, output }) {
   report.spaceFlow = [];
   for (const width of [375, 768, 1024, 1440]) for (const theme of ["light", "dark"]) for (const textPercent of [100, 200]) {
@@ -166,4 +197,5 @@ export async function runSpaceFlow({ browser, ticket, report, output }) {
     } finally { await context.close(); }
   }
   await changedLinkProbe({ browser, ticket, report });
+  await staleGraceProbe({ browser, ticket, report, output });
 }

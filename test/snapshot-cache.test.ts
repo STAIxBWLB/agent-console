@@ -156,7 +156,8 @@ async function httpFixture(reply?: Record<string, unknown>) {
   const plugin = createDemoPlugin();
   const provider = await plugin.open({ home: "/fixture", log() {} });
   const original = provider.snapshot.bind(provider);
-  provider.snapshot = async (input) => { calls++; if (fail) throw new Error("offline"); return reply ?? original(input); };
+  const inputs: Record<string, unknown>[] = [];
+  provider.snapshot = async (input) => { inputs.push({ ...input }); calls++; if (fail) throw new Error("offline"); return reply ?? original(input); };
   const entry: PluginEntry = { tool: "demo", file: "fixture", status: "ready", manifest: plugin.manifest, provider };
   const server = startServer({ plugins: [entry], pluginsDir: "/fixture", version: "test", now: () => now, log() {} });
   servers.push(server);
@@ -164,9 +165,9 @@ async function httpFixture(reply?: Record<string, unknown>) {
     const ticket = server.issue().split("#")[1]!;
     const login = await fetch(`${server.origin}/session`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json" }, body: JSON.stringify({ ticket }) });
     const cookie = /acon_ui_\d+=[0-9a-f]+/.exec(login.headers.get("set-cookie") ?? "")![0];
-    return (route: string, body: Record<string, unknown>) => fetch(`${server.origin}${route}`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json", Cookie: cookie }, body: JSON.stringify(body) });
+    return (route: string, body: Record<string, unknown>, headers: Record<string, string> = {}) => fetch(`${server.origin}${route}`, { method: "POST", headers: { Origin: server.origin, "Content-Type": "application/json", Cookie: cookie, ...headers }, body: JSON.stringify(body) });
   };
-  return { server, viewer, get calls() { return calls; }, advance(value: number) { now = value; }, fail() { fail = true; } };
+  return { server, viewer, inputs, get calls() { return calls; }, advance(value: number) { now = value; }, fail() { fail = true; } };
 }
 
 test("HTTP viewers share hits, receive stale envelopes/age and System diagnostics", async () => {
@@ -289,4 +290,89 @@ test("explicit panels own their TTL before reserved capabilities", () => {
   manifest.capabilities!.inbox = false;
   expect(snapshotMaxAge(manifest, "space")).toBe(2000);
   expect(snapshotMaxAge(manifest, "inbox")).toBe(2000);
+});
+
+
+test("HTTP known headers skip unchanged bodies without reaching provider input or fragmenting keys", async () => {
+  const payload = { notes: ["same"], cursor: 3, version: "producer-owned" };
+  const fixture = await httpFixture(payload), post = await fixture.viewer();
+  const first = await post("/p/demo/snapshot", { panel: "notes", after: 0 });
+  const version = first.headers.get("x-acon-version");
+  expect(version).toMatch(/^[0-9a-f]{64}$/);
+  expect(await first.json()).toEqual(payload);
+  const second = await post("/p/demo/snapshot", { panel: "notes", after: 0 }, { "X-Acon-Known": version! });
+  expect(await second.json()).toEqual({ changed: false });
+  expect(second.headers.get("x-acon-version")).toBe(version);
+  expect(second.headers.get("x-acon-cache")).toBe("hit");
+  const unknown = await post("/p/demo/snapshot", { panel: "notes", after: 0 }, { "X-Acon-Known": "0".repeat(64) });
+  expect(await unknown.json()).toEqual(payload);
+  expect(fixture.calls).toBe(1);
+  expect(fixture.inputs).toEqual([{ panel: "notes", after: 0 }]);
+  const tools = await (await post("/tools", {})).json();
+  expect(tools.snapshotCache.entries).toBe(1);
+  fixture.advance(4000);
+  const refreshed = await post("/p/demo/snapshot", { panel: "notes", after: 0 }, { "X-Acon-Known": version! });
+  expect(refreshed.headers.get("x-acon-version")).toBe(version);
+  expect(await refreshed.json()).toEqual({ changed: false });
+  expect(fixture.calls).toBe(2);
+  expect(fixture.inputs[1]).toEqual({ panel: "notes", after: 0 });
+});
+
+test("plugin cursor and legacy full changed:false replies take precedence over known", async () => {
+  for (const payload of [{ cursor: 7, changed: false }, { cursor: 7, changed: false, notes: ["legacy full reply"] }]) {
+    const fixture = await httpFixture(payload), post = await fixture.viewer();
+    const first = await post("/p/demo/snapshot", { panel: "notes", after: 7 });
+    const version = first.headers.get("x-acon-version");
+    const second = await post("/p/demo/snapshot", { panel: "notes", after: 7 }, { "X-Acon-Known": version! });
+    expect(await second.json()).toEqual(payload);
+    expect(fixture.calls).toBe(1);
+  }
+});
+
+test("known never suppresses or retains producer error replies", async () => {
+  const payload = { ok: false, error: "project not running", version: "producer error" };
+  const fixture = await httpFixture(payload), post = await fixture.viewer();
+  const first = await post("/p/demo/snapshot", { panel: "notes" });
+  const version = first.headers.get("x-acon-version");
+  const second = await post("/p/demo/snapshot", { panel: "notes" }, { "X-Acon-Known": version! });
+  expect(second.status).toBe(200); expect(await second.json()).toEqual(payload);
+  expect(fixture.calls).toBe(2);
+});
+
+test("malformed known headers are rejected before provider dispatch", async () => {
+  const fixture = await httpFixture({ notes: [] }), post = await fixture.viewer();
+  for (const known of ["", "not-a-hash", "a".repeat(65), "A".repeat(64)]) {
+    expect((await post("/p/demo/snapshot", { panel: "notes" }, { "X-Acon-Known": known })).status).toBe(400);
+  }
+  expect(fixture.calls).toBe(0);
+});
+
+
+test("Space cursor-only unchanged replies preserve their cursor without admitting private top-level fields", async () => {
+  const fixture = await httpFixture({ cursor: 7, changed: false, privateField: "not public" }), post = await fixture.viewer();
+  const first = await post("/p/demo/snapshot", { panel: "space", after: 7 });
+  const version = first.headers.get("x-acon-version");
+  expect(await first.json()).toEqual({ changed: false, cursor: 7 });
+  const second = await post("/p/demo/snapshot", { panel: "space", after: 7 }, { "X-Acon-Known": version! });
+  expect(await second.json()).toEqual({ changed: false, cursor: 7 });
+  expect(fixture.calls).toBe(1);
+});
+
+
+test("producer body known remains unrestricted input and part of the canonical cache key", async () => {
+  const fixture = await httpFixture({ notes: [] }), post = await fixture.viewer();
+  const values = [null, 0, "not-a-hash", { record: "producer" }, ["producer"]];
+  for (const known of values) {
+    const response = await post("/p/demo/snapshot", { panel: "notes", known });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-acon-cache")).toBe("miss");
+    const version = response.headers.get("x-acon-version")!;
+    const unchanged = await post("/p/demo/snapshot", { panel: "notes", known }, { "X-Acon-Known": version });
+    expect(unchanged.status).toBe(200);
+    expect(await unchanged.json()).toEqual({ changed: false });
+  }
+  expect(fixture.calls).toBe(values.length);
+  expect(fixture.inputs.map((input) => input.known)).toEqual(values);
+  const tools = await (await post("/tools", {})).json();
+  expect(tools.snapshotCache.entries).toBe(values.length);
 });

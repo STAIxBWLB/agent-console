@@ -1,4 +1,5 @@
 // #101 Delivery 4: per-project Board, Done disclosure and producer-card navigation.
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 
@@ -17,7 +18,7 @@ async function installDoneFixture(page) {
     let input;
     try { input = route.request().postDataJSON(); } catch { await route.continue(); return; }
     if (input?.panel !== "space") { await route.continue(); return; }
-    const response = await route.fetch();
+    const response = await fetchFullSnapshot(route);
     const body = await response.json();
     if (body.scene) {
       const zone = body.scene.zones.find((item) => item.kind === "done" && item.group === "delivery");
@@ -30,7 +31,7 @@ async function installDoneFixture(page) {
       });
       zone.count = 20; // The producer total deliberately exceeds the seven supplied cards.
     }
-    await route.fulfill({ response, json: body });
+    await fulfillSnapshotFixture(route, response, body);
   });
 }
 

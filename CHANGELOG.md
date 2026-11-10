@@ -7,9 +7,12 @@
 - Planned 0.2.0 N-1 support targets 0.1.8, the latest published patch of 0.1.x, and remains additive on API 1:
   - Plugin API: verified by a directional type bridge (old plugin values accepted by the current console; current console values satisfy old plugins; historical optional keys are retained) and the exact published 0.1.8 conformance kit against a 0.1.8-shaped provider opened by the current loader. New principal capabilities remain opt-in.
   - Routes: verified for the legacy browser session, tool listing, ping, panel snapshots, actions, confirmation-token exchange and a sample plugin asset through both tool-id and load-reference paths. Other Access/bearer and static-shell routes remain supported by policy but are not exercised by the added historical probe.
+  - Space route: a producer Space reply `{changed: false, cursor}` without a scene now passes through unchanged instead of being projected to an empty scene. A 0.1.8 static shell treats it as a failed source for that poll instead of blanking the scene; current shells keep the last scene.
   - Manifest files: verified for unversioned and versioned API 1 plugin registrations with module/hash validation. Existing pet/asset pack manifests and static node configuration remain supported by policy but are not covered by this N-1 probe; the principal registry is an additive new surface.
 
 ### Added
+
+- Add header-only snapshot versions and `X-Acon-Known` conditional request headers, preserving plugin cursor replies and forwarding version/freshness headers through the static transport. Adapt polling to request duration while keeping the inbox's 5-second minimum, pause hidden panel/Space polls with immediate visible refresh, progressively render inbox sources, refresh expired snoozes on unchanged rounds, and drive Room motion from the client observation clock without marking healthy SWR sources failed (#105).
 
 - Add the Space Board view with per-group zone columns, producer-linked cards, owner detail controls, and collapsed Done history showing the last five supplied cards. Keep horizontal scrolling within each board row, preserve focus/disclosures, and cover the responsive matrix with a Board probe (#101).
 

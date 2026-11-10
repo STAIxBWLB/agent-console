@@ -170,3 +170,22 @@ describe("H2 resource grants and node isolation (#46 AC4)", () => {
     expect(await own.json()).toEqual(expect.objectContaining({ ok: true }));
   });
 });
+
+
+test("configured-origin snapshot preflight permits X-Acon-Known and the conditional request succeeds", async () => {
+  const server = await node();
+  const preflight = await call(server, "/p/demo/snapshot", { method: "OPTIONS", headers: {
+    "Access-Control-Request-Method": "POST", "Access-Control-Request-Headers": "authorization, content-type, x-acon-known",
+  } });
+  expect(preflight.status).toBe(204);
+  cors(preflight);
+  const allowed = preflight.headers.get("access-control-allow-headers")!.toLowerCase().split(",").map((name) => name.trim());
+  expect(allowed).toContain("x-acon-known");
+  const first = await call(server, "/p/demo/snapshot", { auth: true, body: { panel: "notes" } });
+  const version = first.headers.get("x-acon-version")!;
+  expect(version).toMatch(/^[0-9a-f]{64}$/);
+  const conditional = await call(server, "/p/demo/snapshot", { auth: true, body: { panel: "notes" }, headers: { "X-Acon-Known": version } });
+  expect(conditional.status).toBe(200);
+  cors(conditional);
+  expect(await conditional.json()).toEqual({ changed: false });
+});

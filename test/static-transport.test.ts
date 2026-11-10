@@ -2,18 +2,19 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
-interface Result { status: number; data: Record<string, unknown> }
+interface Result { status: number; headers: Record<string, string>; data: Record<string, unknown> }
 interface Transport {
   nodes: { id: string; status: string }[];
   tools(): Promise<Result>;
-  post(path: string, body: object, refs?: Map<string, string>): Promise<Result>;
+  post(path: string, body: object, refs?: Map<string, string>, headers?: Record<string, string>): Promise<Result>;
   resource(path: string, refs?: Map<string, string>): string;
   setToken(id: string, token: string): void;
 }
 function transport(fetchImpl: typeof fetch, signals: { timeout(milliseconds: number): AbortSignal } = AbortSignal) {
-  const source = readFileSync(new URL("../shell/static.js", import.meta.url), "utf8").replace("export function createStaticTransport", "function createStaticTransport");
+  const source = readFileSync(new URL("../shell/static.js", import.meta.url), "utf8").replace(/^import .*;$/gm, "").replace("export function createStaticTransport", "function createStaticTransport");
+  const metadata = readFileSync(new URL("../shell/snapshot-headers.js", import.meta.url), "utf8").replace(/^export /gm, "");
   const storage = new Map<string, string>();
-  const make = runInNewContext(`${source}\ncreateStaticTransport`, {
+  const make = runInNewContext(`${metadata}\n${source}\ncreateStaticTransport`, {
     URL, AbortSignal: signals, fetch: fetchImpl,
     sessionStorage: { getItem: (key: string) => storage.get(key), setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
   }) as (config: unknown) => Transport;
@@ -81,7 +82,7 @@ describe("H2 browser transport", () => {
     const client = make({ api: 1, nodes: [config.nodes[0]] });
     await client.tools();
     const stale = await client.post("/p/a:demo/action", { action: "delete", confirmToken: "expired" });
-    expect(stale).toEqual({ status: 409, data: { ok: false, stale: true } });
+    expect(stale).toEqual({ status: 409, headers: {}, data: { ok: false, stale: true } });
     expect(client.nodes[0]!.status).toBe("online");
     expect((await client.post("/p/a:demo/action", { action: "delete" })).data.needsConfirm).toBe(true);
     for (const status of [400, 502]) {
@@ -226,6 +227,7 @@ test("inbox polling keeps one snapshot in flight per tool; an explicit refresh w
   const started: string[] = [];
   let inFlight = 0, peak = 0;
   const ctx = {
+    INBOX_MS: 5000,
     state: { inbox: new Map(), route: { area: "system" }, peekKey: null },
     readyTools: () => [{ tool: "slow", capabilities: { inbox: true } }, { tool: "fast", capabilities: { inbox: true } }],
     validItem: () => true, clientError: () => {}, renderRail: () => {}, renderMini: () => {}, renderInbox: () => {}, renderPeek: () => {},
@@ -255,4 +257,80 @@ test("inbox polling keeps one snapshot in flight per tool; an explicit refresh w
   await Promise.all(explicit);
   expect(peak).toBe(1);
   expect(started.filter((t) => t === "slow").length).toBe(2);
+});
+
+
+test("static snapshots retain response headers and send X-Acon-Known without reserving body fields", async () => {
+  const known = "1".repeat(64);
+  const snapshotHeaders = {
+    "X-Acon-Version": known,
+    "X-Acon-Cache": "stale",
+    "X-Acon-Cache-Age-Ms": "2500",
+    "X-Acon-Sampled-At": "2026-11-10T00:00:00.000Z",
+    "X-Private-Diagnostic": "do not forward",
+  };
+  const sent: Record<string, unknown>[] = [];
+  const requestHeaders: Headers[] = [];
+  const { make } = transport((async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+    if (path === "/tools") return Response.json({ tools: [] });
+    sent.push(JSON.parse(String(init?.body)));
+    requestHeaders.push(new Headers(init?.headers));
+    return Response.json({ changed: false }, { headers: snapshotHeaders });
+  }) as typeof fetch);
+  const client = make({ api: 1, nodes: [config.nodes[0]] });
+  await client.tools();
+  const body = { panel: "space", after: 3, known: { producerOwned: "not a hash" } };
+  const result = await client.post("/p/a:demo/snapshot", body, undefined, { "X-Acon-Known": known, "Content-Type": "unsafe", Authorization: "unsafe" });
+  expect(sent).toEqual([body]);
+  expect(requestHeaders[0]!.get("X-Acon-Known")).toBe(known);
+  expect(requestHeaders[0]!.get("Content-Type")).toBe("application/json");
+  expect(requestHeaders[0]!.get("Authorization")).toBeNull();
+  expect(result.data).toEqual({ changed: false });
+  expect(result.headers).toEqual({
+    "x-acon-version": known,
+    "x-acon-cache": "stale",
+    "x-acon-cache-age-ms": "2500",
+    "x-acon-sampled-at": "2026-11-10T00:00:00.000Z",
+  });
+});
+
+test("a node that refuses X-Acon-Known in preflight gets a plain retry and no header afterwards", async () => {
+  const known = "2".repeat(64);
+  const seen: (string | null)[] = [];
+  const { make } = transport((async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+    if (path === "/tools") return Response.json({ tools: [] });
+    const header = new Headers(init?.headers).get("X-Acon-Known");
+    seen.push(header);
+    // A CORS preflight refusal surfaces to fetch as a TypeError.
+    if (header !== null) throw new TypeError("Failed to fetch");
+    return Response.json({ ok: true, rows: [1] });
+  }) as typeof fetch);
+  const client = make({ api: 1, nodes: [config.nodes[0]] });
+  await client.tools();
+  const first = await client.post("/p/a:demo/snapshot", { panel: "notes", after: 0 }, undefined, { "X-Acon-Known": known });
+  expect(first.status).toBe(200);
+  expect(first.data).toEqual({ ok: true, rows: [1] });
+  const second = await client.post("/p/a:demo/snapshot", { panel: "notes", after: 0 }, undefined, { "X-Acon-Known": known });
+  expect(second.status).toBe(200);
+  expect(seen).toEqual([known, null, null]);
+});
+
+test("static transport accepts older nodes with no cache headers or response-header interface", async () => {
+  for (const noHeadersInterface of [false, true]) {
+    const { make } = transport((async (input) => {
+      const path = new URL(String(input)).pathname;
+      const data = path === "/session" ? { resourceToken: "a".repeat(64), expiresIn: 3600000 }
+        : path === "/tools" ? { tools: [] } : { scene: { actors: [] }, sampledAt: "producer-owned" };
+      return noHeadersInterface ? { status: 200, json: async () => data } as Response : Response.json(data);
+    }) as typeof fetch);
+    const client = make({ api: 1, nodes: [config.nodes[0]] });
+    await client.tools();
+    const result = await client.post("/p/a:demo/snapshot", { panel: "space", after: 0 });
+    expect(result.headers).toEqual({});
+    expect(result.data).toEqual({ scene: { actors: [] }, sampledAt: "producer-owned" });
+  }
 });

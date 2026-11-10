@@ -9,7 +9,7 @@ function pollHarness(post: (path: string, input: Record<string, unknown>) => Pro
   const p = { instance: { show: () => {} }, busy: false, next: 0, gen: 1, cursor: 7, banner: { hidden: false }, lastSig: "", lastData: null as Record<string, unknown> | null, view: JSON.stringify(["lineage", { rootId: "old" }]), mount: { hidden: true }, loading: Promise.resolve(), snapListeners: [(value: Record<string, unknown>) => { delivered.push(value); }] };
   const state = { route: { area: "tool", tool: "a:ares", panel: "lineage", params: { rootId: "old" } }, panels: new Map([["a:ares", p]]) };
   const body = source.slice(source.indexOf("async function showTool("), source.indexOf("// ---------- actions and confirm"));
-  const poll = runInNewContext(`${body}\n({poll: pollPanel, show: showTool})`, { state, post, toolById: (id: string) => ({ tool: id, pollMs: 2000 }), safe: (_tool: string, _where: string, fn: () => void) => fn(), Date, JSON }) as { poll: () => Promise<void>; show: (r: unknown) => Promise<void> };
+  const poll = runInNewContext(`${source.slice(source.indexOf("function adaptivePollMs("), source.indexOf("const inboxApplied"))}\n${body}\n({poll: pollPanel, show: showTool})`, { state, post, document: { visibilityState: "visible" }, toolById: (id: string) => ({ tool: id, pollMs: 2000 }), safe: (_tool: string, _where: string, fn: () => void) => fn(), Date, JSON }) as { poll: () => Promise<void>; show: (r: unknown) => Promise<void> };
   return { p, state, delivered, poll: poll.poll, show: poll.show };
 }
 

@@ -9,6 +9,7 @@ export interface SnapshotCacheReply {
   status: "hit" | "miss" | "stale";
   sampledAt: number;
   ageMs: number;
+  version: string;
 }
 interface ReadInput {
   provider: object; tool: string; panel: string; namespace: SnapshotNamespace;
@@ -16,7 +17,7 @@ interface ReadInput {
   load: () => Promise<Record<string, unknown>>;
 }
 interface Value {
-  provider: object; tool: string; json: string; sampledAt: number; bytes: number;
+  provider: object; tool: string; json: string; sampledAt: number; bytes: number; version: string;
 }
 interface Metric {
   tool: string; panel: string; namespace: SnapshotNamespace;
@@ -66,7 +67,7 @@ export class SnapshotCache {
   }
   private reply(value: Value, status: SnapshotCacheReply["status"]): SnapshotCacheReply {
     // Callers cannot mutate the cached object (or another viewer's answer).
-    return { value: JSON.parse(value.json), sampledAt: value.sampledAt, ageMs: Math.max(0, this.now() - value.sampledAt), status };
+    return { value: JSON.parse(value.json), sampledAt: value.sampledAt, ageMs: Math.max(0, this.now() - value.sampledAt), version: value.version, status };
   }
   private refresh(key: string, input: ReadInput, metric: Metric): Promise<Value> {
     const existing = this.flights.get(key);
@@ -78,7 +79,8 @@ export class SnapshotCache {
     flight.promise = Promise.resolve().then(input.load).then((data) => {
       if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("snapshot must return an object");
       const json = JSON.stringify(data);
-      const value = { provider: input.provider, tool: input.tool, json, sampledAt: this.now(), bytes: Buffer.byteLength(key) + Buffer.byteLength(json) };
+      const version = createHash("sha256").update(json).digest("hex");
+      const value = { provider: input.provider, tool: input.tool, json, version, sampledAt: this.now(), bytes: Buffer.byteLength(key) + Buffer.byteLength(json) + version.length };
       // Invalidation detaches a flight. Its late result must never repopulate the cache.
       if (this.flights.get(key) === flight && input.ttlMs > 0 && data.ok !== false) {
         this.remove(key);

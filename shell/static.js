@@ -1,4 +1,5 @@
 // H2 transport. Credentials live only in this tab; the static host serves no node data.
+import { snapshotHeaders } from "./snapshot-headers.js";
 const NODE_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const TOOL_ID = /^[a-z][a-z0-9-]{1,15}$/;
 const loopback = (host) => host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host);
@@ -25,17 +26,21 @@ export function createStaticTransport(config, onStatus = () => {}) {
       await fetch(`${node.url}/healthz`, { mode: 'no-cors', credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(3000) });
       notify(node, 'refused (origin)', 'Node reachable but browser access refused; add this shell origin to acon serve --origin and check the Access CORS settings.');
     } catch { notify(node, 'offline', 'Node is unreachable; start acon serve and check the node URL and network.'); }
-    return { status: 0, data: { ok: false, error: node.detail } };
+    return { status: 0, headers: {}, data: { ok: false, error: node.detail } };
   };
-  const request = async (node, path, body) => {
+  const request = async (node, path, body, extraHeaders = {}) => {
+    const headers = headersFor(node, body !== undefined);
+    const known = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "x-acon-known")?.[1];
+    // A node (or its Access CORS policy) may refuse the custom header in preflight; after one such failure send plain requests.
+    if (known !== undefined && !node.knownOff) headers["X-Acon-Known"] = known;
     const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
     const deadline = action ? 35000 : 8000;
     const signal = AbortSignal.timeout(deadline);
-    const uncertain = () => ({ status: 0, data: { ok: false, uncertain: true, error: 'The action outcome is unknown because its response was interrupted or invalid; check the node System log and current result before repeating the action.' } });
+    const uncertain = () => ({ status: 0, headers: {}, data: { ok: false, uncertain: true, error: 'The action outcome is unknown because its response was interrupted or invalid; check the node System log and current result before repeating the action.' } });
     let response;
     let data = null;
     try {
-      response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: headersFor(node, body !== undefined), ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal, redirect: 'error' });
+      response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal, redirect: 'error' });
       try { data = await response.json(); }
       catch { if (action && response.status !== 401 && response.status !== 403) return uncertain(); }
     } catch (error) {
@@ -43,15 +48,16 @@ export function createStaticTransport(config, onStatus = () => {}) {
       // Our own deadline is a busy node, not a refused origin: skip the CORS probe and keep the node usable (#59).
       if (signal.aborted && (error?.name === 'TimeoutError' || error?.name === 'AbortError')) {
         notify(node, 'slow', `${path} took over ${deadline / 1000} s; the node is reachable but busy. Its tools retry on their next poll.`);
-        return { status: 0, data: { ok: false, error: node.detail } };
+        return { status: 0, headers: {}, data: { ok: false, error: node.detail } };
       }
+      if (headers["X-Acon-Known"] !== undefined) { node.knownOff = true; return request(node, path, body, {}); }
       return failed(node);
     }
     if (response.status === 401 || (response.status === 403 && data?.readOnly !== true)) {
       node.grant = '';
       notify(node, 'unauthorized', 'Authentication refused; enter this node\'s bearer token or sign in to its Access application, then reconnect.');
     } else notify(node, 'online', 'Connected');
-    return { status: response.status, data: data ?? { ok: false, error: `Node answered HTTP ${response.status} without JSON; check its System log.` } };
+    return { status: response.status, headers: snapshotHeaders(response), data: data ?? { ok: false, error: `Node answered HTTP ${response.status} without JSON; check its System log.` } };
   };
   const connect = async (node) => {
     if (!node.grant || Date.now() >= node.grantUntil) {
@@ -82,15 +88,15 @@ export function createStaticTransport(config, onStatus = () => {}) {
       // One bounded refresh per node, with no nested retry loop or repeated auth prompt.
       await Promise.all(nodes.map((node) => node.busy ??= connect(node).finally(() => { node.busy = null; })));
       const tools = nodes.flatMap((node) => (node.data?.tools ?? []).filter((tool) => TOOL_ID.test(tool?.tool)).map((tool) => ({ ...tool, tool: `${node.id}:${tool.tool}`, rawTool: tool.tool, node: node.id, title: `${node.id}: ${tool.title ?? tool.tool}`, readOnly: node.data.readOnly === true, ...(node.status === 'online' || node.status === 'slow' ? {} : { status: 'offline', reason: node.detail }) })));
-      return { status: 200, data: { tools, pets: [], assetPacks: [], node: { id: 'static', version: 'H2' }, errors: [], readOnly: false } };
+      return { status: 200, headers: {}, data: { tools, pets: [], assetPacks: [], node: { id: 'static', version: 'H2' }, errors: [], readOnly: false } };
     },
-    async post(path, body, refs) {
+    async post(path, body, refs, headers = {}) {
       if (path === '/tools') return this.tools();
-      if (path === '/ping') return { status: 200, data: { ok: true } };
+      if (path === '/ping') return { status: 200, headers: {}, data: { ok: true } };
       const route = resolve(path, refs);
-      if (!route) return { status: 404, data: { ok: false, error: 'Unknown node/tool route; reload the static console.' } };
-      if (route.node.status !== "online" && route.node.status !== "slow") return { status: 0, data: { ok: false, error: route.node.detail } };
-      return request(route.node, route.path, body);
+      if (!route) return { status: 404, headers: {}, data: { ok: false, error: 'Unknown node/tool route; reload the static console.' } };
+      if (route.node.status !== "online" && route.node.status !== "slow") return { status: 0, headers: {}, data: { ok: false, error: route.node.detail } };
+      return request(route.node, route.path, body, headers);
     },
     resource(path, refs) {
       const route = resolve(path, refs);

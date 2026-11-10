@@ -51,6 +51,7 @@ test("space capability authorizes its snapshot and transport drops private field
   plugin.manifest.capabilities!.space = false;
   expect((await post("/p/demo/snapshot", { panel: "space" })).status).toBe(400);
   expect(await (await get("/space-flow.js")).text()).toContain("createSpaceFlow");
+  expect((await get("/snapshot-headers.js")).headers.get("content-type")).toContain("javascript");
   expect((await get("/space-board.js")).headers.get("content-type")).toContain("javascript");
   expect((await get("/space-team.js")).headers.get("content-type")).toContain("javascript");
   expect((await get("/space.js")).headers.get("content-type")).toContain("javascript");
