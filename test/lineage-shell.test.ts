@@ -14,16 +14,12 @@ function pollHarness(post: (path: string, input: Record<string, unknown>) => Pro
 }
 
 describe("bounded lineage shell snapshot delivery", () => {
-  test("cache metadata does not alter changed:false or legacy full-payload deduplication", async () => {
-    let count = 0;
-    const full = { cursor: 7, notes: [{ id: "legacy-note" }] };
-    const h = pollHarness(async () => ({ status: 200, data: { ...(count++ < 2 ? full : { cursor: 8, changed: false }), sampledAt: String(count), stale: count === 2 } }));
+  test("producer stale and sampledAt fields survive panel delivery and deduplication", async () => {
+    const full = { cursor: 7, stale: "producer stale", sampledAt: "producer sample", notes: [{ id: "legacy-note" }] };
+    const h = pollHarness(async () => ({ status: 200, data: full }));
     await h.poll();
     h.p.next = 0; await h.poll();
     expect(h.delivered).toEqual([full]);
-    h.p.next = 0; await h.poll();
-    expect(h.delivered).toEqual([full]);
-    expect(h.p.cursor).toBe(8);
   });
   test("changed:false advances the cursor without notifying or replacing the last full snapshot", async () => {
     const h = pollHarness(async () => ({ status: 200, data: { cursor: 8, changed: false } }));

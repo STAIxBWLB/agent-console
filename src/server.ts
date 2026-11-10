@@ -199,13 +199,13 @@ export function startServer(options: ServerOptions) {
       const reply = await snapshots.read({ provider: entry.provider!, tool: entry.tool, panel, namespace: "console", input: request,
         ttlMs: snapshotMaxAge(entry.manifest!, panel), load: async () => {
           const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, request));
-          if (!result || typeof result !== "object" || Array.isArray(result) || result.ok === false) throw new Error("snapshot must return a successful object");
-          if (panel !== "space" || caps.space !== true) return result;
+          if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
+          if (result.ok === false || panel !== "space" || caps.space !== true) return result;
           const clean = sanitizeSpaceScene(result.scene);
           return { ok: true, ...clean, ...(Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {}) };
         } });
-      return json({ ...reply.value, stale: reply.status === "stale", sampledAt: new Date(reply.sampledAt).toISOString() }, 200,
-        { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs) });
+      return json(reply.value, 200, { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs),
+        "X-Acon-Sampled-At": new Date(reply.sampledAt).toISOString() });
     } catch (error) {
       record(entry.tool, `snapshot ${panel}`, error);
       return reject(502, `${entry.tool} could not refresh; details are in System`);
@@ -462,7 +462,7 @@ export function startServer(options: ServerOptions) {
         if (requestOrigin && serve.origins.includes(requestOrigin)) {
           response.headers.set("Access-Control-Allow-Origin", requestOrigin);
           response.headers.set("Access-Control-Allow-Credentials", "true");
-          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms");
+          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms, X-Acon-Sampled-At");
         }
       }
       return response;

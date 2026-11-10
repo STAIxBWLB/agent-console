@@ -44,12 +44,12 @@ test("stale replies retain last good sampling time, revalidate once and never ca
   expect((await cache.read(input)).status).toBe("hit");
 });
 
-test("cold errors and explicit error objects are not cached; zero TTL only coalesces", async () => {
+test("explicit error objects pass through without caching; zero TTL only coalesces", async () => {
   const cache = new SnapshotCache({ now: () => 0 });
   let calls = 0;
   const input = request(async () => { calls++; return { ok: false, error: "offline" }; });
-  await expect(cache.read(input)).rejects.toThrow();
-  await expect(cache.read(input)).rejects.toThrow();
+  expect((await cache.read(input)).value).toEqual({ ok: false, error: "offline" });
+  expect((await cache.read(input)).value).toEqual({ ok: false, error: "offline" });
   expect(calls).toBe(2); expect(cache.diagnostics().entries).toBe(0);
   const uncached = { ...request(async () => ({ n: ++calls })), ttlMs: 0 };
   await Promise.all([cache.read(uncached), cache.read(uncached)]);
@@ -151,12 +151,12 @@ test("TTL defaults and panel-specific opt-ins are additive", () => {
 
 const servers: ReturnType<typeof startServer>[] = [];
 afterEach(async () => { while (servers.length) await servers.pop()!.stop(); });
-async function httpFixture() {
+async function httpFixture(reply?: Record<string, unknown>) {
   let now = 0, calls = 0, fail = false;
   const plugin = createDemoPlugin();
   const provider = await plugin.open({ home: "/fixture", log() {} });
   const original = provider.snapshot.bind(provider);
-  provider.snapshot = async (input) => { calls++; if (fail) throw new Error("offline"); return original(input); };
+  provider.snapshot = async (input) => { calls++; if (fail) throw new Error("offline"); return reply ?? original(input); };
   const entry: PluginEntry = { tool: "demo", file: "fixture", status: "ready", manifest: plugin.manifest, provider };
   const server = startServer({ plugins: [entry], pluginsDir: "/fixture", version: "test", now: () => now, log() {} });
   servers.push(server);
@@ -173,14 +173,17 @@ test("HTTP viewers share hits, receive stale envelopes/age and System diagnostic
   const fixture = await httpFixture(), first = await fixture.viewer(), second = await fixture.viewer();
   const initial = await first("/p/demo/snapshot", { panel: "notes" });
   expect(initial.headers.get("x-acon-cache")).toBe("miss");
-  const body = await initial.json(); expect(body.stale).toBe(false);
+  const body = await initial.json();
+  const sampledAt = initial.headers.get("x-acon-sampled-at");
+  expect(sampledAt).toBe("1970-01-01T00:00:00.000Z");
   expect((await second("/p/demo/snapshot", { panel: "notes", after: 0 })).headers.get("x-acon-cache")).toBe("hit");
   expect(fixture.calls).toBe(1);
   fixture.advance(2000); fixture.fail();
   const stale = await second("/p/demo/snapshot", { panel: "notes" });
   expect(stale.headers.get("x-acon-cache")).toBe("stale");
   expect(stale.headers.get("x-acon-cache-age-ms")).toBe("2000");
-  expect(await stale.json()).toMatchObject({ stale: true, sampledAt: body.sampledAt });
+  expect(await stale.json()).toEqual(body);
+  expect(stale.headers.get("x-acon-sampled-at")).toBe(sampledAt);
   await tick();
   const tools = await (await first("/tools", {})).json();
   expect(tools.snapshotCache.metrics[0]).toMatchObject({ tool: "demo", panel: "notes", hits: 1, misses: 1, stale: 1, samples: 2 });
@@ -234,4 +237,56 @@ test("HTTP reload drops the old provider's entries even for pinned routes", asyn
   expect(oldCalls).toBe(2);
   const current = await post("/p/demo/snapshot", { panel: plugin.manifest.panels[0]!.id }, cookie);
   expect(current.headers.get("x-acon-cache")).toBe("miss"); expect(newCalls).toBe(1);
+});
+
+
+test("HTTP cache freshness headers preserve producer stale and sampledAt fields", async () => {
+  const payload = { stale: "producer stale", sampledAt: "producer sample", notes: [1] };
+  const fixture = await httpFixture(payload), post = await fixture.viewer();
+  for (const status of ["miss", "hit"]) {
+    const response = await post("/p/demo/snapshot", { panel: "notes" });
+    expect(response.headers.get("x-acon-cache")).toBe(status);
+    expect(response.headers.get("x-acon-sampled-at")).toBe("1970-01-01T00:00:00.000Z");
+    expect(await response.json()).toEqual(payload);
+  }
+});
+
+test("HTTP ok:false snapshots remain status 200 and verbatim, with no retained error entry", async () => {
+  const payload = { ok: false, error: "project is not running", sampledAt: "producer" };
+  const fixture = await httpFixture(payload), post = await fixture.viewer();
+  for (const panel of ["notes", "space"]) for (let i = 0; i < 2; i++) {
+    const response = await post("/p/demo/snapshot", { panel });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(payload);
+    expect(response.headers.get("x-acon-cache")).toBe("miss");
+  }
+  expect(fixture.calls).toBe(4);
+});
+
+test("principal snapshot cache preserves producer fields without transport metadata", async () => {
+  const plugin = createPrincipalPlugin();
+  const provider = await plugin.open({ home: "/fixture", log() {} });
+  let calls = 0;
+  const payload = { stale: "producer stale", sampledAt: "producer sample", value: 1 };
+  provider.principalSnapshot = async () => { calls++; return payload; };
+  const entry: PluginEntry = { tool: plugin.manifest.tool, status: "ready", file: "fixture", manifest: plugin.manifest, provider, snapshotCache: new SnapshotCache() };
+  for (let i = 0; i < 2; i++) expect(await dispatchPrincipalSnapshot(entry, { principal: "first", panel: "status" })).toEqual(payload);
+  expect(calls).toBe(1);
+});
+
+test("explicit panels own their TTL before reserved capabilities", () => {
+  const manifest = createDemoPlugin().manifest;
+  manifest.capabilities!.spaceMaxAgeMs = 60000;
+  manifest.capabilities!.inboxMaxAgeMs = 30000;
+  for (const panel of ["space", "inbox"]) {
+    manifest.panels.push({ id: panel, title: panel, maxAgeMs: 123 });
+    expect(snapshotMaxAge(manifest, panel)).toBe(123);
+    delete manifest.panels.at(-1)!.maxAgeMs;
+    expect(snapshotMaxAge(manifest, panel)).toBe(2000);
+  }
+  manifest.panels = [];
+  manifest.capabilities!.space = false;
+  manifest.capabilities!.inbox = false;
+  expect(snapshotMaxAge(manifest, "space")).toBe(2000);
+  expect(snapshotMaxAge(manifest, "inbox")).toBe(2000);
 });

@@ -339,7 +339,7 @@ export async function dispatchPrincipalSnapshot(entry: PluginEntry, input: { pri
   if (!entry.snapshotCache) return load();
   const reply = await entry.snapshotCache.read({ provider, tool: entry.tool, panel: input.panel, namespace: "principal", input,
     ttlMs: snapshotMaxAge(entry.manifest!, input.panel), load });
-  return { ...reply.value, sampledAt: new Date(reply.sampledAt).toISOString(), stale: reply.status === "stale" };
+  return reply.value;
 }
 
 export async function dispatchPrincipalAction(entry: PluginEntry, input: { principal: string; tool: string; input: Record<string, unknown> }, node: string): Promise<ActionResult> {

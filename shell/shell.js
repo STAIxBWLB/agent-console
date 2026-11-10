@@ -1592,8 +1592,7 @@ async function pollPanel() {
   if (res.status === 200) {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
-    // Cache transport metadata must not change the plugin cursor protocol or payload signature.
-    let { sampledAt: _sampledAt, stale: _stale, ...data } = res.data;
+    let data = res.data;
     if (data.changed === false && Object.keys(data).every((key) => key === "changed" || key === "cursor")) {
       if (p.lastSig !== "") return;
       if (!p.lastData) {

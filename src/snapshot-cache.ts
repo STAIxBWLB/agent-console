@@ -26,9 +26,10 @@ interface Flight { provider: object; tool: string; promise: Promise<Value> }
 
 /** Reuse is opt-in beyond half the producer poll interval, with a 2 s default ceiling. */
 export function snapshotMaxAge(manifest: ConsolePanelManifest, panel: string): number {
-  const configured = panel === "inbox" ? manifest.capabilities?.inboxMaxAgeMs
-    : panel === "space" ? manifest.capabilities?.spaceMaxAgeMs
-    : manifest.panels.find((item) => item.id === panel)?.maxAgeMs;
+  const declared = manifest.panels.find((item) => item.id === panel);
+  const configured = declared ? declared.maxAgeMs
+    : panel === "inbox" && manifest.capabilities?.inbox ? manifest.capabilities.inboxMaxAgeMs
+    : panel === "space" && manifest.capabilities?.space === true ? manifest.capabilities.spaceMaxAgeMs : undefined;
   return configured ?? Math.min((manifest.pollMs ?? 5000) / 2, 2000);
 }
 
@@ -75,11 +76,11 @@ export class SnapshotCache {
     const started = this.now();
     const flight: Flight = { provider: input.provider, tool: input.tool, promise: undefined! };
     flight.promise = Promise.resolve().then(input.load).then((data) => {
-      if (!data || typeof data !== "object" || Array.isArray(data) || data.ok === false) throw new Error("snapshot must return a successful object");
+      if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("snapshot must return an object");
       const json = JSON.stringify(data);
       const value = { provider: input.provider, tool: input.tool, json, sampledAt: this.now(), bytes: Buffer.byteLength(key) + Buffer.byteLength(json) };
       // Invalidation detaches a flight. Its late result must never repopulate the cache.
-      if (this.flights.get(key) === flight && input.ttlMs > 0) {
+      if (this.flights.get(key) === flight && input.ttlMs > 0 && data.ok !== false) {
         this.remove(key);
         if (value.bytes <= SNAPSHOT_CACHE_LIMITS.bytes) {
           while (this.values.size >= SNAPSHOT_CACHE_LIMITS.entries || this.bytes + value.bytes > SNAPSHOT_CACHE_LIMITS.bytes) this.remove(this.values.keys().next().value!);

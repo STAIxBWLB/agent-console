@@ -400,7 +400,9 @@ test("principal readOnly calls retain snapshots, mutating calls and all console 
   const f = await boot({ now: () => 0 });
   const personPost = (route: string, body: unknown) => fetch(`${f.server.origin}${route}`, { method: "POST", headers: { Origin: ORIGIN, Authorization: `Bearer ${PERSON}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const snapshot = () => personPost("/p/principal-demo/snapshot", { panel: "status" });
-  expect((await snapshot()).headers.get("x-acon-cache")).toBe("miss");
+  const initial = await snapshot();
+  expect(initial.headers.get("x-acon-cache")).toBe("miss");
+  expect(initial.headers.get("access-control-expose-headers")).toContain("X-Acon-Sampled-At");
   expect((await call(f.server)).status).toBe(200);
   expect((await snapshot()).headers.get("x-acon-cache")).toBe("hit");
   f.registry.principals[0]!.tools.push("principal-demo.request"); f.save();
