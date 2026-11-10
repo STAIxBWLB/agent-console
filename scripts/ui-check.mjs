@@ -10,6 +10,13 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runVisualCheck } from "./ui-check-visual.mjs";
 import { runLoginCheck } from "./ui-check-login.mjs";
+
+// A route handler still running when its probe closes the context rejects with a disposed-context
+// error. That is a teardown race, not a finding; any other unhandled rejection still stops the run.
+process.on("unhandledRejection", (error) => {
+  if (/Request context disposed|Target page, context or browser has been closed/.test(String(error?.message ?? error))) return;
+  throw error;
+});
 import { runSpaceFoundation } from "./ui-check-space-foundation.mjs";
 import { runSpaceTeam } from "./ui-check-space-team.mjs";
 import { runSpaceFlow } from "./ui-check-space-flow.mjs";
