@@ -119,7 +119,7 @@ test("provider replacement drops old values and fences its pending completion", 
   expect((await cache.read(replacement)).status).toBe("miss");
 });
 
-test("principal snapshots are isolated by namespace and authenticated principal; actions invalidate both ports", async () => {
+test("principal snapshots are isolated; readOnly calls preserve both ports and mutating calls invalidate them", async () => {
   const cache = new SnapshotCache({ now: () => 0 });
   const plugin = createPrincipalPlugin();
   const entry: PluginEntry = { tool: plugin.manifest.tool, status: "ready", file: "fixture", manifest: plugin.manifest,
@@ -131,6 +131,10 @@ test("principal snapshots are isolated by namespace and authenticated principal;
   const person = { ...request(async () => ({ source: "person" }), { panel: "status", after: 0 }), provider: entry.provider!, tool: entry.tool };
   await cache.read(person);
   await dispatchPrincipalAction(entry, { principal: "first", tool: "principal-demo.status", input: {} }, "local");
+  expect((await cache.read(person)).status).toBe("hit");
+  await dispatchPrincipalSnapshot(entry, { principal: "first", panel: "status" });
+  expect(plugin.calls.filter((call) => call.port === "principalSnapshot")).toHaveLength(2);
+  await dispatchPrincipalAction(entry, { principal: "first", tool: "principal-demo.request", input: {} }, "local");
   expect((await cache.read(person)).status).toBe("miss");
   await dispatchPrincipalSnapshot(entry, { principal: "first", panel: "status" });
   expect(plugin.calls.filter((call) => call.port === "principalSnapshot")).toHaveLength(3);

@@ -344,16 +344,17 @@ export async function dispatchPrincipalSnapshot(entry: PluginEntry, input: { pri
 
 export async function dispatchPrincipalAction(entry: PluginEntry, input: { principal: string; tool: string; input: Record<string, unknown> }, node: string): Promise<ActionResult> {
   const provider = principalProvider(entry, input.principal);
-  if (!entry.manifest!.capabilities!.principal!.tools.some((tool) => tool.name === input.tool)) throw new Error("principal tool is not declared by this plugin; select a tool from capabilities.principal.tools");
+  const declaration = entry.manifest!.capabilities!.principal!.tools.find((tool) => tool.name === input.tool);
+  if (!declaration) throw new Error("principal tool is not declared by this plugin; select a tool from capabilities.principal.tools");
   if (typeof provider.principalAction !== "function") throw new Error("plugin has no principalAction port; implement it before serving principal tools");
   if (!isPlainObject(input.input)) throw new Error("principal tool input is not an object; pass a JSON object matching its inputSchema");
   if (["confirmed", "fingerprint", "confirmToken"].some((key) => key in input.input)) throw new Error("principal input may not set confirmed, fingerprint or confirmToken; remove confirmation fields and request person approval through the console");
-  entry.snapshotCache?.invalidateTool(entry.tool);
+  if (!declaration.readOnly) entry.snapshotCache?.invalidateTool(entry.tool);
   let result: ActionResult;
   try {
     result = await provider.principalAction({ principal: input.principal, tool: input.tool, input: input.input },
       { identity: `principal:${input.principal}`, node, via: "console", actor: { kind: "principal", id: input.principal } });
-  } finally { entry.snapshotCache?.invalidateTool(entry.tool); }
+  } finally { if (!declaration.readOnly) entry.snapshotCache?.invalidateTool(entry.tool); }
   const projected = principalResult(result);
   if (typeof projected.ok !== "boolean") throw new Error("principalAction returned no boolean ok after projection; return a JSON data property ok in the plugin ActionResult");
   return projected as ActionResult;

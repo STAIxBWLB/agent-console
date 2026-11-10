@@ -273,7 +273,7 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
         }
         attempt.outcome = "error";
         return error(id, -32000, "principal tool failed and its outcome may be unknown; check the principal tool status before retrying or request person approval in the console", 502);
-      } finally { selection.plugin.snapshotCache?.invalidateTool(selection.plugin.tool); }
+      } finally { if (!selection.tool.readOnly) selection.plugin.snapshotCache?.invalidateTool(selection.plugin.tool); }
     } finally { if (releaseOnReturn) slot.active--; }
   }
 
