@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join } from "node:path";
 import { ACTION_ID, CONSOLE_API_MAX, CONSOLE_API_MIN, CONSOLE_FEATURES, PANEL_ID, TOOL_ID, type ActionMeta, type ActionResult, type ConsoleContext, type ConsolePanelManifest, type ConsolePlugin, type ConsoleProvider } from "./contract.ts";
 import { imageType } from "./assets.ts";
 import { isPlainObject, projectPublicValue, PUBLIC_CAPS } from "./public.ts";
+import { snapshotMaxAge, type SnapshotCache } from "./snapshot-cache.ts";
 
 export const familyHome = (env: Record<string, string | undefined> = process.env): string => env.AGENTHUB_HOME || join(homedir(), ".agenthub");
 export const pluginDir = (home: string): string => join(home, "console", "plugins");
@@ -29,6 +30,8 @@ export interface PluginEntry {
   module?: string;
   manifest?: ConsolePanelManifest;
   provider?: ConsoleProvider;
+  /** Node-owned cache, shared by this tool's console and principal ports. */
+  snapshotCache?: SnapshotCache;
 }
 export interface Scan { dir: string; entries: PluginEntry[]; error?: string }
 
@@ -203,6 +206,8 @@ function readEntry(file: string): PluginEntry {
   return { tool, file, version, module: real, sha256: actual, status: "verified" };
 }
 
+const validMaxAge = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 60_000;
+
 /** Problems with a plugin manifest, empty when valid. Shared with the conformance suite. */
 export function manifestProblems(manifest: unknown, tool?: string): string[] {
   if (!manifest || typeof manifest !== "object") return ["manifest is missing"];
@@ -222,9 +227,14 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
       else if (ids.has(p.id)) out.push(`panel id ${p.id} is duplicated`);
       else ids.add(p.id);
       if (!p || typeof p.title !== "string" || !p.title) out.push("every panel needs a title");
+      if (p?.maxAgeMs !== undefined && !validMaxAge(p.maxAgeMs)) out.push(`panel ${String(p.id)} maxAgeMs must be a finite number from 0 to 60000 ms`);
     }
   }
   if (m.pollMs !== undefined && (typeof m.pollMs !== "number" || !Number.isFinite(m.pollMs) || m.pollMs <= 0)) out.push("manifest.pollMs must be a positive number");
+  for (const key of ["inboxMaxAgeMs", "spaceMaxAgeMs"] as const) {
+    const value = m.capabilities?.[key];
+    if (value !== undefined && !validMaxAge(value)) out.push(`capabilities.${key} must be a finite number from 0 to 60000 ms`);
+  }
   const actions = m.capabilities?.actions;
   if (actions !== undefined && (!Array.isArray(actions) || actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
   if (m.capabilities?.space !== undefined && typeof m.capabilities.space !== "boolean") out.push("capabilities.space must be a boolean");
@@ -300,7 +310,10 @@ export async function dispatchConsoleSnapshot(entry: PluginEntry, input: { after
 
 export async function dispatchConsoleAction(entry: PluginEntry, input: { action: string } & Record<string, unknown>, meta: ActionMeta): Promise<ActionResult> {
   if (meta.actor?.kind === "principal") throw new Error("a principal cannot use console action dispatch; call dispatchPrincipalAction instead");
-  return entry.provider!.action(input, { identity: meta.identity, node: meta.node, via: meta.via, actor: { kind: "person", id: meta.identity } });
+  entry.snapshotCache?.invalidateTool(entry.tool);
+  try {
+    return await entry.provider!.action(input, { identity: meta.identity, node: meta.node, via: meta.via, actor: { kind: "person", id: meta.identity } });
+  } finally { entry.snapshotCache?.invalidateTool(entry.tool); }
 }
 
 function principalProvider(entry: PluginEntry, principal: string): ConsoleProvider {
@@ -322,17 +335,26 @@ export async function dispatchPrincipalSnapshot(entry: PluginEntry, input: { pri
   if (typeof provider.principalSnapshot !== "function") throw new Error("plugin has no principalSnapshot port; implement it before serving principal snapshots");
   if (typeof input.panel !== "string" || !PANEL_ID.test(input.panel)) throw new Error("principal panel is invalid; pass a valid panel id to the principal snapshot port");
   if (!declaresPanel(entry.manifest!, input.panel)) throw new Error("principal panel is not declared by this plugin; select a declared panel or panel capability");
-  return principalResult(await provider.principalSnapshot({ principal: input.principal, panel: input.panel }));
+  const load = async () => principalResult(await provider.principalSnapshot!({ principal: input.principal, panel: input.panel }));
+  if (!entry.snapshotCache) return load();
+  const reply = await entry.snapshotCache.read({ provider, tool: entry.tool, panel: input.panel, namespace: "principal", input,
+    ttlMs: snapshotMaxAge(entry.manifest!, input.panel), load });
+  return reply.value;
 }
 
 export async function dispatchPrincipalAction(entry: PluginEntry, input: { principal: string; tool: string; input: Record<string, unknown> }, node: string): Promise<ActionResult> {
   const provider = principalProvider(entry, input.principal);
-  if (!entry.manifest!.capabilities!.principal!.tools.some((tool) => tool.name === input.tool)) throw new Error("principal tool is not declared by this plugin; select a tool from capabilities.principal.tools");
+  const declaration = entry.manifest!.capabilities!.principal!.tools.find((tool) => tool.name === input.tool);
+  if (!declaration) throw new Error("principal tool is not declared by this plugin; select a tool from capabilities.principal.tools");
   if (typeof provider.principalAction !== "function") throw new Error("plugin has no principalAction port; implement it before serving principal tools");
   if (!isPlainObject(input.input)) throw new Error("principal tool input is not an object; pass a JSON object matching its inputSchema");
   if (["confirmed", "fingerprint", "confirmToken"].some((key) => key in input.input)) throw new Error("principal input may not set confirmed, fingerprint or confirmToken; remove confirmation fields and request person approval through the console");
-  const result = await provider.principalAction({ principal: input.principal, tool: input.tool, input: input.input },
-    { identity: `principal:${input.principal}`, node, via: "console", actor: { kind: "principal", id: input.principal } });
+  if (!declaration.readOnly) entry.snapshotCache?.invalidateTool(entry.tool);
+  let result: ActionResult;
+  try {
+    result = await provider.principalAction({ principal: input.principal, tool: input.tool, input: input.input },
+      { identity: `principal:${input.principal}`, node, via: "console", actor: { kind: "principal", id: input.principal } });
+  } finally { if (!declaration.readOnly) entry.snapshotCache?.invalidateTool(entry.tool); }
   const projected = principalResult(result);
   if (typeof projected.ok !== "boolean") throw new Error("principalAction returned no boolean ok after projection; return a JSON data property ok in the plugin ActionResult");
   return projected as ActionResult;

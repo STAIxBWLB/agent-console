@@ -395,3 +395,19 @@ for (const concurrent of [false, true]) test(`registry toggle uses one validated
   else { toggle("fixture-home", "assistant", false); expect(JSON.parse(current).principals[0].enabled).toBe(false); expect(renames).toBe(1); }
   expect(snapshots).toBe(1); expect(checks).toBe(1); expect(cleanups).toBe(1);
 });
+
+test("principal readOnly calls retain snapshots, mutating calls and all console actions invalidate", async () => {
+  const f = await boot({ now: () => 0 });
+  const personPost = (route: string, body: unknown) => fetch(`${f.server.origin}${route}`, { method: "POST", headers: { Origin: ORIGIN, Authorization: `Bearer ${PERSON}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const snapshot = () => personPost("/p/principal-demo/snapshot", { panel: "status" });
+  const initial = await snapshot();
+  expect(initial.headers.get("x-acon-cache")).toBe("miss");
+  expect(initial.headers.get("access-control-expose-headers")).toContain("X-Acon-Sampled-At");
+  expect((await call(f.server)).status).toBe(200);
+  expect((await snapshot()).headers.get("x-acon-cache")).toBe("hit");
+  f.registry.principals[0]!.tools.push("principal-demo.request"); f.save();
+  expect((await call(f.server, "principal-demo.request")).status).toBe(200);
+  expect((await snapshot()).headers.get("x-acon-cache")).toBe("miss");
+  expect((await personPost("/p/principal-demo/action", { action: "status" })).status).toBe(200);
+  expect((await snapshot()).headers.get("x-acon-cache")).toBe("miss");
+});

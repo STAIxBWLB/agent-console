@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { BodyError, createPrincipalEndpoint, readBoundedJson, readBoundedText, PRINCIPAL_INPUT_MAX } from "./principal.ts";
+import { SnapshotCache, snapshotMaxAge } from "./snapshot-cache.ts";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionMeta, type ActionResult } from "./contract.ts";
 import { ASSET_TYPES, assetResultProblems, dispatchConsoleSnapshot, dispatchConsoleAction, declaresPanel, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
@@ -113,11 +114,17 @@ export function startServer(options: ServerOptions) {
   files["/vendor/icons/icons.js"] = { body: asset("vendor/icons/icons.js"), type: "text/javascript; charset=utf-8" };
   // tools: the current load per tool, for new pages. refs: every load since start, so an open page keeps its version.
   // A tool whose registration later goes stale or disappears keeps its current load until the console restarts.
+  const snapshots = new SnapshotCache({ now, onError: (tool, panel, error) => record(tool, `snapshot ${panel}`, error) });
   const tools = new Map<string, PluginEntry>();
   const refs = new Map<string, PluginEntry>();
   let entries: PluginEntry[] = [];
   const adopt = (list: PluginEntry[]) => {
-    for (const p of list) if (p.status === "ready") { refs.set(p.ref ?? p.tool, p); tools.set(p.tool, p); }
+    for (const p of list) if (p.status === "ready") {
+      const old = tools.get(p.tool);
+      if (old?.provider && old.provider !== p.provider) snapshots.dropProvider(old.provider);
+      const current = { ...p, snapshotCache: snapshots };
+      refs.set(p.ref ?? p.tool, current); tools.set(p.tool, current);
+    }
     entries = list;
   };
   adopt(options.plugins);
@@ -188,13 +195,17 @@ export function startServer(options: ServerOptions) {
       if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) return reject(400, "limit must be 1-10");
     }
     try {
-      const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, { ...input, after, panel }));
-      if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
-      if (panel === "space" && caps.space === true) {
-        const clean = sanitizeSpaceScene(result.scene);
-        return json({ ok: true, ...clean, ...(Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {}) });
-      }
-      return json(result);
+      const request = { ...input, after, panel };
+      const reply = await snapshots.read({ provider: entry.provider!, tool: entry.tool, panel, namespace: "console", input: request,
+        ttlMs: snapshotMaxAge(entry.manifest!, panel), load: async () => {
+          const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, request));
+          if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
+          if (result.ok === false || panel !== "space" || caps.space !== true) return result;
+          const clean = sanitizeSpaceScene(result.scene);
+          return { ok: true, ...clean, ...(Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {}) };
+        } });
+      return json(reply.value, 200, { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs),
+        "X-Acon-Sampled-At": new Date(reply.sampledAt).toISOString() });
     } catch (error) {
       record(entry.tool, `snapshot ${panel}`, error);
       return reject(502, `${entry.tool} could not refresh; details are in System`);
@@ -256,6 +267,7 @@ export function startServer(options: ServerOptions) {
         record(entry.tool, `action ${name}`, new Error(`still running after ${callMs / 1000} s; outcome unknown`));
         running.then((late) => record(entry.tool, `action ${name}`, new Error(`finished after the timeout: ${late && typeof late === "object" && "ok" in late && late.ok ? "ok" : "not ok"}`)),
           (late) => record(entry.tool, `action ${name}`, late));
+        snapshots.invalidateTool(entry.tool);
         return reject(504, `${entry.tool} is still working on ${name}; check System for the outcome before you retry`, { indeterminate: true });
       }
       record(entry.tool, `action ${name}`, error);
@@ -429,7 +441,7 @@ export function startServer(options: ServerOptions) {
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
         await refresh();
-        return json({ ok: true, ...(serve?.readOnly ? { readOnly: true } : {}), node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), assetPacks: assetPacks.map(({ id, name, version, tile, images, models }) => ({ id, name, version, tile, images: Object.keys(images), ...(models ? { models: Object.keys(models) } : {}) })), errors });
+        return json({ ok: true, ...(serve?.readOnly ? { readOnly: true } : {}), node: { id: "local", version: options.version, startedAt, pluginsDir: options.pluginsDir, pluginsError: options.pluginsError }, tools: toolList(), pets: pets.map(({ id, name, description }) => ({ id, name, ...(description ? { description } : {}) })), snapshotCache: snapshots.diagnostics(), assetPacks: assetPacks.map(({ id, name, version, tile, images, models }) => ({ id, name, version, tile, images: Object.keys(images), ...(models ? { models: Object.keys(models) } : {}) })), errors });
       }
       const entry = pluginEntry();
       if (!entry) return unknownTool();
@@ -450,6 +462,7 @@ export function startServer(options: ServerOptions) {
         if (requestOrigin && serve.origins.includes(requestOrigin)) {
           response.headers.set("Access-Control-Allow-Origin", requestOrigin);
           response.headers.set("Access-Control-Allow-Credentials", "true");
+          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms, X-Acon-Sampled-At");
         }
       }
       return response;

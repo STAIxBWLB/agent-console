@@ -11,6 +11,8 @@
 
 ### Added
 
+- Coalesce identical snapshots across viewers in a bounded in-memory LRU cache with per-panel TTL overrides, stale-while-revalidate, action/reload invalidation and separate principal keys. Declared readOnly principal tools preserve the cache; other principal actions and all console actions invalidate it. Keep producer bodies and error snapshots unchanged, expose freshness only through cache/age/sample-time headers and add System cache/provider timing diagnostics, and add a private-output snapshot timing probe (#105).
+
 - Add the Space Flow view with per-project actors, directed 15-minute message counts, distinct relationship strokes and recent activity. Keep at most 200 public link events for 30 minutes in page memory, and show per-peer counts and the last 10 events in agent detail. Suspend the minute refresh while Flow is hidden (#101).
 
 - Make Team the default Space view while honoring a saved view choice in `acon.space.section`; the Space header now scrolls with the page. Add per-group attention and active-agent summaries, collapsed idle/away rows, and namespaced actor detail routes with responsive presentation and focus restoration; keep the roster in Room. Extend the browser probe for Team/detail navigation and persistence, including a reload with `view` removed (#101).

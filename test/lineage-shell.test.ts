@@ -14,6 +14,13 @@ function pollHarness(post: (path: string, input: Record<string, unknown>) => Pro
 }
 
 describe("bounded lineage shell snapshot delivery", () => {
+  test("producer stale and sampledAt fields survive panel delivery and deduplication", async () => {
+    const full = { cursor: 7, stale: "producer stale", sampledAt: "producer sample", notes: [{ id: "legacy-note" }] };
+    const h = pollHarness(async () => ({ status: 200, data: full }));
+    await h.poll();
+    h.p.next = 0; await h.poll();
+    expect(h.delivered).toEqual([full]);
+  });
   test("changed:false advances the cursor without notifying or replacing the last full snapshot", async () => {
     const h = pollHarness(async () => ({ status: 200, data: { cursor: 8, changed: false } }));
     h.p.lastSig = JSON.stringify({ cursor: 7, changed: true, lineage: { status: "ok" } });
