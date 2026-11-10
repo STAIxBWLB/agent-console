@@ -1,4 +1,4 @@
-import { createSpaceTeam } from "./space-team.js";
+import { createSpaceTeam, focusSpaceControl } from "./space-team.js";
 import { createSpaceViewController } from "./space-view.js";
 
 // Private shell module. Public collaboration facts enter through the space snapshot allowlist.
@@ -10,7 +10,7 @@ export function mergeSpaceScenes(entries) {
   for (const [tool, entry] of [...entries].sort(([a], [b]) => a.localeCompare(b))) {
     if (entry.failed) model.failed.push(tool);
     const scene = entry.scene;
-    if (!scene) { model.pending += 1; continue; }
+    if (!scene) { if (!entry.failed && !entry.reported) model.pending += 1; continue; }
     model.received += 1;
     model.samples.set(tool, entry.sampledAt ?? 0);
     model.sampledAt = Math.max(model.sampledAt, entry.sampledAt ?? 0);
@@ -170,14 +170,15 @@ export function createSpaceRenderer(root, host) {
     const pet = pets.find((p) => p.id === actor.pet) ?? (pets.length ? pets[hash(actor.id) % pets.length] : null);
     return pet ? host.petSprite(pet, actor.stale ? "idle" : poseFor[actor.state]) : h("span", { class: "space-token", "aria-hidden": "true", text: actor.name.slice(0, 1).toUpperCase() });
   };
-  const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose });
+  const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
   function openActor(id, element) {
     if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
     choose({ actor: id });
   }
   function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
   const onDetailKey = (event) => {
-    if (!selection.actor || root.hidden) return;
+    if (!selection.actor || root.hidden || document.querySelector("dialog[open]")) return;
+    if (!detailRoot.contains(document.activeElement) && document.activeElement !== document.body) return;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeActor(); }
     if (event.key === "Tab") {
       const buttons = [...detailRoot.querySelectorAll("button,a[href],input,select,textarea,[tabindex]")].filter((el) => !el.disabled && el.offsetParent !== null);
@@ -227,7 +228,7 @@ export function createSpaceRenderer(root, host) {
     const point = restorePoint; restorePoint = null;
     const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"]`) : null;
     const element = point.element?.isConnected ? point.element : keyed ?? (point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null);
-    (element ?? root.querySelector(`[data-space-section-tab="${selection.view}"]`))?.focus({ preventScroll: true });
+    focusSpaceControl(element, sectionButtons.get(selection.view));
     const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
     scroll.scrollTop = point.sceneTop; scroll.scrollLeft = point.sceneLeft;
     window.scrollTo(point.pageX, point.pageY);

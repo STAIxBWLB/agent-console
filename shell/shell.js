@@ -1897,6 +1897,7 @@ async function pollSpace() {
     entry.busy = true;
     const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor });
     entry.busy = false;
+    entry.reported = true;
     if (res.status === 200 && res.data.scene) {
       entry.sampledAt = Date.now();
       entry.scene = res.data.scene;

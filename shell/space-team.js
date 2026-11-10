@@ -18,6 +18,16 @@ function setText(node, value) {
   if (node.textContent !== text) node.textContent = text;
 }
 
+/** Resolve focus to a visible disclosure summary before falling back to a section tab. */
+export function focusSpaceControl(target, fallback) {
+  let candidate = target;
+  for (let ancestor = target?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+    if (ancestor.tagName === "DETAILS" && !ancestor.open) candidate = ancestor.querySelector("summary");
+  }
+  if (candidate && candidate.offsetParent !== null && !candidate.closest("[hidden],[inert]")) candidate.focus({ preventScroll: true });
+  else fallback?.focus({ preventScroll: true });
+}
+
 export function createSpaceTeam(root, host) {
   let signature = "";
   let destroyed = false;
@@ -151,7 +161,7 @@ export function createSpaceTeam(root, host) {
       const exact = root.querySelector(`[data-team-focus="${CSS.escape(focusKey)}"]`);
       const actor = focusKey.startsWith("attention:") ? focusKey.slice("attention:".length) : null;
       const tile = actor ? root.querySelector(`[data-team-focus="${CSS.escape(`tile:${actor}`)}"]`) : null;
-      (exact ?? tile ?? root.querySelector("[data-team-focus]") ?? root).focus({ preventScroll: true });
+      focusSpaceControl(exact ?? tile ?? root.querySelector("[data-team-focus]"), host.sectionTab());
     }
   }
 

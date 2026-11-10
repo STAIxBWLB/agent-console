@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 function harness() {
   let writes = 0;
   const listeners = new Map<string, (e:any)=>void>();
-  const doc: any = { activeElement: null, addEventListener(name:string, callback:(e:any)=>void) {listeners.set(name,callback);}, removeEventListener() {}, createDocumentFragment: () => new Element("fragment") };
+  const doc: any = { activeElement: null, querySelector(s:string){return s === "dialog[open]" && doc.nativeDialog?.open ? doc.nativeDialog : null;}, addEventListener(name:string, callback:(e:any)=>void) {listeners.set(name,callback);}, removeEventListener() {}, createDocumentFragment: () => new Element("fragment") };
   class Element {
     children: Element[] = []; parent: Element | null = null; attributes = new Map<string,string>(); dataset: Record<string,string> = {};
     value = ""; open = false; hidden = false; ownText = ""; ownerDocument = doc; onclick?: (e: unknown) => void; scrollTop = 0; scrollLeft = 0;
@@ -13,6 +13,9 @@ function harness() {
     set textContent(v: string) { this.ownText = v; this.children = []; writes++; }
     get textContent(): string { return this.ownText + this.children.map(c=>c.textContent).join(""); }
     contains(node: Element | null): boolean { return node === this || this.children.some((c) => c.contains(node)); }
+    get parentElement() { return this.parent; }
+    get tagName() { return this.tag.toUpperCase(); }
+    get offsetParent(): Element | null { for(let n:Element|null=this;n;n=n.parent){if(n.hidden || (n as any).inert)return null;}return main; }
     get isConnected(): boolean { return this.tag === "root" || Boolean(this.parent?.isConnected); }
     setAttribute(k: string,v: string) { this.attributes.set(k,String(v)); if(k.startsWith("data-")) this.dataset[k.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=String(v); writes++; }
     getAttribute(k: string) { return this.attributes.get(k) ?? null; }
@@ -28,11 +31,19 @@ function harness() {
       return this.children.flatMap(c=>[...(selector.split(",").some(s=>matches(c,s))?[c]:[]),...c.querySelectorAll(selector)]);
     }
     querySelector(s:string) { return this.querySelectorAll(s)[0] ?? null; }
-    focus() { doc.activeElement=this; }
-    closest() { return main; }
+    focus() {
+      if(this.offsetParent===null)return;
+      for(let n=this.parent;n;n=n.parent)if(n.tag==="details"&&!n.open&&n.querySelector("summary")!==this)return;
+      doc.activeElement=this;
+    }
+    closest(s:string) {
+      if(s === "[hidden],[inert]") { for(let n:Element|null=this;n;n=n.parent)if(n.hidden || (n as any).inert)return n;return null; }
+      return main;
+    }
     remove() { if(this.parent)this.parent.children=this.parent.children.filter(c=>c!==this); this.parent=null; }
   }
   const main = new Element("main"), root = new Element("root");
+  doc.body = new Element("body"); main.parent=doc.body; root.parent=main;
   const h = (tag:string,props:Record<string,any>={},...children:any[]): Element => { const n=new Element(tag); for(const[k,v]of Object.entries(props)){if(k==="text")n.textContent=v;else if(k==="hidden")n.hidden=v;else if(k.startsWith("on"))(n as any)[k]=v;else n.setAttribute(k==="class"?"class":k,String(v));} n.append(...children.flat().filter(Boolean).map(c=>typeof c==="string"?h("text",{text:c}):c));return n; };
   const teamSource=readFileSync(new URL("../shell/space-team.js",import.meta.url),"utf8");
   const source=readFileSync(new URL("../shell/space.js",import.meta.url),"utf8");
@@ -95,7 +106,7 @@ test("changed actor facts retain the exact detail control and missing controls f
   detail.querySelector('[data-detail-focus="task"]')!.focus();
   h.renderer.update({...changed,actors:changed.actors.map((a:any)=>({...a,card:undefined}))});
   expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("back");
-  h.root.focus();let prevented=false;
+  h.doc.body.focus();let prevented=false;
   h.listeners.get("keydown")!({key:"Tab",preventDefault(){prevented=true;}});
   expect(prevented).toBe(true);expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("back");
 });
@@ -114,4 +125,53 @@ test("resting summary groups idle and away names once per state",()=>{
   const resting=h.model.actors[1];
   h.renderer.update({...h.model,actors:[...h.model.actors,{...resting,id:"other",name:"Other"},{...resting,id:"away",name:"Away",state:"away"}]});
   expect(h.root.querySelector('[data-team-focus="resting:demo:alpha"]')!.textContent).toBe("idle: Resting, Other · away: Away");
+});
+
+test("an active tile becoming idle focuses its closed resting summary",()=>{
+  const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
+  h.root.querySelector('[data-team-focus="tile:demo:one"]')!.focus();
+  const idle={...h.model,actors:h.model.actors.map((a:any)=>({...a,state:"idle",marks:[]}))};
+  h.renderer.update(idle);
+  expect(h.doc.activeElement.getAttribute("data-team-focus")).toBe("resting:demo:alpha");
+  expect(h.doc.activeElement.parentElement.open).toBe(false);
+});
+test("closing detail after an actor rests focuses the disclosure instead of its hidden tile",()=>{
+  const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
+  const actor=h.root.querySelector('[data-team-focus="tile:demo:one"]')!;
+  actor.focus();actor.onclick?.({currentTarget:actor});
+  h.renderer.setRoute({actor:"demo:one"});h.renderer.update(h.model);
+  const idle={...h.model,actors:h.model.actors.map((a:any)=>({...a,state:"idle",marks:[]}))};
+  h.renderer.update(idle);h.renderer.setRoute({});h.renderer.update(idle);
+  expect(h.doc.activeElement.getAttribute("data-team-focus")).toBe("resting:demo:alpha");
+  expect(h.root.querySelector(".space-agent-detail")!.contains(h.doc.activeElement)).toBe(false);
+});
+test("removed Team controls fall back to the Space section tab",()=>{
+  const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
+  h.root.querySelector('[data-team-focus="tile:demo:one"]')!.focus();
+  h.renderer.update({...h.model,actors:[],groups:[],cards:[],zones:[],links:[]});
+  expect(h.doc.activeElement.getAttribute("data-space-section-tab")).toBe("team");
+});
+test("native dialogs own Escape and Tab while actor detail stays open",()=>{
+  const h=harness();h.renderer.setRoute({actor:"demo:one"});h.renderer.update(h.model);
+  const palette:any={open:true};h.doc.nativeDialog=palette;
+  h.doc.activeElement={getAttribute:()=>null};let prevented=false;
+  for(const key of ["Tab","Escape"]) {
+    h.listeners.get("keydown")!({key,preventDefault(){prevented=true;},stopPropagation(){}});
+    // Native dialog handling remains responsible for its default Escape behavior.
+    if(key==="Escape"&&!prevented)palette.open=false;
+  }
+  expect(prevented).toBe(false);expect(palette.open).toBe(false);expect(h.back).toBe(0);
+  expect(h.root.querySelector(".space-agent-detail")!.hidden).toBe(false);
+  h.doc.activeElement=h.root;h.listeners.get("keydown")!({key:"Tab",preventDefault(){prevented=true;}});
+  expect(prevented).toBe(false);
+});
+test("a failed first source is settled, so unknown actor and project guidance appears",()=>{
+  const h=harness();const empty={actors:[],zones:[],cards:[],links:[]};
+  const merged=h.api.mergeSpaceScenes(new Map([["down",{scene:null,failed:true}],["up",{scene:empty}]]));
+  expect(merged.pending).toBe(0);expect(merged.failed).toEqual(["down"]);
+  h.renderer.setRoute({actor:"missing",group:"missing"});h.renderer.update(merged);
+  expect(h.root.textContent).not.toContain("Waiting for agent data.");
+  expect(h.root.textContent).toContain("Some space data could not refresh");
+  expect(h.root.textContent).toContain("Agent not in the current scene");
+  expect(h.root.textContent).toContain("Project not in the current scene");
 });
