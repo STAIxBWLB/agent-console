@@ -84,3 +84,27 @@ test("leaving a hovered avatar restores the still-focused avatar's popover", () 
   expect(h.doc.activeElement).toBe(first);
   expect(first.getAttribute("aria-describedby")).toBe(popup.id);
 });
+
+
+test("scrolling overflowing popover facts keeps keyboard focus on the invoker", () => {
+  const h = roomFixture();
+  const actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!; actor.focus();
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  Object.assign(popup, { clientHeight: 100, scrollHeight: 600 });
+  let prevented = 0;
+  const key = (value: string) => h.listeners.get("keydown")!({ key: value, preventDefault() { prevented++; }, stopPropagation() {} });
+  key("End"); expect(popup.scrollTop).toBe(500); expect(h.doc.activeElement).toBe(actor);
+  key("Home"); expect(popup.scrollTop).toBe(0); expect(h.doc.activeElement).toBe(actor);
+  key("PageDown"); expect(popup.scrollTop).toBe(100); expect(h.doc.activeElement).toBe(actor);
+  expect(prevented).toBe(3);
+});
+
+
+test("switching popover actors resets the description to its beginning", () => {
+  const h = roomFixture();
+  const first = h.root.querySelector('.space-actor[data-key="demo:one"]')!; first.focus();
+  const popup = h.root.querySelector(".space-actor-popover")!; popup.scrollTop = 500;
+  const second = h.root.querySelector('.space-actor[data-key="demo:two"]')!;
+  (second as any).onpointerenter({ pointerType: "mouse" });
+  expect(popup.scrollTop).toBe(0); expect(h.doc.activeElement).toBe(first);
+});

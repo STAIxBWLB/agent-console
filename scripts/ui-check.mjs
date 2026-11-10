@@ -124,7 +124,8 @@ const artRoot = ${JSON.stringify(options.artRoot)};
 const assetsDir = artRoot ? join(artRoot,"assets") : join(home,"console","assets");
 const petsDir = artRoot ? join(artRoot,"pets") : join(home,"console","pets");
 if(!artRoot) {
-writeAssetPack(assetsDir,"office",{models:{desk:"desk.glb",shelf:"desk.glb",board:"desk.glb"}});
+const packDir = writeAssetPack(assetsDir,"office",{images:{floor:"floor.png",desk:"desk.png",wall:"wall.png",board:"board.png",shelf:"shelf.png"},models:{desk:"desk.glb",shelf:"desk.glb",board:"desk.glb"}});
+for (const name of ["wall","board","shelf"]) writeFileSync(join(packDir,name+".png"),pngImage(8,8));
 const petDir = join(petsDir,"fixture-pet");
 mkdirSync(petDir,{recursive:true});
 writeFileSync(join(petDir,"pet.json"),JSON.stringify({id:"fixture-pet",displayName:"Fixture pet",spriteVersionNumber:2,spritesheetPath:"spritesheet.png"}));
@@ -535,6 +536,53 @@ async function checkRoomPopover(page) {
   return findings;
 }
 
+// Stress the complete public-fact description without giving tooltip focus away from its invoker.
+async function runLongRoomPopover(ticket) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 560 }, colorScheme: "light", reducedMotion: "reduce" });
+  const page = await context.newPage(); page.setDefaultTimeout(12000);
+  const name = "Long public actor ".padEnd(200, "n"), task = "Long public task ".padEnd(200, "t");
+  const roles = Array.from({ length: 4 }, (_, index) => `role-${index}-`.padEnd(32, "r"));
+  const marks = [{ kind: "inbox", text: "inbox ".padEnd(200, "i") }, { kind: "approval", text: "approval ".padEnd(200, "a") }];
+  try {
+    await page.route("**/p/demo/snapshot", async (route) => {
+      if (route.request().postDataJSON()?.panel !== "space") { await route.continue(); return; }
+      const response = await fetchFullSnapshot(route), body = await response.json();
+      if (body.scene) {
+        const actor = body.scene.actors.find((item) => item.id === "claude");
+        actor.name = name; actor.roles = roles; actor.marks = marks;
+        const card = body.scene.cards.find((item) => item.id === actor.card); if (card) card.title = task;
+      }
+      await fulfillSnapshotFixture(route, response, body);
+    });
+    await page.goto((await ticket()).url);
+    await page.evaluate(() => { document.documentElement.style.fontSize = "200%"; location.hash = "#/local/space?view=room"; });
+    await page.locator(".space-actor").nth(5).waitFor();
+    const actor = page.locator('.space-actor[data-key="demo:claude"]');
+    await actor.focus();
+    const popup = page.locator(".space-actor-popover:not([hidden])"); await popup.waitFor();
+    const content = await popup.evaluate((node) => {
+      const box = node.getBoundingClientRect(), task = node.querySelector(".space-popover-task");
+      return { text: node.textContent, roles: [...node.querySelectorAll(".space-team-role")].map((role) => role.textContent),
+        overflow: getComputedStyle(node).overflowY, height: node.clientHeight, scrollHeight: node.scrollHeight,
+        fits: box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight + 1 && box.right <= innerWidth + 1,
+        taskUnclipped: task.scrollHeight <= task.clientHeight + 1, horizontal: node.scrollWidth <= node.clientWidth + 1 };
+    });
+    if (!content.fits || !content.horizontal || !content.taskUnclipped || !["auto", "scroll"].includes(content.overflow) || content.scrollHeight <= content.height || ![name, task, ...marks.map((mark) => mark.text)].every((text) => content.text.includes(text)) || JSON.stringify(content.roles) !== JSON.stringify(roles)) throw new Error(`Long public facts are not all reachable: ${JSON.stringify(content)}`);
+    await page.keyboard.press("End");
+    const keyboard = await popup.evaluate((node) => ({ bottom: node.scrollTop + node.clientHeight >= node.scrollHeight - 1, focus: document.activeElement?.dataset.key }));
+    if (!keyboard.bottom || keyboard.focus !== "demo:claude") throw new Error(`Keyboard tooltip scroll lost focus or facts: ${JSON.stringify(keyboard)}`);
+    await page.keyboard.press("Home"); await popup.hover(); await page.mouse.wheel(0, 10000); await settle(page);
+    const pointer = await popup.evaluate((node) => ({ bottom: node.scrollTop + node.clientHeight >= node.scrollHeight - 1, focus: document.activeElement?.dataset.key }));
+    if (!pointer.bottom || pointer.focus !== "demo:claude") throw new Error(`Pointer tooltip scroll lost focus or facts: ${JSON.stringify(pointer)}`);
+    const screenshot = "room-long-popover-200-short.png";
+    await page.screenshot({ path: join(options.output, screenshot) });
+    report.captures.push({ key: "room-long-popover-200-short", screenshot, width: 1440, theme: "light", textPercent: 200, view: "space-popover" });
+    report.roomLongPopover = { fits: content.fits, scrollHeight: content.scrollHeight, height: content.height, keyboard, pointer };
+    await page.keyboard.press("Escape"); await page.locator(".space-actor-popover").waitFor({ state: "hidden" });
+  } catch (error) { report.findings.push({ kind: "space-long-popover", detail: error.message.slice(0, 2000) }); }
+  finally { await context.close(); }
+}
+
 async function checkSpace(page, scenario, resources, packed) {
   await page.locator("#areas a[href='#/local/space']").waitFor();
   await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
@@ -564,8 +612,9 @@ async function checkSpace(page, scenario, resources, packed) {
     if (plane?.dataset.pack !== (expectPack ? "office" : "fallback")) findings.push({ kind: "space-pack", detail: `Expected ${expectPack ? "office" : "fallback"} plane, got ${plane?.dataset.pack ?? "no plane"}` });
     const imageStyles = [...view.querySelectorAll("*")].map((node) => getComputedStyle(node).backgroundImage).filter((image) => image !== "none");
     const hasFloor = imageStyles.some((image) => image.includes("/assets/office/floor"));
-    const hasDesk = imageStyles.some((image) => image.includes("/assets/office/desk"));
-    if (expectPack && (!hasFloor || !hasDesk)) findings.push({ kind: "space-pack-images", detail: `Installed pack background use: floor=${hasFloor}, desk=${hasDesk}` });
+    const hasWall = imageStyles.some((image) => image.includes("/assets/office/wall"));
+    const hasZoneFurniture = ["board", "shelf"].every((name) => imageStyles.some((image) => image.includes(`/assets/office/${name}`)));
+    if (expectPack && (!hasFloor || !hasWall || !hasZoneFurniture)) findings.push({ kind: "space-pack-images", detail: `Installed pack background use: floor=${hasFloor}, wall=${hasWall}, zones=${hasZoneFurniture}` });
     if (!expectPack && imageStyles.some((image) => image.includes("/assets/"))) findings.push({ kind: "space-fallback", detail: "No-pack scene still references an asset image" });
     const scroll = view.querySelector(".space-scroll"); const roster = view.querySelector(".space-roster");
     if (!scroll || !roster) findings.push({ kind: "space-equivalent", detail: "Scene scroll box or text roster missing" });
@@ -579,7 +628,7 @@ async function checkSpace(page, scenario, resources, packed) {
       return css.animationName !== "none" && css.animationDuration.split(",").some((duration) => Number.parseFloat(duration) > 0);
     });
     if (matchMedia("(prefers-reduced-motion: reduce)").matches && moving.length) findings.push({ kind: "space-reduced-motion", detail: `${moving.length} sprites still animate` });
-    return { findings, actorKeys, cardKeys, zoneKeys, rosterActors, rosterZones, pack: plane?.dataset.pack, hasFloor, hasDesk };
+    return { findings, actorKeys, cardKeys, zoneKeys, rosterActors, rosterZones, pack: plane?.dataset.pack, hasFloor, hasWall, hasZoneFurniture };
   }, packed);
   const metadata = await page.evaluate(async () => {
     const response = await fetch("/tools", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
@@ -592,9 +641,9 @@ async function checkSpace(page, scenario, resources, packed) {
   if (!packed && metadata.assetPacks.length) findings.push({ kind: "space-fixture-pack", detail: "Fallback fixture server unexpectedly lists packs" });
   if (packed) {
     try {
-      await page.waitForFunction(() => ["floor", "desk"].every((name) => performance.getEntriesByType("resource").some((entry) => new URL(entry.name).pathname === `/assets/office/${name}`)));
-    } catch { findings.push({ kind: "space-image-request", detail: "Installed floor and desk did not both finish loading" }); }
-    for (const name of ["floor", "desk"]) if (!resources.some((entry) => entry.path === `/assets/office/${name}` && entry.status === 200)) findings.push({ kind: "space-image-response", detail: `No successful /assets/office/${name} response` });
+      await page.waitForFunction(() => ["floor", "wall", "board", "shelf"].every((name) => performance.getEntriesByType("resource").some((entry) => new URL(entry.name).pathname === `/assets/office/${name}`)));
+    } catch { findings.push({ kind: "space-image-request", detail: "Installed floor, wall and zone furniture did not all finish loading" }); }
+    for (const name of ["floor", "wall", "board", "shelf"]) if (!resources.some((entry) => entry.path === `/assets/office/${name}` && entry.status === 200)) findings.push({ kind: "space-image-response", detail: `No successful /assets/office/${name} response` });
     if (!resources.some((entry) => entry.path === "/pets/fixture-pet/sheet" && entry.status === 200)) findings.push({ kind: "space-image-response", detail: "No successful synthetic pet sheet response" });
   } else if (resources.some((entry) => entry.path.startsWith("/assets/"))) findings.push({ kind: "space-fallback-request", detail: "No-pack context requested an asset image" });
 
@@ -625,7 +674,7 @@ async function checkSpace(page, scenario, resources, packed) {
 
   await page.locator("#view-space:not([hidden]) .space-actor[data-key='demo:claude']").click();
   await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
-  if (await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor")) !== "demo:claude") findings.push({ kind: "space-actor-detail-route", detail: "Actor click did not select the namespaced actor route" });
+  if (await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor")) !== "demo:claude") report.findings.push({ capture: `${scenario.width}-${scenario.theme}-${scenario.textPercent}-${packed ? "space" : "space-fallback"}`, kind: "space-actor-detail-route", detail: "Actor click did not select the namespaced actor route" });
   await page.locator(".space-detail-back").click();
   await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
   await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
@@ -1259,6 +1308,7 @@ async function runSpaceViews(ticket) {
       // At the default camera each model must read as furniture, not a few pixels: 40 px on its longer side on
       // desktop. A 375 px phone fits a 10-unit floor into ~340 px, so its floor is 24 px; zoom in for detail there.
       // 200% text grows the DOM-measured layout (not the furniture), so the floor applies at 100% text; 200% is recorded.
+      if (!options.artRoot && !requests.some((entry) => entry.path === "/assets/office/desk" && entry.status === 200)) findings.push({ kind: "space-3d-desk-response", detail: "3D did not load its installed desk texture" });
       const modelFloor = width >= 1024 ? 40 : 24;
       if (textPercent === 100 && Number(evidence.initial3d.modelCount) > 0 && !(Number(evidence.initial3d.modelMinPx) >= modelFloor)) findings.push({ kind: "space-model-size", detail: `smallest model ${evidence.initial3d.modelMinPx}px on its longer side (needs ${modelFloor}); ${evidence.initial3d.modelSides}` });
       await page.locator(".space-scroll").scrollIntoViewIfNeeded();
@@ -1350,6 +1400,7 @@ try {
   if (!focused || options.spaceMotionOnly) await runSpaceMotion(ticket);
   if (!focused || options.spaceViewsOnly) {
     await runSpaceViews(ticket);
+    await runLongRoomPopover(ticket);
     await runSpaceFoundation({ browser, ticket, report, output: options.output });
     await runSpaceTeam({ browser, ticket, report, output: options.output });
     await runSpaceFlow({ browser, ticket, report, output: options.output });

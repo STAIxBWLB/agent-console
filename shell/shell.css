@@ -729,14 +729,14 @@ main:has(> #view-space[data-space-section="room"]:not([hidden])) { display: flex
 
 /* A single viewport-anchored tooltip avoids clipping inside the transformed
    scene. Frequent hover/focus details are intentionally immediate. */
-.space-actor-popover { position: fixed; left: var(--space-popover-x, 0px); top: var(--space-popover-y, 0px); z-index: var(--shell-z-rail); width: min(300px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: hidden; padding: var(--acon-space-3); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-3); background: var(--acon-surface); color: var(--acon-text); box-shadow: var(--acon-shadow); overflow-wrap: anywhere; }
+.space-actor-popover { position: fixed; left: var(--space-popover-x, 0px); top: var(--space-popover-y, 0px); z-index: var(--shell-z-rail); width: min(300px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: var(--acon-space-3); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-3); background: var(--acon-surface); color: var(--acon-text); box-shadow: var(--acon-shadow); overflow-wrap: anywhere; }
 .space-actor-popover > :first-child { margin-top: 0; }
 .space-actor-popover > :last-child { margin-bottom: 0; }
 .space-actor-popover strong { display: block; font-weight: 600; }
 .space-actor-popover .space-team-roles,
 .space-actor-popover .space-team-badges { margin-top: var(--acon-space-2); }
 .space-actor-popover .space-team-state { margin-top: var(--acon-space-2); }
-.space-actor-popover .space-team-taskline { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin-top: var(--acon-space-2); color: var(--acon-text-2); }
+.space-actor-popover .space-team-taskline { display: block; overflow: visible; margin-top: var(--acon-space-2); color: var(--acon-text-2); }
 
 /* State is always named in the markup; these are shared, redundant signals. */
 .space-team-attention-row[data-state="working"],

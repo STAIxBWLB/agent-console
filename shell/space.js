@@ -138,7 +138,7 @@ export function createSpaceRenderer(root, host) {
   const boardRoot = h("section", { class: "space-board", hidden: true });
   const flowRoot = h("section", { class: "space-flow", hidden: true });
   const teamRoot = h("section", { class: "space-team", tabindex: "-1" });
-  const actorPopover = h("aside", { id: "space-actor-popover", class: "space-actor-popover", role: "tooltip", hidden: true,
+  const actorPopover = h("aside", { id: "space-actor-popover", class: "space-actor-popover", role: "tooltip", tabindex: "-1", hidden: true,
     onpointerenter: () => { popupHovered = true; }, onpointerleave: (event) => { popupHovered = false; endPopoverPointer(popupActor, event.relatedTarget); } });
   let popupActor = "", popupAnchor = null, popupSignature = "", hoveredActor = "", popupHovered = false;
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
@@ -220,6 +220,7 @@ export function createSpaceRenderer(root, host) {
     const group = lastModel.groups.find((item) => item.id === actor.group);
     const sig = JSON.stringify([actor, card, group, petIds()]);
     if (popupAnchor && popupAnchor !== anchor && popupAnchor.getAttribute("aria-describedby") === actorPopover.id) popupAnchor.removeAttribute("aria-describedby");
+    const resetScroll = actorPopover.hidden || popupActor !== id;
     popupActor = id; popupAnchor = anchor;
     if (sig !== popupSignature) {
       popupSignature = sig;
@@ -237,7 +238,9 @@ export function createSpaceRenderer(root, host) {
       })));
     }
     if (anchor.getAttribute("aria-describedby") !== actorPopover.id) anchor.setAttribute("aria-describedby", actorPopover.id);
-    setHidden(actorPopover, false); positionPopover();
+    setHidden(actorPopover, false);
+    if (resetScroll && actorPopover.scrollTop) actorPopover.scrollTop = 0;
+    positionPopover();
   }
   function openActor(id, element) {
     closePopover();
@@ -249,6 +252,13 @@ export function createSpaceRenderer(root, host) {
     if (root.hidden || document.querySelector("dialog[open]")) return;
     if (!selection.actor) {
       if (event.key === "Escape" && !actorPopover.hidden) { event.preventDefault(); event.stopPropagation(); closePopover(); }
+      else if (!actorPopover.hidden && document.activeElement === popupAnchor && actorPopover.scrollHeight > actorPopover.clientHeight) {
+        const steps = { ArrowDown: 40, ArrowUp: -40, PageDown: actorPopover.clientHeight, PageUp: -actorPopover.clientHeight, Home: -actorPopover.scrollHeight, End: actorPopover.scrollHeight };
+        if (Object.hasOwn(steps, event.key)) {
+          event.preventDefault(); event.stopPropagation();
+          actorPopover.scrollTop = Math.max(0, Math.min(actorPopover.scrollTop + steps[event.key], actorPopover.scrollHeight - actorPopover.clientHeight));
+        }
+      }
       return;
     }
     if (!detailRoot.contains(document.activeElement) && document.activeElement !== document.body) return;
