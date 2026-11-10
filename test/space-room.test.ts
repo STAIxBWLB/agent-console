@@ -154,3 +154,28 @@ test("popover resize listeners exist only while open and are removed on hide and
   (actor as any).onpointerenter({ pointerType: "mouse" }); h.renderer.destroy();
   expect(h.windowResize.size).toBe(0); expect(h.visualResize.size).toBe(0);
 });
+
+test("pointer can cross the gap from an avatar into its popover without it closing", () => {
+  const h = roomFixture();
+  const actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  (actor as any).onpointerenter({ pointerType: "mouse" }); expect(popup.hidden).toBe(false);
+  (actor as any).onpointerleave({ relatedTarget: null });
+  expect(popup.hidden).toBe(false);
+  (popup as any).onpointerenter({});
+  h.runTimers(); expect(popup.hidden).toBe(false);
+  (popup as any).onpointerleave({ relatedTarget: null });
+  expect(popup.hidden).toBe(false);
+  h.runTimers(); expect(popup.hidden).toBe(true);
+  expect(h.pendingTimers()).toBe(0);
+});
+
+test("leaving an avatar without entering the popover closes it after the grace period", () => {
+  const h = roomFixture();
+  const actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  (actor as any).onpointerenter({ pointerType: "mouse" });
+  (actor as any).onpointerleave({ relatedTarget: null });
+  expect(popup.hidden).toBe(false);
+  h.runTimers(); expect(popup.hidden).toBe(true);
+});

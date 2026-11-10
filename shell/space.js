@@ -139,9 +139,9 @@ export function createSpaceRenderer(root, host) {
   const flowRoot = h("section", { class: "space-flow", hidden: true });
   const teamRoot = h("section", { class: "space-team", tabindex: "-1" });
   const actorPopover = h("aside", { id: "space-actor-popover", class: "space-actor-popover", role: "tooltip", tabindex: "-1", hidden: true,
-    onpointerenter: () => { popupHovered = true; }, onpointerleave: (event) => { popupHovered = false; endPopoverPointer(popupActor, event.relatedTarget); } });
+    onpointerenter: () => { popupHovered = true; cancelPopoverClose(); }, onpointerleave: (event) => { popupHovered = false; endPopoverPointer(popupActor, event.relatedTarget); } });
   let popupActor = "", popupAnchor = null, popupSignature = "", hoveredActor = "", popupHovered = false;
-  let popupResizeWatching = false, popupViewport = null;
+  let popupResizeWatching = false, popupViewport = null, popupCloseTimer = 0;
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
   root.replaceChildren(header, notice, teamRoot, flowRoot, boardRoot, content, empty, actorPopover, detailRoot);
@@ -195,7 +195,9 @@ export function createSpaceRenderer(root, host) {
   const flow = createSpaceFlow(flowRoot, { h, sprite, petIds, openActor, activity, sectionTab: () => sectionButtons.get(selection.view), onTime: () => { if (lastModel && !root.hidden) renderDetail(lastModel); } });
   const board = createSpaceBoard(boardRoot, { h, sprite, petIds, openActor, navigate: host.navigate, sectionTab: () => sectionButtons.get(selection.view) });
   const team = createSpaceTeam(teamRoot, { h, sprite, petIds, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
+  function cancelPopoverClose() { if (popupCloseTimer) { clearTimeout(popupCloseTimer); popupCloseTimer = 0; } }
   function closePopover() {
+    cancelPopoverClose();
     if (popupResizeWatching) {
       window.removeEventListener("resize", positionPopover);
       popupViewport?.removeEventListener("resize", positionPopover);
@@ -205,11 +207,15 @@ export function createSpaceRenderer(root, host) {
     setHidden(actorPopover, true); popupActor = ""; popupAnchor = null; popupHovered = false;
   }
   function endPopoverPointer(id, relatedTarget) {
-    if (!popupActor || popupActor !== id || actorPopover.contains(relatedTarget)) return;
+    if (!popupActor || popupActor !== id || actorPopover.contains(relatedTarget) || popupAnchor?.contains(relatedTarget)) return;
     const focused = document.activeElement;
     if (root.contains(focused) && focused?.getAttribute("data-space-focus")?.startsWith("actor:")) {
       showPopover(focused.getAttribute("data-key"), focused);
-    } else closePopover();
+      return;
+    }
+    // A short grace lets the pointer cross the gap between the avatar and its popover.
+    cancelPopoverClose();
+    popupCloseTimer = setTimeout(() => { popupCloseTimer = 0; if (!popupHovered && hoveredActor !== popupActor) closePopover(); }, 150);
   }
   function positionPopover() {
     if (actorPopover.hidden || !popupAnchor || root.hidden || selection.view !== "room") return;
@@ -227,6 +233,7 @@ export function createSpaceRenderer(root, host) {
     setStyle(actorPopover, "--space-popover-x", `${point.x + left}px`); setStyle(actorPopover, "--space-popover-y", `${point.y + top}px`);
   }
   function showPopover(id, anchor) {
+    cancelPopoverClose();
     if (root.hidden || selection.view !== "room" || selection.actor) return;
     const actor = lastModel?.actors.find((item) => item.id === id);
     if (!actor || !anchor?.isConnected) { closePopover(); return; }
