@@ -4,6 +4,8 @@ import { harness } from "./space-team.test.ts";
 function roomFixture() {
   const h = harness({ room: true, pets: [{ id: "first" }] });
   h.renderer.setRoute({ view: "room" }); h.renderer.update(h.model);
+  // The scene scroller spans the fake viewport unless a test narrows it.
+  (h.root.querySelector(".space-scroll") as any).getBoundingClientRect = () => ({ left: 0, top: 0, right: 1024, bottom: 768, width: 1024, height: 768 });
   return h;
 }
 
@@ -123,7 +125,8 @@ test("height-only window resize repositions an open popover without changing fac
   for (const listener of [...h.windowResize]) listener();
   expect(popup.hidden).toBe(false);
   expect(popup.style.getPropertyValue("--space-popover-y")).toBe("222px");
-  expect(popup.style.getPropertyValue("--space-popover-max-height")).toBe("544px");
+  // Capped to the free room above the invoker (430 - 16), so the popover cannot cover it.
+  expect(popup.style.getPropertyValue("--space-popover-max-height")).toBe("414px");
   expect(h.doc.activeElement).toBe(actor);
   const writes = h.writes;
   for (const listener of [...h.windowResize]) listener();
@@ -189,4 +192,25 @@ test("visualViewport panning (scroll without resize) hides a popover whose invok
   for (const listener of [...h.visualScroll]) listener();
   expect(popup.hidden).toBe(true);
   expect(h.visualScroll.size).toBe(0);
+});
+
+test("scrolling an invoker out of the scene scroller hides its popover", () => {
+  const h = roomFixture(), actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  resizeAnchor(actor); actor.focus();
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  expect(popup.hidden).toBe(false);
+  (h.root.querySelector(".space-scroll") as any).getBoundingClientRect = () => ({ left: 0, top: 540, right: 1024, bottom: 760, width: 1024, height: 220 });
+  for (const listener of [...h.visualScroll]) listener();
+  expect(popup.hidden).toBe(true);
+});
+
+test("a tall popover is capped to the larger free side and never covers its invoker", () => {
+  const h = roomFixture(), position = h.api.actorPopoverPosition;
+  const anchor = { left: 100, top: 430, bottom: 526, width: 112 };
+  // 560 px viewport: 430 px free above, 18 px below, so the capped popover (<= 414 px) goes above.
+  const point = position(anchor, { width: 300, height: 414 }, { width: 1440, height: 560 });
+  expect(point.y + 414).toBeLessThanOrEqual(anchor.top);
+  // Room below wins when it is larger.
+  const low = position({ left: 100, top: 40, bottom: 136, width: 112 }, { width: 300, height: 400 }, { width: 1440, height: 560 });
+  expect(low.y).toBeGreaterThanOrEqual(136);
 });

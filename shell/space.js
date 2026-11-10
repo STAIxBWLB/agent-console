@@ -110,7 +110,9 @@ export function actorPopoverPosition(anchor, popup, viewport) {
   const margin = 8;
   const x = Math.max(margin, Math.min(anchor.left + anchor.width / 2 - popup.width / 2, viewport.width - popup.width - margin));
   const below = anchor.bottom + margin;
-  const preferredY = below + popup.height <= viewport.height - margin ? below : anchor.top - popup.height - margin;
+  // Prefer below; otherwise use the side with more room (the caller caps height to fit it).
+  const fitsBelow = below + popup.height <= viewport.height - margin;
+  const preferredY = fitsBelow || viewport.height - anchor.bottom >= anchor.top ? below : anchor.top - popup.height - margin;
   const y = Math.max(margin, Math.min(preferredY, viewport.height - popup.height - margin));
   return { x, y };
 }
@@ -226,8 +228,13 @@ export function createSpaceRenderer(root, host) {
     const height = Math.min(window.innerHeight, viewport?.height ?? window.innerHeight);
     const anchor = popupAnchor.getBoundingClientRect();
     if (!popupAnchor.isConnected || anchor.bottom <= top || anchor.top >= top + height || anchor.right <= left || anchor.left >= left + width || width <= 16 || height <= 16) { closePopover(); return; }
+    // The scene scroller clips its avatars: an invoker scrolled out of it is out of view too.
+    const clip = scroll.getBoundingClientRect();
+    if (clip.width > 0 && clip.height > 0 && (anchor.bottom <= clip.top || anchor.top >= clip.bottom || anchor.right <= clip.left || anchor.left >= clip.right)) { closePopover(); return; }
+    // Cap the height to the larger free side so the popover never covers (and blocks clicks on) its invoker.
+    const room = Math.max(height - (anchor.bottom - top) - 16, anchor.top - top - 16);
     setStyle(actorPopover, "--space-popover-max-width", `${width - 16}px`);
-    setStyle(actorPopover, "--space-popover-max-height", `${height - 16}px`);
+    setStyle(actorPopover, "--space-popover-max-height", `${Math.max(48, Math.min(height - 16, room))}px`);
     const box = actorPopover.getBoundingClientRect();
     const local = { left: anchor.left - left, top: anchor.top - top, bottom: anchor.bottom - top, width: anchor.width };
     const point = actorPopoverPosition(local, box, { width, height });
