@@ -2,13 +2,16 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
-function harness() {
+export function harness({ now = Date.now }: { now?: () => number } = {}) {
   let writes = 0;
   const listeners = new Map<string, (e:any)=>void>();
   const doc: any = { activeElement: null, querySelector(s:string){return s === "dialog[open]" && doc.nativeDialog?.open ? doc.nativeDialog : null;}, addEventListener(name:string, callback:(e:any)=>void) {listeners.set(name,callback);}, removeEventListener() {}, createDocumentFragment: () => new Element("fragment") };
   class Element {
     children: Element[] = []; parent: Element | null = null; attributes = new Map<string,string>(); dataset: Record<string,string> = {};
-    value = ""; open = false; hidden = false; ownText = ""; ownerDocument = doc; onclick?: (e: unknown) => void; scrollTop = 0; scrollLeft = 0;
+    private hiddenValue = false; hiddenWrites = 0;
+    get hidden() { return this.hiddenValue; }
+    set hidden(value: boolean) { this.hiddenValue = value; this.hiddenWrites++; writes++; }
+    value = ""; open = false; ownText = ""; ownerDocument = doc; onclick?: (e: unknown) => void; scrollTop = 0; scrollLeft = 0;
     constructor(public tag: string) {}
     set textContent(v: string) { this.ownText = v; this.children = []; writes++; }
     get textContent(): string { return this.ownText + this.children.map(c=>c.textContent).join(""); }
@@ -46,9 +49,10 @@ function harness() {
   doc.body = new Element("body"); main.parent=doc.body; root.parent=main;
   const h = (tag:string,props:Record<string,any>={},...children:any[]): Element => { const n=new Element(tag); for(const[k,v]of Object.entries(props)){if(k==="text")n.textContent=v;else if(k==="hidden")n.hidden=v;else if(k.startsWith("on"))(n as any)[k]=v;else n.setAttribute(k==="class"?"class":k,String(v));} n.append(...children.flat().filter(Boolean).map(c=>typeof c==="string"?h("text",{text:c}):c));return n; };
   const teamSource=readFileSync(new URL("../shell/space-team.js",import.meta.url),"utf8");
+  const flowSource=readFileSync(new URL("../shell/space-flow.js",import.meta.url),"utf8");
   const source=readFileSync(new URL("../shell/space.js",import.meta.url),"utf8");
   const storage=new Map(); const nav: any[]=[]; let back=0;
-  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{observe(){}disconnect(){}},CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date});
+  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${flowSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{observe(){}disconnect(){}},CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date: class extends Date { static now = now; },setInterval(){return 1;},clearInterval(){}});
   const renderer=api.createSpaceRenderer(root,{h,pets:()=>[],packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
@@ -65,7 +69,7 @@ test("actor detail resolves exact actor/card/partners and closes with focus rest
   const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
   const actor=h.root.querySelector('[data-space-actor="demo:one"]')!;actor.focus();actor.onclick?.({currentTarget:actor});expect(h.nav.at(-1).actor).toBe("demo:one");
   h.renderer.setRoute({actor:"demo:one"});h.renderer.update(h.model);
-  const detail=h.root.querySelector(".space-agent-detail")!;expect(detail.hidden).toBe(false);expect(detail.textContent).toContain("Alpha");expect(detail.textContent).toContain("cohort: Resting");expect(detail.textContent).toContain("Open in demo");expect(detail.textContent).toContain("History appears once observed.");
+  const detail=h.root.querySelector(".space-agent-detail")!;expect(detail.hidden).toBe(false);expect(detail.textContent).toContain("Alpha");expect(detail.textContent).toContain("cohort: Resting");expect(detail.textContent).toContain("Open in demo");expect(detail.textContent).toContain("History starts when this page opens.");
   const before=h.writes;h.renderer.update({...h.model,sampledAt:3});expect(h.writes).toBe(before);
   detail.querySelectorAll("button").find((n:any)=>n.textContent==="Task title")!.onclick?.({});
   expect(h.nav.at(-1)).toEqual(["demo","notes",{id:"task"}]);

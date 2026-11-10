@@ -1,3 +1,4 @@
+import { createActivityBuffer, createSpaceFlow, flowRelativeTime } from "./space-flow.js";
 import { createSpaceTeam, focusSpaceControl } from "./space-team.js";
 import { createSpaceViewController } from "./space-view.js";
 
@@ -123,11 +124,12 @@ export function createSpaceRenderer(root, host) {
   const project = h("select", { id: "space-project", "aria-label": "Project", onchange: () => choose({ group: project.value }) });
   const header = h("header", { class: "space-header" }, h("h1", { class: "lead", id: "space-lead", text: "Space" }), summary,
     h("div", { class: "space-header-controls" }, tabs, h("label", { class: "space-project-label", for: "space-project" }, "Project", project)));
+  const flowRoot = h("section", { class: "space-flow", hidden: true });
   const teamRoot = h("section", { class: "space-team", tabindex: "-1" });
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const placeholder = h("p", { class: "notice", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
-  root.replaceChildren(header, placeholder, notice, teamRoot, content, empty, detailRoot);
+  root.replaceChildren(header, placeholder, notice, teamRoot, flowRoot, content, empty, detailRoot);
   let selection = { view: "team", group: "", state: "", actor: "" };
   let savedView = "team";
   let returnPoint = null, restorePoint = null, detailSignature = "";
@@ -163,6 +165,7 @@ export function createSpaceRenderer(root, host) {
   let signature = "", groupSignature = "", layout = null, lastModel = null;
   const setStyle = (el, name, value) => { if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value); };
   const setText = (el, value) => { if (el.textContent !== value) el.textContent = value; };
+  const setHidden = (el, value) => { if (el.hidden !== value) el.hidden = value; };
   const target = (key, invoker) => { const entry = entries.get(key); if (!entry) return; if (key.startsWith("actor:")) openActor(entry.id, invoker); else host.navigate(entry.link.tool, entry.link.panel, entry.link.params); };
   const image = (el, variable, pack, name) => setStyle(el, variable, pack?.images.includes(name) ? `url("${location.origin}/assets/${pack.id}/${name}")` : "none");
   const prune = (nodes, keys) => { for (const [key, entry] of nodes) if (!keys.has(key)) { entry.roster?.remove(); (entry.el ?? entry).remove(); nodes.delete(key); } };
@@ -172,9 +175,11 @@ export function createSpaceRenderer(root, host) {
     const pet = pets.find((p) => p.id === actor.pet) ?? (pets.length ? pets[hash(actor.id) % pets.length] : null);
     return pet ? host.petSprite(pet, actor.stale ? "idle" : poseFor[actor.state]) : h("span", { class: "space-token", "aria-hidden": "true", text: actor.name.slice(0, 1).toUpperCase() });
   };
+  const activity = createActivityBuffer();
+  const flow = createSpaceFlow(flowRoot, { h, sprite, openActor, activity, sectionTab: () => sectionButtons.get(selection.view), onTime: () => { if (lastModel && !root.hidden) renderDetail(lastModel); } });
   const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
   function openActor(id, element) {
-    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
+    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus") ?? element?.getAttribute("data-flow-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
     choose({ actor: id });
   }
   function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
@@ -201,7 +206,8 @@ export function createSpaceRenderer(root, host) {
     const links = model.links.filter((l) => ["overlap", "conflict", "cohort"].includes(l.kind) && (l.from === actor?.id || l.to === actor?.id));
     const partners = links.map((l) => ({ kind: l.kind, actor: model.actors.find((a) => a.id === (l.from === actor.id ? l.to : l.from)) }));
     const group = model.groups.find((g) => g.id === actor?.group);
-    const sig = JSON.stringify([selection.actor, actor, card, partners, group, Boolean(model.pending)]);
+    const interactions = selection.actor ? activity.interactions(selection.actor) : { peers: [], events: [] };
+    const sig = JSON.stringify([selection.actor, actor, card, partners, group, Boolean(model.pending), interactions, interactions.events.map((event) => flowRelativeTime(event.observedAt))]);
     if (sig === detailSignature) return;
     detailSignature = sig;
     const wasHidden = detailRoot.hidden;
@@ -224,7 +230,11 @@ export function createSpaceRenderer(root, host) {
         h("div", { class: "space-agent-detail-body" }, h("section", {}, h("h3", { text: "Current task" }), card ? h("button", { type: "button", class: "btn", "data-detail-focus": "task", text: card.title, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) }) : h("p", { class: "sub", text: "No current task reported." })),
           h("section", {}, h("h3", { text: "Marks" }), ...marks),
           h("section", {}, h("h3", { text: "Partners" }), ...(partners.length ? partners.map((p) => h("p", { text: `${p.kind}: ${p.actor?.name ?? "Unknown actor"}` })) : [h("p", { class: "sub", text: "No current partners reported." })])),
-          h("section", {}, h("h3", { text: "Interactions" }), h("p", { class: "sub", text: "History appears once observed." })),
+          h("section", { class: "space-detail-interactions" }, h("h3", { text: "Interactions" }), h("p", { class: "sub", text: "History starts when this page opens. Counts and events cover the last 30 minutes." }),
+            ...interactions.peers.map((peer) => h("p", { text: `${peer.name}: ${peer.sent} sent, ${peer.received} received` })),
+            ...(interactions.events.length ? [h("ol", { class: "space-flow-events" }, ...interactions.events.map((event) => h("li", {},
+              h("strong", { text: `${event.fromName} → ${event.toName}` }), h("span", { text: `${event.kind}${event.label ? `: ${event.label}` : ""}` }),
+              h("span", { class: "sub", text: flowRelativeTime(event.observedAt) }))))] : [h("p", { class: "sub", text: "No activity observed yet." })])),
           h("button", { type: "button", class: "btn", "data-detail-focus": "open", text: `Open in ${actor.link.tool}`, onclick: () => host.navigate(actor.link.tool, actor.link.panel, actor.link.params) })));
     }
     if (wasHidden || hadFocus) (focusKey ? detailRoot.querySelector(`[data-detail-focus="${CSS.escape(focusKey)}"]`) ?? back : back).focus({ preventScroll: true });
@@ -232,7 +242,7 @@ export function createSpaceRenderer(root, host) {
   function restore() {
     if (!restorePoint) return;
     const point = restorePoint; restorePoint = null;
-    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"]`) : null;
+    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"],[data-flow-focus="${CSS.escape(point.focusKey)}"]`) : null;
     const element = point.element?.isConnected ? point.element : keyed ?? (point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null);
     focusSpaceControl(element, sectionButtons.get(selection.view));
     const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
@@ -243,6 +253,8 @@ export function createSpaceRenderer(root, host) {
   }
   function update(model, force = false) {
     lastModel = model;
+    activity.observe(model);
+    flow.setVisible(selection.view === "flow" && !root.hidden);
     const pack = host.packs()[0];
     const { sampledAt, samples: receivedSamples, ...facts } = model;
     let sourceGap = false, firstSource = false;
@@ -253,13 +265,14 @@ export function createSpaceRenderer(root, host) {
       samples.set(tool, at);
     }
     const sig = JSON.stringify([selection, facts, pack, host.pets().map((p) => p.id)]);
-    if (!force && sig === signature) { if (layout) layout.at = Math.max(layout.at, sampledAt); return; }
+    if (!force && sig === signature) { if (selection.actor) renderDetail(model); if (layout) layout.at = Math.max(layout.at, sampledAt); return; }
     const factChange = sig !== signature;
     const freshCards = new Set();
     signature = sig;
     root.dataset.spaceSection = selection.view;
     const room = selection.view === "room";
-    content.hidden = !room; teamRoot.hidden = selection.view !== "team"; placeholder.hidden = room || selection.view === "team";
+    setHidden(content, !room); setHidden(teamRoot, selection.view !== "team");
+    setHidden(flowRoot, selection.view !== "flow"); setHidden(placeholder, selection.view !== "board");
     // A section switch (e.g. a Team Board/Flow shortcut) must not leave focus on a now-hidden control.
     const active = document.activeElement;
     if (active && active !== root && root.contains(active) && !detailRoot.contains(active) && active.offsetParent === null) sectionButtons.get(selection.view)?.focus({ preventScroll: true });
@@ -281,6 +294,7 @@ export function createSpaceRenderer(root, host) {
     const unknownGroup = !model.pending && selection.group && !model.groups.some((g) => g.id === selection.group);
     renderDetail(model);
     model = filterSpaceModel(model, selection.group, selection.state);
+    if (selection.view === "flow") flow.update(model, selection.group, selection.state);
     if (selection.view === "team") team.update({ ...model, groups: selection.group ? model.groups.filter((g) => g.id === selection.group) : model.groups });
     const hidden = Object.entries(model.dropped).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k} omitted`);
     const message = [...(unknownGroup ? ["Project not in the current scene; showing none. Choose All projects."] : []), ...(model.failed.length ? ["Some space data could not refresh. Last reported states are marked stale; details are in System."] : []), ...hidden].join(" ");
@@ -394,5 +408,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden) update(lastModel, true);
   });
   observer.observe(root);
-  return { update, setRoute, enter, hide() { views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); views?.destroy(); root.replaceChildren(); } };
+  return { update, setRoute, enter, hide() { flow.setVisible(false); views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); flow.destroy(); views?.destroy(); root.replaceChildren(); } };
 }

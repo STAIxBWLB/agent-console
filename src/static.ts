@@ -39,7 +39,7 @@ export function staticCsp(config: StaticConfig): string {
 }
 
 const FILES: [string, string][] = [
-  ...["shell.js", "static.js", "shell.css", "space.js", "space-team.js", "space-view.js", "space3d.js", "icon.svg", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css"].map((file): [string, string] => [file, file]),
+  ...["shell.js", "static.js", "shell.css", "space.js", "space-team.js", "space-flow.js", "space-view.js", "space3d.js", "icon.svg", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css"].map((file): [string, string] => [file, file]),
   ...["three.module.js", "three.core.js", "GLTFLoader.js", "BufferGeometryUtils.js", "SkeletonUtils.js", "NOTICE", "manifest.json"].map((file): [string, string] => [`vendor/${file}`, `vendor/${file}`]),
   ...["icons.js", "NOTICE", "manifest.json"].map((file): [string, string] => [`vendor/icons/${file}`, `vendor/icons/${file}`]),
   ["visual-frame.html", "visual/frame.html"], ["visual-frame.css", "visual/frame.css"], ["visual-frame.js", "visual/frame.js"],

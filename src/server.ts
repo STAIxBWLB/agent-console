@@ -101,7 +101,7 @@ export function startServer(options: ServerOptions) {
   const log = options.log ?? ((line: string) => console.error(`acon: ${line}`));
   const startedAt = new Date(now()).toISOString();
   const serve = options.serve;
-  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-team.js": ["space-team.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
+  const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-team.js": ["space-team.js", "text/javascript; charset=utf-8"], "/space-flow.js": ["space-flow.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
   const files: Record<string, { body: string; type: string; frame?: true }> = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
   // Sandboxed visual frame: fixed files only, served with FRAME_CSP and framable by the console itself.
   files["/visual/frame"] = { body: asset("visual-frame.html"), type: "text/html; charset=utf-8", frame: true };
