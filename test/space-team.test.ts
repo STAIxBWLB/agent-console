@@ -4,13 +4,15 @@ import { runInNewContext } from "node:vm";
 
 function harness() {
   let writes = 0;
-  const doc: any = { activeElement: null, addEventListener() {}, removeEventListener() {}, createDocumentFragment: () => new Element("fragment") };
+  const listeners = new Map<string, (e:any)=>void>();
+  const doc: any = { activeElement: null, addEventListener(name:string, callback:(e:any)=>void) {listeners.set(name,callback);}, removeEventListener() {}, createDocumentFragment: () => new Element("fragment") };
   class Element {
     children: Element[] = []; parent: Element | null = null; attributes = new Map<string,string>(); dataset: Record<string,string> = {};
     value = ""; open = false; hidden = false; ownText = ""; ownerDocument = doc; onclick?: (e: unknown) => void; scrollTop = 0; scrollLeft = 0;
     constructor(public tag: string) {}
     set textContent(v: string) { this.ownText = v; this.children = []; writes++; }
     get textContent(): string { return this.ownText + this.children.map(c=>c.textContent).join(""); }
+    contains(node: Element | null): boolean { return node === this || this.children.some((c) => c.contains(node)); }
     get isConnected(): boolean { return this.tag === "root" || Boolean(this.parent?.isConnected); }
     setAttribute(k: string,v: string) { this.attributes.set(k,String(v)); if(k.startsWith("data-")) this.dataset[k.slice(5).replace(/-([a-z])/g,(_,c)=>c.toUpperCase())]=String(v); writes++; }
     getAttribute(k: string) { return this.attributes.get(k) ?? null; }
@@ -39,7 +41,7 @@ function harness() {
   const renderer=api.createSpaceRenderer(root,{h,pets:()=>[],packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
-  return {api,renderer,root,model,doc,nav,get writes(){return writes;},get back(){return back;}};
+  return {api,renderer,root,model,doc,nav,listeners,get writes(){return writes;},get back(){return back;}};
 }
 test("Team is default, shows attention/roles/task/badges and collapsed resting actors without Room initialization",()=>{
   const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
@@ -80,4 +82,36 @@ test("internal Space routes keep poll deadlines and do not start a re-poll",asyn
   const show=runInNewContext(`${body}\nshowSpace`,{spaceLoading:Promise.resolve(),spaceRenderer:{setRoute(){}},state,spaceTools:()=>[{tool:"demo"}],renderSpace:(v:boolean)=>forced.push(v),pollSpace:()=>{polls++;}}) as (internal:boolean)=>Promise<void>;
   await show(true);expect(entry.next).toBe(1234);expect(polls).toBe(0);expect(forced).toEqual([false]);
   await show(false);expect(entry.next).toBe(0);expect(polls).toBe(1);
+});
+
+test("changed actor facts retain the exact detail control and missing controls fall back to Back",()=>{
+  const h=harness();h.renderer.setRoute({actor:"demo:one"});h.renderer.update(h.model);
+  const detail=h.root.querySelector(".space-agent-detail")!;
+  detail.querySelector('[data-detail-focus="open"]')!.focus();
+  const changed={...h.model,actors:h.model.actors.map((a:any)=>({...a,name:a.name+" changed"}))};
+  h.renderer.update(changed);
+  expect(detail.contains(h.doc.activeElement)).toBe(true);
+  expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("open");
+  detail.querySelector('[data-detail-focus="task"]')!.focus();
+  h.renderer.update({...changed,actors:changed.actors.map((a:any)=>({...a,card:undefined}))});
+  expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("back");
+  h.root.focus();let prevented=false;
+  h.listeners.get("keydown")!({key:"Tab",preventDefault(){prevented=true;}});
+  expect(prevented).toBe(true);expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("back");
+});
+test("changed Team facts preserve shortcut, disclosure, attention and tile focus independently",()=>{
+  const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
+  let turn=0;
+  for(const key of ["shortcut:demo:alpha:board","shortcut:demo:alpha:flow","resting:demo:alpha","attention:demo:one","tile:demo:one"]) {
+    h.root.querySelector(`[data-team-focus="${key}"]`)!.focus();
+    turn++;h.renderer.update({...h.model,actors:h.model.actors.map((a:any)=>({...a,name:a.name+turn}))});
+    expect(h.doc.activeElement.getAttribute("data-team-focus")).toBe(key);
+    expect(h.doc.activeElement.isConnected).toBe(true);
+  }
+});
+test("resting summary groups idle and away names once per state",()=>{
+  const h=harness();h.renderer.setRoute({});
+  const resting=h.model.actors[1];
+  h.renderer.update({...h.model,actors:[...h.model.actors,{...resting,id:"other",name:"Other"},{...resting,id:"away",name:"Away",state:"away"}]});
+  expect(h.root.querySelector('[data-team-focus="resting:demo:alpha"]')!.textContent).toBe("idle: Resting, Other · away: Away");
 });

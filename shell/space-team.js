@@ -32,6 +32,7 @@ export function createSpaceTeam(root, host) {
       type: "button",
       class: attention ? "space-team-attention-row" : "space-team-tile",
       "data-actor-id": actor.id,
+      "data-team-focus": `${attention ? "attention" : "tile"}:${actor.id}`,
       "data-space-actor": actor.id,
       "data-state": info.className,
       onclick: (event) => host.openActor(actor.id, event.currentTarget),
@@ -82,7 +83,7 @@ export function createSpaceTeam(root, host) {
 
     const previousOpen = new Map([...root.querySelectorAll("details[data-group-id]")].map((node) => [node.dataset.groupId, node.open]));
     const active = root.ownerDocument.activeElement;
-    const focusedActor = active?.getAttribute?.("data-actor-id");
+    const focusKey = root.contains(active) ? active?.getAttribute?.("data-team-focus") : null;
     const groups = model.groups ?? [];
     const actors = model.actors ?? [];
     const cards = new Map((model.cards ?? []).map((card) => [card.id, card]));
@@ -113,7 +114,7 @@ export function createSpaceTeam(root, host) {
         element("span", { class: "space-team-count", text: `${members.length} agents, ${activeCount} active` })));
       const shortcuts = element("div", { class: "space-team-shortcuts" });
       for (const view of ["board", "flow"]) shortcuts.append(element("button", {
-        type: "button", class: "btn", text: view === "board" ? "Board" : "Flow",
+        type: "button", class: "btn", "data-team-focus": `shortcut:${id}:${view}`, text: view === "board" ? "Board" : "Flow",
         onclick: () => host.choose({ view, group: id }),
       }));
       heading.append(shortcuts);
@@ -128,8 +129,11 @@ export function createSpaceTeam(root, host) {
       if (resting.length) {
         const disclosure = element("details", { class: "space-team-resting", "data-group-id": id });
         disclosure.open = previousOpen.get(id) ?? false;
-        const restingNames = resting.map((actor) => actor.name).join(", ");
-        disclosure.append(element("summary", { text: `${resting.map((actor) => actor.state === "away" ? "away" : "idle").join(" / ")}: ${restingNames}` }));
+        const restingText = ["idle", "away"].map((state) => {
+          const names = resting.filter((actor) => actor.state === state).map((actor) => actor.name);
+          return names.length ? `${state}: ${names.join(", ")}` : "";
+        }).filter(Boolean).join(" · ");
+        disclosure.append(element("summary", { "data-team-focus": `resting:${id}`, text: restingText }));
         const grid = element("div", { class: "space-team-grid space-team-resting-grid" });
         for (const actor of resting) grid.append(actorButton(actor, cards));
         disclosure.append(grid);
@@ -143,7 +147,12 @@ export function createSpaceTeam(root, host) {
 
     signature = nextSignature;
     root.replaceChildren(fragment);
-    if (focusedActor) root.querySelector(`[data-actor-id="${CSS.escape(focusedActor)}"]`)?.focus({ preventScroll: true });
+    if (focusKey) {
+      const exact = root.querySelector(`[data-team-focus="${CSS.escape(focusKey)}"]`);
+      const actor = focusKey.startsWith("attention:") ? focusKey.slice("attention:".length) : null;
+      const tile = actor ? root.querySelector(`[data-team-focus="${CSS.escape(`tile:${actor}`)}"]`) : null;
+      (exact ?? tile ?? root.querySelector("[data-team-focus]") ?? root).focus({ preventScroll: true });
+    }
   }
 
   function destroy() {

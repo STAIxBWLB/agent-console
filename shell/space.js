@@ -121,7 +121,7 @@ export function createSpaceRenderer(root, host) {
   const project = h("select", { id: "space-project", "aria-label": "Project", onchange: () => choose({ group: project.value }) });
   const header = h("header", { class: "space-header" }, h("h1", { class: "lead", id: "space-lead", text: "Space" }), summary,
     h("div", { class: "space-header-controls" }, tabs, h("label", { class: "space-project-label", for: "space-project" }, "Project", project)));
-  const teamRoot = h("section", { class: "space-team" });
+  const teamRoot = h("section", { class: "space-team", tabindex: "-1" });
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const placeholder = h("p", { class: "notice", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
@@ -172,7 +172,7 @@ export function createSpaceRenderer(root, host) {
   };
   const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose });
   function openActor(id, element) {
-    if (!selection.actor) returnPoint = { element, actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
+    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
     choose({ actor: id });
   }
   function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
@@ -182,7 +182,8 @@ export function createSpaceRenderer(root, host) {
     if (event.key === "Tab") {
       const buttons = [...detailRoot.querySelectorAll("button,a[href],input,select,textarea,[tabindex]")].filter((el) => !el.disabled && el.offsetParent !== null);
       const first = buttons[0], last = buttons[buttons.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!detailRoot.contains(document.activeElement)) { event.preventDefault(); first?.focus(); }
+      else if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
   };
@@ -197,10 +198,12 @@ export function createSpaceRenderer(root, host) {
     if (sig === detailSignature) return;
     detailSignature = sig;
     const wasHidden = detailRoot.hidden;
+    const hadFocus = detailRoot.contains(document.activeElement);
+    const focusKey = hadFocus ? document.activeElement?.getAttribute("data-detail-focus") : null;
     detailRoot.hidden = !selection.actor;
     for (const element of [header, placeholder, notice, teamRoot, content, empty]) element.inert = Boolean(selection.actor);
     if (!selection.actor) return;
-    const back = h("button", { type: "button", class: "btn space-detail-back", text: "Back to Space", onclick: closeActor });
+    const back = h("button", { type: "button", class: "btn space-detail-back", "data-detail-focus": "back", text: "Back to Space", onclick: closeActor });
     if (!actor) {
       detailRoot.replaceChildren(back, h("h2", { id: "space-agent-title", text: "Agent detail" }), h("p", { class: "notice", text: model.pending ? "Waiting for agent data." : "Agent not in the current scene; close this detail and choose an available agent." }));
     } else {
@@ -211,18 +214,19 @@ export function createSpaceRenderer(root, host) {
       detailRoot.replaceChildren(back, h("header", { class: "space-agent-detail-header" }, h("span", { class: "space-team-avatar" }, sprite(actor)), title,
         h("p", { text: group?.title ?? "Ungrouped" }), h("div", { class: "space-team-roles" }, (actor.roles ?? []).map((r) => h("span", { class: "chip", text: r }))),
         h("p", { text: `${stateGlyph[actor.state]} ${stateText[actor.state]}${actor.stale ? " (last reported, stale)" : ""}` }), ...(elapsed ? [h("p", { class: "sub", text: elapsed })] : [])),
-        h("div", { class: "space-agent-detail-body" }, h("section", {}, h("h3", { text: "Current task" }), card ? h("button", { type: "button", class: "btn", text: card.title, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) }) : h("p", { class: "sub", text: "No current task reported." })),
+        h("div", { class: "space-agent-detail-body" }, h("section", {}, h("h3", { text: "Current task" }), card ? h("button", { type: "button", class: "btn", "data-detail-focus": "task", text: card.title, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) }) : h("p", { class: "sub", text: "No current task reported." })),
           h("section", {}, h("h3", { text: "Marks" }), ...marks),
           h("section", {}, h("h3", { text: "Partners" }), ...(partners.length ? partners.map((p) => h("p", { text: `${p.kind}: ${p.actor?.name ?? "Unknown actor"}` })) : [h("p", { class: "sub", text: "No current partners reported." })])),
           h("section", {}, h("h3", { text: "Interactions" }), h("p", { class: "sub", text: "History appears once observed." })),
-          h("button", { type: "button", class: "btn", text: `Open in ${actor.link.tool}`, onclick: () => host.navigate(actor.link.tool, actor.link.panel, actor.link.params) })));
+          h("button", { type: "button", class: "btn", "data-detail-focus": "open", text: `Open in ${actor.link.tool}`, onclick: () => host.navigate(actor.link.tool, actor.link.panel, actor.link.params) })));
     }
-    if (wasHidden) back.focus({ preventScroll: true });
+    if (wasHidden || hadFocus) (focusKey ? detailRoot.querySelector(`[data-detail-focus="${CSS.escape(focusKey)}"]`) ?? back : back).focus({ preventScroll: true });
   }
   function restore() {
     if (!restorePoint) return;
     const point = restorePoint; restorePoint = null;
-    const element = point.element?.isConnected ? point.element : point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null;
+    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"]`) : null;
+    const element = point.element?.isConnected ? point.element : keyed ?? (point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null);
     (element ?? root.querySelector(`[data-space-section-tab="${selection.view}"]`))?.focus({ preventScroll: true });
     const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
     scroll.scrollTop = point.sceneTop; scroll.scrollLeft = point.sceneLeft;
