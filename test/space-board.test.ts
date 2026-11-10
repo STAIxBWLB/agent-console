@@ -93,3 +93,17 @@ test("Board does not merge zones with identical kind/title across groups or lose
   expect(beta.columns).toHaveLength(2);
   expect(beta.columns.flatMap((column: any) => column.cards).map((card: any) => card.id)).toEqual(["demo:beta-card"]);
 });
+
+test("every Board column preserves producer totals when supplied or filtered cards differ", () => {
+  const h = boardFixture();
+  const model = { ...h.model, zones: h.model.zones.map((zone: any) => ({ ...zone, count: zone.id === "demo:done" ? 20 : zone.id === "demo:work" ? 12 : zone.count })) };
+  h.renderer.update(model);
+  const board = h.root.querySelector(".space-board")!;
+  const heading = (kind: string) => board.querySelector(`[data-board-kind="${kind}"]`)!.children.find((node) => node.tag === "h3")!.textContent;
+  expect(heading("done")).toBe("Done (20) · 7 shown");
+  expect(heading("work")).toBe("Work (12) · 1 shown");
+  expect(board.querySelector('[data-board-kind="done"]')!.querySelector("summary")!.textContent).toBe("Show 2 earlier cards");
+  h.renderer.setRoute({ view: "board", state: "working" }); h.renderer.update(model);
+  expect(heading("done")).toBe("Done (20) · 0 shown");
+  expect(heading("work")).toBe("Work (12) · 1 shown");
+});

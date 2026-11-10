@@ -65,8 +65,10 @@ export function createSpaceBoard(root, host) {
       for (const zone of item.columns) {
         const key = JSON.stringify([item.id, zone.id]);
         const kind = columnKind(zone);
+        const total = zone.count ?? "total not reported";
+        const shown = zone.count === zone.cards.length ? "" : ` · ${zone.cards.length} shown`;
         const column = h("section", { class: "space-board-column", "data-board-kind": kind, "data-board-zone": zone.id },
-          h("h3", { text: `${zone.title} (${zone.cards.length})` }));
+          h("h3", { text: `${zone.title} (${total})${shown}` }));
         if (kind === "done") {
           for (const card of zone.cards.slice(-5)) column.append(cardElement(card, owners));
           if (zone.cards.length > 5) {

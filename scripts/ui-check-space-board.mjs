@@ -28,7 +28,7 @@ async function installDoneFixture(page) {
         id: `board-done-${i}`, title: `Board completed task ${i + 1}`, zone: zone.id, group: "delivery", owner: "claude", tone: tones[i % tones.length],
         link: { panel: "notes", params: { id: "n1" } },
       });
-      zone.count = 7;
+      zone.count = 20; // The producer total deliberately exceeds the seven supplied cards.
     }
     await route.fulfill({ response, json: body });
   });
@@ -74,7 +74,7 @@ async function checkDone(page) {
   const summary = details.locator("summary");
   await summary.waitFor();
   assert.equal(await details.evaluate((node) => node.open), false, "Done was not collapsed initially");
-  assert.match(await done.innerText(), /\b7\b/, "Done does not show the total count");
+  assert.equal(await done.locator("h3").innerText(), "Done (20) · 7 shown", "Done must distinguish producer total from supplied cards");
   assert.equal(await done.locator("[data-board-card]:visible").count(), 5, "Collapsed Done must show its last five cards");
   const lastFive = await done.locator("[data-board-card]:visible").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-board-card")));
   assert.deepEqual(lastFive.sort(), Array.from({ length: 5 }, (_, i) => `demo:board-done-${i + 2}`), "Collapsed Done does not show the last five cards");
@@ -87,7 +87,7 @@ async function checkDone(page) {
   await fitsPage(page, "Expanded Board Done");
   await summary.click();
   await done.locator('[data-board-card="demo:board-done-0"]').waitFor({ state: "hidden" });
-  return { doneCount: 7, collapsedCards: 5, expandedCards: 7 };
+  return { doneCount: 20, suppliedCards: 7, collapsedCards: 5, expandedCards: 7 };
 }
 
 async function keyboardProducer(page) {
