@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { runVisualCheck } from "./ui-check-visual.mjs";
 import { runLoginCheck } from "./ui-check-login.mjs";
 import { runSpaceFoundation } from "./ui-check-space-foundation.mjs";
+import { runSpaceTeam } from "./ui-check-space-team.mjs";
 import { runStaticCheck } from "./ui-check-static.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -457,7 +458,7 @@ async function waitSpacePoll(page) {
 
 async function checkSpace(page, scenario, resources, packed) {
   await page.locator("#areas a[href='#/local/space']").waitFor();
-  await page.evaluate(() => { location.hash = "#/local/space"; });
+  await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
   await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
   await page.waitForFunction(() => document.querySelectorAll("#view-space .space-actor").length === 6);
   await settle(page);
@@ -542,16 +543,20 @@ async function checkSpace(page, scenario, resources, packed) {
   await capture(page, scenario, packed ? "space-scene" : "space-fallback-scene");
   report.spaceChecks.push({ ...scenario, packed, ...facts, metadata, resources: resources.filter((entry) => entry.path.startsWith("/assets/") || entry.path.startsWith("/pets/")), unchangedWrites: writes.length });
 
-  for (const [selector, tool, id] of [[".space-actor[data-key='demo:claude']", "demo", "n1"], [".space-card[data-key='echo:n2']", "echo", "n2"]]) {
-    await page.locator(`#view-space:not([hidden]) ${selector}`).click();
-    await page.waitForFunction(({ tool, id }) => {
-      const [route, query = ""] = location.hash.split("?");
-      return route === `#/local/${tool}/notes` && new URLSearchParams(query).get("id") === id;
-    }, { tool, id });
-    await page.locator(".panel-mount:not([hidden]) .ui-detail").waitFor();
-    await page.evaluate(() => { location.hash = "#/local/space"; });
-    await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
-  }
+  await page.locator("#view-space:not([hidden]) .space-actor[data-key='demo:claude']").click();
+  await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor") === "demo:claude");
+  await page.locator(".space-detail-back").click();
+  await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
+  await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
+  await page.locator("#view-space:not([hidden]) .space-card[data-key='echo:n2']").click();
+  await page.waitForFunction(() => {
+    const [route, query = ""] = location.hash.split("?");
+    return route === "#/local/echo/notes" && new URLSearchParams(query).get("id") === "n2";
+  });
+  await page.locator(".panel-mount:not([hidden]) .ui-detail").waitFor();
+  await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
+  await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
 }
 
 let baseline;
@@ -881,7 +886,7 @@ async function runSpaceMotion(ticket) {
     await page.goto((await ticket()).url, { waitUntil: "networkidle" });
     await page.locator("#areas a[href='#/local/space']").waitFor();
     await page.evaluate((force) => {
-      document.documentElement.dataset.theme = "light"; document.documentElement.style.fontSize = "100%"; location.hash = "#/local/space";
+      document.documentElement.dataset.theme = "light"; document.documentElement.style.fontSize = "100%"; location.hash = "#/local/space?view=room";
       if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
     }, options.forceOverflow);
     await page.locator("#view-space .space-actor").nth(5).waitFor();
@@ -1079,7 +1084,7 @@ async function runSpaceViews(ticket) {
     try {
       await page.goto((await ticket()).url, { waitUntil: "networkidle" });
       await page.evaluate(({ size, force }) => {
-        document.documentElement.style.fontSize = `${size}%`; location.hash = "#/local/space";
+        document.documentElement.style.fontSize = `${size}%`; location.hash = "#/local/space?view=room";
         if (force) { const bad = document.createElement("div"); bad.style.width = "200vw"; bad.style.height = "1px"; bad.dataset.uiCheck = "forced-overflow"; document.body.append(bad); }
       }, { size: textPercent, force: options.forceOverflow });
       await page.locator(".space-actor").nth(5).waitFor();
@@ -1195,7 +1200,7 @@ async function runSpaceViews(ticket) {
   const boxPage = await boxContext.newPage();
   try {
     await boxPage.goto((await ticket(true)).url, { waitUntil: "networkidle" });
-    await boxPage.evaluate(() => { location.hash = "#/local/space"; });
+    await boxPage.evaluate(() => { location.hash = "#/local/space?view=room"; });
     await boxPage.locator(".space-actor").first().waitFor();
     await boxPage.locator("button[data-space-view='3d']").click();
     await boxPage.locator(".space-webgl[data-ready='true'][data-pending-frames='0']").waitFor();
@@ -1212,7 +1217,7 @@ async function runSpaceViews(ticket) {
   try {
     await page.addInitScript(() => { const original = HTMLCanvasElement.prototype.getContext; HTMLCanvasElement.prototype.getContext = function(type, ...args) { return type === "webgl2" ? null : original.call(this, type, ...args); }; localStorage.setItem("acon.space.view", "3d"); });
     await page.goto((await ticket(true)).url, { waitUntil: "networkidle" });
-    await page.evaluate(() => { location.hash = "#/local/space"; });
+    await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
     await page.locator("#view-space[data-space-view='room'] .space-actor").first().waitFor();
     const hidden = await page.locator("button[data-space-view='3d']").count() === 0;
     const notice = await page.locator(".space-view-notice").isVisible();
@@ -1245,7 +1250,11 @@ try {
     await runMini(ticket, { width: 375, theme: "light", textPercent: 100 }, "mini-fallback", 1000, false);
   }
   if (!focused || options.spaceMotionOnly) await runSpaceMotion(ticket);
-  if (!focused || options.spaceViewsOnly) { await runSpaceViews(ticket); await runSpaceFoundation({ browser, ticket, report, output: options.output }); }
+  if (!focused || options.spaceViewsOnly) {
+    await runSpaceViews(ticket);
+    await runSpaceFoundation({ browser, ticket, report, output: options.output });
+    await runSpaceTeam({ browser, ticket, report, output: options.output });
+  }
   if (!focused || options.visualOnly) await runVisualCheck({ browser, root, report, output: options.output, env, scratch });
   if (!focused || options.loginOnly) await runLoginCheck({ browser, root, report, output: options.output, forceOverflow: options.forceOverflow, env, scratch });
   if (!focused || options.staticOnly) await runStaticCheck({ browser, root, capture, report, output: options.output, forceOverflow: options.forceOverflow });

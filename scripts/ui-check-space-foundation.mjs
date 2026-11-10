@@ -7,6 +7,11 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, reducedMotion: "reduce" });
     try {
       const page = await context.newPage();
+      let spacePolls = 0;
+      page.on("request", (request) => {
+        if (new URL(request.url()).pathname !== "/p/demo/snapshot" || request.method() !== "POST") return;
+        try { if (request.postDataJSON()?.panel === "space") spacePolls += 1; } catch { /* Ignore non-JSON requests. */ }
+      });
       await page.goto((await ticket()).url);
       await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
       await page.locator(".space-actor").nth(5).waitFor();
@@ -17,24 +22,31 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
       assert(Math.abs(layout.view - layout.main) < 2, "Space does not fill main width");
       assert(layout.document <= layout.viewport + 1, "Space causes page overflow");
       await page.locator("[data-space-section-tab='team']").click();
-      await page.getByText("Team view is not available yet. Room shows the current scene.").waitFor();
-      assert.equal(await page.evaluate(() => localStorage.getItem("acon.space.view")), "team");
+      await page.locator(".space-team").waitFor();
+      assert((await page.locator(".space-team").innerText()).trim().length > 0, "Team view has no content");
+      assert.equal(await page.evaluate(() => localStorage.getItem("acon.space.section")), "team");
+      await page.evaluate(() => { location.hash = "#/local/space"; });
       await page.reload();
-      await page.getByText("Team view is not available yet. Room shows the current scene.").waitFor();
+      await page.locator(".space-team").waitFor();
+      assert.equal(await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("view")), null, "Persistence reload retained an explicit view route");
       await page.locator("[data-space-section-tab='room']").click();
       await page.locator(".space-actor").nth(5).waitFor();
+      const pollsBeforeFilters = spacePolls;
       await page.locator("#space-project").selectOption("demo:delivery");
       await page.waitForFunction(() => location.hash.includes("group=demo%3Adelivery") && document.querySelectorAll(".space-actor").length === 2);
       await page.locator(".space-summary button").filter({ hasText: /working$/ }).click();
       await page.waitForFunction(() => location.hash.includes("state=working") && document.querySelectorAll(".space-actor").length === 1);
+      await page.waitForTimeout(150);
+      assert.equal(spacePolls, pollsBeforeFilters, "Group/state route changes triggered a full Space poll");
       const screenshot = `foundation-${width}.png`;
       await page.screenshot({ path: join(output, screenshot) });
       report.captures.push({ key: `foundation-${width}`, screenshot, width, view: "space-foundation" });
-      report.spaceFoundation.push({ width, ...layout, routing: true, persistence: true, groupAndStateFilters: true });
+      report.spaceFoundation.push({ width, ...layout, routing: true, persistence: true, groupAndStateFilters: true, filterChangesWithoutRepoll: true });
     } catch (error) { report.findings.push({ kind: "space-foundation", width, detail: error.message }); }
     finally { await context.close(); }
   }
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
+  // The probe polls with waitForFunction, which the shell CSP blocks as eval; bypass it for this measurement context only.
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce", bypassCSP: true });
   try {
     const page = await context.newPage(); let calls = 0, change = false;
     await page.route("**/p/*/snapshot", async (route) => {

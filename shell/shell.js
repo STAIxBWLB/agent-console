@@ -884,6 +884,7 @@ function route() {
   $("view-inbox").hidden = r.area !== "inbox";
   $("view-system").hidden = r.area !== "system";
   $("view-space").hidden = r.area !== "space";
+  if (prev.area === "space" && r.area !== "space") spaceRenderer?.hide();
   if (!pip) miniView.hidden = r.area !== "mini";
   $("app").classList.toggle("mini-mode", r.area === "mini");
   for (const [id, p] of state.panels) p.mount.hidden = r.area !== "tool" || r.tool !== id;
@@ -893,7 +894,7 @@ function route() {
   if (r.area === "inbox") { renderInbox(true); if (r.params.id) selectKey(r.params.id, true); }
   if (r.area === "system") renderSystem();
   if (r.area === "mini") renderMini(true);
-  if (r.area === "space") showSpace();
+  if (r.area === "space") showSpace(prev.area === "space");
   if (r.area === "tool") showTool(r);
   if (prev.area !== r.area || prev.tool !== r.tool) $("main").focus({ preventScroll: true });
 }
@@ -1859,7 +1860,7 @@ function showKeys() {
 
 // ---------- Space snapshots (rendering is a private, lazy-loaded DOM module) ----------
 let spaceModule = null, spaceRenderer = null, spaceLoading = null;
-async function showSpace() {
+async function showSpace(internal = false) {
   if (!spaceLoading) spaceLoading = import("/space.js").then((mod) => {
     spaceModule = mod;
     spaceRenderer = mod.createSpaceRenderer($("view-space"), { h, navigate, petSprite, pets: () => state.pets, packs: () => state.assetPacks, onError: (error) => clientError("acon", "space 3D", error), navigateSpace: (params) => navigate(toolById("space") ? "~space" : "space", undefined, params) });
@@ -1871,11 +1872,12 @@ async function showSpace() {
   if (!spaceRenderer || state.route.area !== "space") return;
   for (const tool of spaceTools()) {
     if (!state.space.has(tool.tool)) state.space.set(tool.tool, { scene: null, cursor: 0, next: 0, busy: false, failed: false });
-    else state.space.get(tool.tool).next = 0;
+    else if (!internal) state.space.get(tool.tool).next = 0;
   }
   spaceRenderer.setRoute(state.route.params);
-  renderSpace(true);
-  pollSpace();
+  renderSpace(!internal);
+  if (!internal) spaceRenderer.enter?.();
+  if (!internal) pollSpace();
 }
 function renderSpace(force = false) {
   if (!spaceRenderer || state.route.area !== "space") return;
@@ -1896,6 +1898,7 @@ async function pollSpace() {
     entry.busy = true;
     const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor });
     entry.busy = false;
+    entry.reported = true;
     if (res.status === 200 && res.data.scene) {
       entry.sampledAt = Date.now();
       entry.scene = res.data.scene;
