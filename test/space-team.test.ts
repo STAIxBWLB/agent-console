@@ -52,7 +52,7 @@ function harness() {
   const renderer=api.createSpaceRenderer(root,{h,pets:()=>[],packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
-  return {api,renderer,root,model,doc,nav,listeners,get writes(){return writes;},get back(){return back;}};
+  return {api,renderer,root,model,doc,nav,listeners,storage,get writes(){return writes;},get back(){return back;}};
 }
 test("Team is default, shows attention/roles/task/badges and collapsed resting actors without Room initialization",()=>{
   const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
@@ -174,4 +174,26 @@ test("a failed first source is settled, so unknown actor and project guidance ap
   expect(h.root.textContent).toContain("Some space data could not refresh");
   expect(h.root.textContent).toContain("Agent not in the current scene");
   expect(h.root.textContent).toContain("Project not in the current scene");
+});
+test("removing one actor falls back to the section tab, not another Team control",()=>{
+  const h=harness();const two={...h.model,actors:[...h.model.actors,{...h.model.actors[0],id:"demo:two",name:"Two",card:undefined}]};
+  h.renderer.setRoute({});h.renderer.update(two);
+  h.root.querySelector('[data-team-focus="tile:demo:one"]')!.focus();
+  h.renderer.update({...two,actors:two.actors.filter((a:any)=>a.id!=="demo:one")});
+  expect(h.root.querySelector('[data-team-focus="tile:demo:two"]')).not.toBeNull();
+  expect(h.doc.activeElement.getAttribute("data-space-section-tab")).toBe("team");
+});
+test("the section choice uses its own key and never rewrites the legacy scene-style key",()=>{
+  const h=harness();h.renderer.setRoute({view:"room"});
+  expect(h.storage.get("acon.space.section")).toBe("room");
+  expect(h.storage.has("acon.space.view")).toBe(false);
+});
+test("an open detail makes every other Space child inert, including later siblings",()=>{
+  const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
+  const sibling:any=new (h.root as any).constructor("div");h.root.append(sibling);
+  h.renderer.setRoute({actor:"demo:one"});h.renderer.update(h.model);
+  const detail=h.root.querySelector(".space-agent-detail")!;
+  for(const child of h.root.children as any[])expect(Boolean(child.inert)).toBe(child!==detail);
+  h.renderer.setRoute({});h.renderer.update(h.model);
+  expect(sibling.inert).toBe(false);
 });

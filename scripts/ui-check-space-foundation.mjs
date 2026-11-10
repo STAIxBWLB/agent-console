@@ -24,7 +24,7 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
       await page.locator("[data-space-section-tab='team']").click();
       await page.locator(".space-team").waitFor();
       assert((await page.locator(".space-team").innerText()).trim().length > 0, "Team view has no content");
-      assert.equal(await page.evaluate(() => localStorage.getItem("acon.space.view")), "team");
+      assert.equal(await page.evaluate(() => localStorage.getItem("acon.space.section")), "team");
       await page.evaluate(() => { location.hash = "#/local/space"; });
       await page.reload();
       await page.locator(".space-team").waitFor();
@@ -45,7 +45,8 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
     } catch (error) { report.findings.push({ kind: "space-foundation", width, detail: error.message }); }
     finally { await context.close(); }
   }
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce" });
+  // The probe polls with waitForFunction, which the shell CSP blocks as eval; bypass it for this measurement context only.
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: "reduce", bypassCSP: true });
   try {
     const page = await context.newPage(); let calls = 0, change = false;
     await page.route("**/p/*/snapshot", async (route) => {

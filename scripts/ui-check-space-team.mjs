@@ -5,7 +5,7 @@ import { join } from "node:path";
 async function enterSpace(page, ticket, width, textPercent) {
   await page.setViewportSize({ width, height: 1000 });
   await page.goto((await ticket()).url);
-  await page.evaluate((size) => { document.documentElement.style.fontSize = `${size}%`; localStorage.removeItem("acon.space.view"); location.hash = "#/local/space"; }, textPercent);
+  await page.evaluate((size) => { document.documentElement.style.fontSize = `${size}%`; localStorage.removeItem("acon.space.section"); location.hash = "#/local/space"; }, textPercent);
   await page.locator(".space-team").waitFor();
   if (await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").has("view"))) throw new Error("Default Team route unexpectedly contains an explicit view");
   await page.locator("[data-space-actor]").first().waitFor();

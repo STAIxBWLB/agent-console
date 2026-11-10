@@ -161,7 +161,7 @@ export function createSpaceTeam(root, host) {
       const exact = root.querySelector(`[data-team-focus="${CSS.escape(focusKey)}"]`);
       const actor = focusKey.startsWith("attention:") ? focusKey.slice("attention:".length) : null;
       const tile = actor ? root.querySelector(`[data-team-focus="${CSS.escape(`tile:${actor}`)}"]`) : null;
-      focusSpaceControl(exact ?? tile ?? root.querySelector("[data-team-focus]"), host.sectionTab());
+      focusSpaceControl(exact ?? tile, host.sectionTab());
     }
   }
 

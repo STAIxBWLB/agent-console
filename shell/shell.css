@@ -583,7 +583,7 @@ body.pip { margin: 0; overflow-y: auto; }
 
 /* Space uses the whole main area; its scene remains an independently bounded scroller. */
 #view-space { max-width: none; width: 100%; min-width: 0; }
-.space-header { position: sticky; top: 0; z-index: var(--shell-z-raised); padding-bottom: var(--acon-space-3); background: var(--acon-bg); border-bottom: 1px solid var(--acon-line); }
+.space-header { padding-bottom: var(--acon-space-3); background: var(--acon-bg); border-bottom: 1px solid var(--acon-line); }
 .space-header-controls, .space-summary, .space-section-tabs, .space-project-label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--acon-space-2); min-width: 0; }
 .space-header-controls { justify-content: space-between; margin-top: var(--acon-space-3); }
 .space-summary .btn, .space-section-tabs .btn { min-height: 44px; }

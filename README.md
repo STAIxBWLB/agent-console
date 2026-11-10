@@ -92,7 +92,7 @@ Space is an optional area in the rail, shown when a ready plugin declares `capab
 
 The area uses `#/local/space`; if a plugin already owns the tool id `space`, the area's link uses `#/local/~space` so that plugin's existing URLs keep working.
 
-The Space header provides a summary strip, view tabs and a group filter. Routes accept `#/local/space?view=team|flow|board|room&group=<id>`; Team is the default, while a saved view choice in `acon.space.view` wins when the route omits `view`. Actor detail uses `&actor=<namespaced-key>`. Flow and Board remain placeholders for their later deliveries. Summary state counts filter actors (`state=working|waiting|blocked|away|idle`), and the project count resets both filters.
+The Space header provides a summary strip, view tabs and a group filter. Routes accept `#/local/space?view=team|flow|board|room&group=<id>`; Team is the default, while a saved view choice in `acon.space.section` wins when the route omits `view`. The header scrolls with the page. Actor detail uses `&actor=<namespaced-key>`. Flow and Board remain placeholders for their later deliveries. Summary state counts filter actors (`state=working|waiting|blocked|away|idle`), and the project count resets both filters.
 
 Team puts blocked, waiting and approval-holding actors first under Needs attention, then shows each group with agent and active counts and shortcuts to that group's Board and Flow. Working, waiting and blocked actors appear as tiles with their avatar, roles, state, current task, inbox and approval counts. Idle and away actors collapse into one expandable line per group. Team is the text alternative; the separate actor/zone/link roster remains available in Room.
 

@@ -547,7 +547,7 @@ async function checkSpace(page, scenario, resources, packed) {
   await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
   await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor") === "demo:claude");
   await page.locator(".space-detail-back").click();
-  await page.locator(".space-agent-detail[hidden]").waitFor();
+  await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
   await page.locator("#view-space:not([hidden]) .space-actor").first().waitFor();
   await page.locator("#view-space:not([hidden]) .space-card[data-key='echo:n2']").click();
   await page.waitForFunction(() => {

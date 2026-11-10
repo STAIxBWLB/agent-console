@@ -129,7 +129,7 @@ export function createSpaceRenderer(root, host) {
   let selection = { view: "team", group: "", state: "", actor: "" };
   let savedView = "team";
   let returnPoint = null, restorePoint = null, detailSignature = "";
-  try { const saved = localStorage.getItem("acon.space.view"); if (["team", "flow", "board", "room"].includes(saved)) savedView = saved; } catch { /* Persistence is optional. */ }
+  try { const saved = localStorage.getItem("acon.space.section"); if (["team", "flow", "board", "room"].includes(saved)) savedView = saved; } catch { /* Persistence is optional. */ }
   const sectionButtons = new Map(), summaryButtons = new Map();
   function choose(patch) {
     const next = { ...selection, actor: "", ...patch };
@@ -151,7 +151,7 @@ export function createSpaceRenderer(root, host) {
       group: params.group ?? "", state: ["working", "waiting", "blocked", "away", "idle"].includes(params.state) ? params.state : "" };
     if (selection.view !== savedView) {
       savedView = selection.view;
-      try { localStorage.setItem("acon.space.view", savedView); } catch { /* Optional persistence. */ }
+      try { localStorage.setItem("acon.space.section", savedView); } catch { /* Optional persistence. */ }
     }
   }
   let views = null;
@@ -202,7 +202,7 @@ export function createSpaceRenderer(root, host) {
     const hadFocus = detailRoot.contains(document.activeElement);
     const focusKey = hadFocus ? document.activeElement?.getAttribute("data-detail-focus") : null;
     detailRoot.hidden = !selection.actor;
-    for (const element of [header, placeholder, notice, teamRoot, content, empty]) element.inert = Boolean(selection.actor);
+    for (const element of root.children) if (element !== detailRoot) element.inert = Boolean(selection.actor);
     if (!selection.actor) return;
     const back = h("button", { type: "button", class: "btn space-detail-back", "data-detail-focus": "back", text: "Back to Space", onclick: closeActor });
     if (!actor) {
