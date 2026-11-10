@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 
 export function harness({ now = Date.now }: { now?: () => number } = {}) {
   let writes = 0;
+  let resize: () => void = () => {};
   const listeners = new Map<string, (e:any)=>void>();
   const doc: any = { activeElement: null, querySelector(s:string){return s === "dialog[open]" && doc.nativeDialog?.open ? doc.nativeDialog : null;}, addEventListener(name:string, callback:(e:any)=>void) {listeners.set(name,callback);}, removeEventListener() {}, createDocumentFragment: () => new Element("fragment") };
   class Element {
@@ -49,14 +50,15 @@ export function harness({ now = Date.now }: { now?: () => number } = {}) {
   doc.body = new Element("body"); main.parent=doc.body; root.parent=main;
   const h = (tag:string,props:Record<string,any>={},...children:any[]): Element => { const n=new Element(tag); for(const[k,v]of Object.entries(props)){if(k==="text")n.textContent=v;else if(k==="hidden")n.hidden=v;else if(k.startsWith("on"))(n as any)[k]=v;else n.setAttribute(k==="class"?"class":k,String(v));} n.append(...children.flat().filter(Boolean).map(c=>typeof c==="string"?h("text",{text:c}):c));return n; };
   const teamSource=readFileSync(new URL("../shell/space-team.js",import.meta.url),"utf8");
+  const boardSource=readFileSync(new URL("../shell/space-board.js",import.meta.url),"utf8");
   const flowSource=readFileSync(new URL("../shell/space-flow.js",import.meta.url),"utf8");
   const source=readFileSync(new URL("../shell/space.js",import.meta.url),"utf8");
   const storage=new Map(); const nav: any[]=[]; let back=0;
-  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${flowSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{observe(){}disconnect(){}},CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date: class extends Date { static now = now; },setInterval(){return 1;},clearInterval(){}});
+  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${flowSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${boardSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel,boardGroups})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{constructor(callback:()=>void){resize=callback;}observe(){}disconnect(){}},getComputedStyle:()=>({fontSize:"16px"}),CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date: class extends Date { static now = now; },setInterval(){return 1;},clearInterval(){}});
   const renderer=api.createSpaceRenderer(root,{h,pets:()=>[],packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
-  return {api,renderer,root,model,doc,nav,listeners,storage,get writes(){return writes;},get back(){return back;}};
+  return {api,renderer,root,model,doc,nav,listeners,storage,resize:()=>resize(),get writes(){return writes;},get back(){return back;}};
 }
 test("Team is default, shows attention/roles/task/badges and collapsed resting actors without Room initialization",()=>{
   const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
@@ -229,4 +231,17 @@ test("a Team Board/Flow shortcut moves focus to the selected section tab",()=>{
   shortcut.onclick?.({});expect(h.nav.at(-1)).toMatchObject({view:"board",group:"demo:alpha"});
   h.renderer.setRoute({view:"board",group:"demo:alpha"});h.renderer.update(h.model);
   expect(h.doc.activeElement.getAttribute("data-space-section-tab")).toBe("board");
+});
+
+
+test("Team geometry notifications do not force unchanged root writes", () => {
+  const h = harness();
+  h.renderer.setRoute({ view: "team" }); h.renderer.update(h.model);
+  const before = h.writes;
+  h.resize();
+  expect(h.writes).toBe(before);
+  (h.root as any).clientWidth = 1024; h.resize();
+  expect(h.writes).toBe(before);
+  h.renderer.update({ ...h.model, sampledAt: 2 });
+  expect(h.writes).toBe(before);
 });
