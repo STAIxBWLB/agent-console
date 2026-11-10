@@ -108,3 +108,49 @@ test("switching popover actors resets the description to its beginning", () => {
   (second as any).onpointerenter({ pointerType: "mouse" });
   expect(popup.scrollTop).toBe(0); expect(h.doc.activeElement).toBe(first);
 });
+
+function resizeAnchor(actor: any) {
+  actor.getBoundingClientRect = () => ({ left: 100, right: 212, top: 430, bottom: 526, width: 112, height: 96 });
+}
+
+test("height-only window resize repositions an open popover without changing facts or focus", () => {
+  const h = roomFixture(), actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  resizeAnchor(actor); actor.focus();
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  expect(popup.style.getPropertyValue("--space-popover-y")).toBe("534px");
+  expect(h.windowResize.size).toBe(1); expect(h.visualResize.size).toBe(1);
+  h.browserWindow.innerHeight = 560;
+  for (const listener of [...h.windowResize]) listener();
+  expect(popup.hidden).toBe(false);
+  expect(popup.style.getPropertyValue("--space-popover-y")).toBe("222px");
+  expect(popup.style.getPropertyValue("--space-popover-max-height")).toBe("544px");
+  expect(h.doc.activeElement).toBe(actor);
+  const writes = h.writes;
+  for (const listener of [...h.windowResize]) listener();
+  expect(h.writes).toBe(writes);
+});
+
+test("visualViewport resize clamps to its visible height and hides an offscreen invoker", () => {
+  const h = roomFixture(), actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  resizeAnchor(actor); actor.focus();
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  h.visualViewport.height = 560;
+  for (const listener of [...h.visualResize]) listener();
+  expect(h.browserWindow.innerHeight).toBe(768);
+  expect(popup.style.getPropertyValue("--space-popover-y")).toBe("222px");
+  h.visualViewport.height = 400;
+  for (const listener of [...h.visualResize]) listener();
+  expect(popup.hidden).toBe(true);
+  expect(h.windowResize.size).toBe(0); expect(h.visualResize.size).toBe(0);
+});
+
+test("popover resize listeners exist only while open and are removed on hide and destroy", () => {
+  const h = roomFixture(), actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  expect(h.windowResize.size).toBe(0); actor.focus();
+  h.listeners.get("keydown")!({ key: "Escape", preventDefault() {}, stopPropagation() {} });
+  expect(h.windowResize.size).toBe(0); expect(h.visualResize.size).toBe(0);
+  (actor as any).onpointerenter({ pointerType: "mouse" }); h.renderer.hide();
+  expect(h.windowResize.size).toBe(0); expect(h.visualResize.size).toBe(0);
+  (actor as any).onpointerenter({ pointerType: "mouse" }); h.renderer.destroy();
+  expect(h.windowResize.size).toBe(0); expect(h.visualResize.size).toBe(0);
+});

@@ -141,6 +141,7 @@ export function createSpaceRenderer(root, host) {
   const actorPopover = h("aside", { id: "space-actor-popover", class: "space-actor-popover", role: "tooltip", tabindex: "-1", hidden: true,
     onpointerenter: () => { popupHovered = true; }, onpointerleave: (event) => { popupHovered = false; endPopoverPointer(popupActor, event.relatedTarget); } });
   let popupActor = "", popupAnchor = null, popupSignature = "", hoveredActor = "", popupHovered = false;
+  let popupResizeWatching = false, popupViewport = null;
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
   root.replaceChildren(header, notice, teamRoot, flowRoot, boardRoot, content, empty, actorPopover, detailRoot);
@@ -195,6 +196,11 @@ export function createSpaceRenderer(root, host) {
   const board = createSpaceBoard(boardRoot, { h, sprite, petIds, openActor, navigate: host.navigate, sectionTab: () => sectionButtons.get(selection.view) });
   const team = createSpaceTeam(teamRoot, { h, sprite, petIds, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
   function closePopover() {
+    if (popupResizeWatching) {
+      window.removeEventListener("resize", positionPopover);
+      popupViewport?.removeEventListener("resize", positionPopover);
+      popupResizeWatching = false; popupViewport = null;
+    }
     if (popupAnchor && popupAnchor.getAttribute("aria-describedby") === actorPopover.id) popupAnchor.removeAttribute("aria-describedby");
     setHidden(actorPopover, true); popupActor = ""; popupAnchor = null; popupHovered = false;
   }
@@ -207,10 +213,18 @@ export function createSpaceRenderer(root, host) {
   }
   function positionPopover() {
     if (actorPopover.hidden || !popupAnchor || root.hidden || selection.view !== "room") return;
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+    const width = Math.min(window.innerWidth, viewport?.width ?? window.innerWidth);
+    const height = Math.min(window.innerHeight, viewport?.height ?? window.innerHeight);
     const anchor = popupAnchor.getBoundingClientRect();
+    if (!popupAnchor.isConnected || anchor.bottom <= top || anchor.top >= top + height || anchor.right <= left || anchor.left >= left + width || width <= 16 || height <= 16) { closePopover(); return; }
+    setStyle(actorPopover, "--space-popover-max-width", `${width - 16}px`);
+    setStyle(actorPopover, "--space-popover-max-height", `${height - 16}px`);
     const box = actorPopover.getBoundingClientRect();
-    const point = actorPopoverPosition(anchor, box, { width: window.innerWidth, height: window.innerHeight });
-    setStyle(actorPopover, "--space-popover-x", `${point.x}px`); setStyle(actorPopover, "--space-popover-y", `${point.y}px`);
+    const local = { left: anchor.left - left, top: anchor.top - top, bottom: anchor.bottom - top, width: anchor.width };
+    const point = actorPopoverPosition(local, box, { width, height });
+    setStyle(actorPopover, "--space-popover-x", `${point.x + left}px`); setStyle(actorPopover, "--space-popover-y", `${point.y + top}px`);
   }
   function showPopover(id, anchor) {
     if (root.hidden || selection.view !== "room" || selection.actor) return;
@@ -239,6 +253,12 @@ export function createSpaceRenderer(root, host) {
     }
     if (anchor.getAttribute("aria-describedby") !== actorPopover.id) anchor.setAttribute("aria-describedby", actorPopover.id);
     setHidden(actorPopover, false);
+    if (!popupResizeWatching) {
+      window.addEventListener("resize", positionPopover);
+      popupViewport = window.visualViewport ?? null;
+      popupViewport?.addEventListener("resize", positionPopover);
+      popupResizeWatching = true;
+    }
     if (resetScroll && actorPopover.scrollTop) actorPopover.scrollTop = 0;
     positionPopover();
   }
