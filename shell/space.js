@@ -1,11 +1,11 @@
 import { createSpaceViewController } from "./space-view.js";
 
 // Private shell module. Public collaboration facts enter through the space snapshot allowlist.
-export const SPACE_CAPS = { actors: 32, cards: 200, links: 64 };
+export const SPACE_CAPS = { actors: 96, cards: 200, links: 128 };
 const ACTOR_WIDTH = 180, ACTOR_STEP = 200, ZONE_WIDTH = 234, ZONE_STEP = 250;
 
 export function mergeSpaceScenes(entries) {
-  const model = { actors: [], zones: [], cards: [], links: [], dropped: { actors: 0, cards: 0, links: 0 }, failed: [], received: 0, sampledAt: 0, samples: new Map() };
+  const model = { groups: [], actors: [], zones: [], cards: [], links: [], dropped: { actors: 0, cards: 0, links: 0 }, failed: [], received: 0, sampledAt: 0, samples: new Map() };
   for (const [tool, entry] of [...entries].sort(([a], [b]) => a.localeCompare(b))) {
     if (entry.failed) model.failed.push(tool);
     const scene = entry.scene;
@@ -14,12 +14,16 @@ export function mergeSpaceScenes(entries) {
     model.samples.set(tool, entry.sampledAt ?? 0);
     model.sampledAt = Math.max(model.sampledAt, entry.sampledAt ?? 0);
     const key = (id) => `${tool}:${id}`;
+    const groups = scene.groups?.length ? scene.groups.map((g) => ({ id: key(g.id), title: g.title })) : [{ id: key("~tool"), title: tool }];
+    model.groups.push(...groups);
+    const group = (item) => scene.groups?.length ? (item.group ? key(item.group) : undefined) : groups[0].id;
     const target = (link) => ({ tool, panel: link.panel, ...(link.params ? { params: link.params } : {}) });
-    model.actors.push(...scene.actors.map((a) => ({ id: key(a.id), name: a.name, state: a.state, stale: Boolean(entry.failed),
+    model.actors.push(...scene.actors.map((a) => ({ id: key(a.id), name: a.name, state: a.state, stale: Boolean(entry.failed), group: group(a),
+      ...(a.roles ? { roles: [...a.roles] } : {}), ...(a.since ? { since: a.since } : {}),
       ...(a.pet ? { pet: a.pet } : {}), ...(a.card ? { card: key(a.card) } : {}),
       marks: (a.marks ?? []).map((m) => ({ kind: m.kind, text: m.text })), link: target(a.link) })));
-    model.zones.push(...scene.zones.map((z) => ({ id: key(z.id), title: z.title, kind: z.kind, count: z.count, tool })));
-    model.cards.push(...scene.cards.map((c) => ({ id: key(c.id), title: c.title, zone: key(c.zone), owner: c.owner ? key(c.owner) : undefined, tone: c.tone, link: target(c.link) })));
+    model.zones.push(...scene.zones.map((z) => ({ id: key(z.id), title: z.title, kind: z.kind, count: z.count, tool, group: group(z) })));
+    model.cards.push(...scene.cards.map((c) => ({ id: key(c.id), title: c.title, group: group(c), zone: key(c.zone), owner: c.owner ? key(c.owner) : undefined, tone: c.tone, link: target(c.link) })));
     model.links.push(...(scene.links ?? []).map((l) => ({ kind: l.kind, from: key(l.from), to: key(l.to), label: l.label, at: l.at })));
     for (const k of Object.keys(model.dropped)) model.dropped[k] += entry.dropped?.[k] ?? 0;
   }
@@ -27,6 +31,9 @@ export function mergeSpaceScenes(entries) {
     model.dropped[k] += Math.max(0, model[k].length - SPACE_CAPS[k]);
     model[k] = model[k].slice(0, SPACE_CAPS[k]);
   }
+  model.groups = model.groups.slice(0, SPACE_CAPS.cards);
+  const groups = new Set(model.groups.map((g) => g.id));
+  for (const item of [...model.actors, ...model.zones, ...model.cards]) if (item.group && !groups.has(item.group)) delete item.group;
   const actors = new Set(model.actors.map((a) => a.id));
   const cards = new Set(model.cards.map((c) => c.id));
   for (const actor of model.actors) if (actor.card && !cards.has(actor.card)) delete actor.card;
@@ -35,6 +42,21 @@ export function mergeSpaceScenes(entries) {
   model.links = model.links.filter((l) => actors.has(l.from) && actors.has(l.to));
   model.dropped.links += linkCount - model.links.length;
   return model;
+}
+
+export function filterSpaceModel(model, group, state) {
+  // Missing metadata remains discoverable under every project filter.
+  const includes = (item) => !group || !item.group || item.group === group;
+  const known = !group || model.groups.some((g) => g.id === group);
+  const actors = model.actors.filter((a) => known && includes(a) && (!state || a.state === state));
+  const actorIds = new Set(actors.map((a) => a.id));
+  const cards = model.cards.filter((c) => known && includes(c) && (!state || actorIds.has(c.owner)));
+  const cardIds = new Set(cards.map((c) => c.id));
+  const zones = new Set(cards.map((c) => c.zone));
+  return { ...model, actors: actors.map((a) => a.card && !cardIds.has(a.card) ? { ...a, card: undefined } : a),
+    zones: model.zones.filter((z) => known && (includes(z) || zones.has(z.id))),
+    cards: cards.map((c) => c.owner && !actorIds.has(c.owner) ? { ...c, owner: undefined } : c),
+    links: model.links.filter((l) => actorIds.has(l.from) && actorIds.has(l.to)) };
 }
 
 /** Pure layout with sticky actor slots. Measured text heights keep 200% text from overlapping. */
@@ -96,18 +118,51 @@ export function createSpaceRenderer(root, host) {
   const scroll = h("div", { class: "space-scroll", tabindex: "0", role: "region", "aria-label": "Collaboration scene, scroll to explore" }, plane);
   const roster = h("section", { class: "space-roster", "aria-label": "Space roster" });
   const empty = h("p", { class: "sub", text: "No actors or work items are reported yet.", hidden: true });
-  root.replaceChildren(h("h1", { class: "lead", id: "space-lead", text: "Space" }), notice, h("div", { class: "space-content" }, scroll, roster), empty);
+  const summary = h("div", { class: "space-summary", role: "group", "aria-label": "Filter actors by state" });
+  const tabs = h("div", { class: "space-section-tabs", role: "group", "aria-label": "Space sections" });
+  const project = h("select", { id: "space-project", "aria-label": "Project", onchange: () => choose({ group: project.value }) });
+  const header = h("header", { class: "space-header" }, h("h1", { class: "lead", id: "space-lead", text: "Space" }), summary,
+    h("div", { class: "space-header-controls" }, tabs, h("label", { class: "space-project-label", for: "space-project" }, "Project", project)));
+  const placeholder = h("p", { class: "notice", hidden: true });
+  const content = h("div", { class: "space-content" }, scroll, roster);
+  root.replaceChildren(header, placeholder, notice, content, empty);
+  let selection = { view: "room", group: "", state: "" };
+  let savedView = "room";
+  try { const saved = localStorage.getItem("acon.space.view"); if (["team", "flow", "board", "room"].includes(saved)) savedView = saved; } catch { /* Persistence is optional. */ }
+  const sectionButtons = new Map(), summaryButtons = new Map();
+  function choose(patch) {
+    const next = { ...selection, ...patch };
+    host.navigateSpace?.(Object.fromEntries(Object.entries(next).filter(([, value]) => value)));
+  }
+  for (const [id, title] of [["team", "Team"], ["flow", "Flow"], ["board", "Board"], ["room", "Room"]]) {
+    const button = h("button", { class: "btn", type: "button", text: title, "data-space-section-tab": id, onclick: () => choose({ view: id }) });
+    tabs.append(button); sectionButtons.set(id, button);
+  }
+  for (const state of ["working", "waiting", "blocked", "away", "idle"]) {
+    const button = h("button", { class: "btn", type: "button", onclick: () => choose({ state: selection.state === state ? "" : state }) });
+    summary.append(button); summaryButtons.set(state, button);
+  }
+  const groupSummary = h("button", { class: "btn", type: "button", "aria-label": "Clear project and state filters", onclick: () => choose({ group: "", state: "" }) });
+  summary.append(groupSummary);
+  function setRoute(params = {}) {
+    selection = { view: ["team", "flow", "board", "room"].includes(params.view) ? params.view : savedView,
+      group: params.group ?? "", state: ["working", "waiting", "blocked", "away", "idle"].includes(params.state) ? params.state : "" };
+    if (selection.view !== savedView) {
+      savedView = selection.view;
+      try { localStorage.setItem("acon.space.view", savedView); } catch { /* Optional persistence. */ }
+    }
+  }
   const views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError });
   const actorNodes = new Map(), cardNodes = new Map(), zoneNodes = new Map(), linkNodes = new Map(), rosterNodes = new Map();
   const entries = new Map();
   const seenMessages = new Map(), samples = new Map();
-  let signature = "", layout = null, lastModel = null;
+  let signature = "", groupSignature = "", layout = null, lastModel = null;
   const setStyle = (el, name, value) => { if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value); };
   const setText = (el, value) => { if (el.textContent !== value) el.textContent = value; };
   const target = (key) => { const entry = entries.get(key); if (entry) host.navigate(entry.link.tool, entry.link.panel, entry.link.params); };
   const image = (el, variable, pack, name) => setStyle(el, variable, pack?.images.includes(name) ? `url("${location.origin}/assets/${pack.id}/${name}")` : "none");
   const prune = (nodes, keys) => { for (const [key, entry] of nodes) if (!keys.has(key)) { entry.roster?.remove(); (entry.el ?? entry).remove(); nodes.delete(key); } };
-  const place = (el, position) => setStyle(el, "transform", `translate(${position.x}px, ${position.y}px)`);
+  const place = (el, position) => { if (position) setStyle(el, "transform", `translate(${position.x}px, ${position.y}px)`); };
   const sprite = (actor) => {
     const pets = host.pets();
     const pet = pets.find((p) => p.id === actor.pet) ?? (pets.length ? pets[hash(actor.id) % pets.length] : null);
@@ -124,21 +179,40 @@ export function createSpaceRenderer(root, host) {
       else if (at - samples.get(tool) > 3000) sourceGap = true;
       samples.set(tool, at);
     }
-    const sig = JSON.stringify([facts, pack, host.pets().map((p) => p.id)]);
+    const sig = JSON.stringify([selection, facts, pack, host.pets().map((p) => p.id)]);
     if (!force && sig === signature) { if (layout) layout.at = Math.max(layout.at, sampledAt); return; }
     const factChange = sig !== signature;
     const freshCards = new Set();
     signature = sig;
+    root.dataset.spaceSection = selection.view;
+    const room = selection.view === "room";
+    content.hidden = !room; placeholder.hidden = room;
+    setText(placeholder, `${selection.view[0].toUpperCase() + selection.view.slice(1)} view is not available yet. Room shows the current scene.`);
+    for (const [id, button] of sectionButtons) button.setAttribute("aria-pressed", String(id === selection.view));
+    const grouped = filterSpaceModel(model, selection.group, "");
+    for (const [state, button] of summaryButtons) {
+      setText(button, `${grouped.actors.filter((a) => a.state === state).length} ${state}`);
+      button.setAttribute("aria-pressed", String(selection.state === state));
+    }
+    setText(groupSummary, `${model.groups.length} projects`);
+    const nextGroups = JSON.stringify(model.groups);
+    if (nextGroups !== groupSignature) {
+      groupSignature = nextGroups;
+      project.replaceChildren(h("option", { value: "", text: "All projects" }), ...model.groups.map((g) => h("option", { value: g.id, text: g.title })));
+    }
+    project.value = selection.group;
+    const unknownGroup = selection.group && !model.groups.some((g) => g.id === selection.group);
+    model = filterSpaceModel(model, selection.group, selection.state);
     image(plane, "--space-floor", pack, "floor"); image(wall, "--space-wall", pack, "wall");
     plane.dataset.pack = pack?.id ?? "fallback";
     if (pack) setStyle(plane, "background-size", `${pack.tile[0]}px ${pack.tile[1]}px`);
     else setStyle(plane, "background-size", "64px 32px");
     const hidden = Object.entries(model.dropped).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k} omitted`);
-    const message = [...(model.failed.length ? ["Some space data could not refresh. Last reported states are marked stale; details are in System."] : []), ...hidden].join(" ");
+    const message = [...(unknownGroup ? ["Project not in the current scene; showing none. Choose All projects."] : []), ...(model.failed.length ? ["Some space data could not refresh. Last reported states are marked stale; details are in System."] : []), ...hidden].join(" ");
     if (notice.hidden !== !message) notice.hidden = !message;
     setText(notice, message);
     const nothing = !model.actors.length && !model.cards.length;
-    if (empty.hidden !== !nothing) empty.hidden = !nothing;
+    if (empty.hidden !== (!nothing || !room || Boolean(unknownGroup))) empty.hidden = !nothing || !room || Boolean(unknownGroup);
     entries.clear();
     for (const actor of model.actors) {
       entries.set(`actor:${actor.id}`, actor);
@@ -237,5 +311,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden) update(lastModel, true);
   });
   observer.observe(root);
-  return { update, get viewStats() { return views.stats; }, destroy() { observer.disconnect(); views.destroy(); root.replaceChildren(); } };
+  return { update, setRoute, get viewStats() { return views.stats; }, destroy() { observer.disconnect(); views.destroy(); root.replaceChildren(); } };
 }

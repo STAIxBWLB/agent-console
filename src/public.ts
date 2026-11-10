@@ -1,6 +1,6 @@
 /** Shared public projection limits; principal results reuse the Space item and text bounds. */
 export const PUBLIC_CAPS = Object.freeze({ text: 200, items: 200, depth: 6 });
-export const SPACE_CAPS = { actors: 32, cards: PUBLIC_CAPS.items, links: 64 } as const;
+export const SPACE_CAPS = { actors: 96, cards: PUBLIC_CAPS.items, links: 128 } as const;
 
 export type PublicValue = null | boolean | number | string | PublicValue[] | { [key: string]: PublicValue };
 

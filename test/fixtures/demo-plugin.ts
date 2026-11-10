@@ -194,14 +194,15 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
         },
         async snapshot(input) {
           if (input.panel === "space") {
-            const cards = notes.map((n) => ({ id: n.id, title: n.title, zone: n.status !== "open" ? "done" : n.id === "n1" ? "work" : n.id === "n2" ? "review" : "queue", owner: n.id === "n1" ? "claude" : n.id === "n2" ? "codex" : "local", link: { panel: "notes", params: { id: n.id } } }));
+            const cards = notes.map((n) => ({ id: n.id, title: n.title, zone: n.status !== "open" ? "done" : n.id === "n1" ? "work" : n.id === "n2" ? "review" : "queue", owner: n.id === "n1" ? "claude" : n.id === "n2" ? "codex" : "local", group: n.id === "n2" ? "review" : "delivery", link: { panel: "notes", params: { id: n.id } } }));
             return { scene: {
+              groups: [{ id: "delivery", title: "Delivery" }, { id: "review", title: "Review" }],
               actors: [
-                { id: "claude", name: "claude", state: notes.find((n) => n.id === "n1")?.status === "open" ? "working" : "idle", card: "n1", marks: [{ kind: "mode", text: "Implement" }], link: { panel: "notes", params: { id: "n1" } } },
-                { id: "codex", name: "codex", state: notes.find((n) => n.id === "n2")?.status === "open" ? "waiting" : "idle", card: "n2", marks: [{ kind: "approval", text: "1 approval" }], link: { panel: "notes", params: { id: "n2" } } },
-                { id: "local", name: "local", state: "idle", link: { panel: "log" } },
+                { id: "claude", name: "claude", state: notes.find((n) => n.id === "n1")?.status === "open" ? "working" : "idle", card: "n1", group: "delivery", roles: ["planner", "reviewer"], since: new Date(opened).toISOString(), marks: [{ kind: "mode", text: "Implement" }], link: { panel: "notes", params: { id: "n1" } } },
+                { id: "codex", name: "codex", state: notes.find((n) => n.id === "n2")?.status === "open" ? "waiting" : "idle", card: "n2", group: "review", roles: ["implementer"], since: new Date(opened).toISOString(), marks: [{ kind: "approval", text: "1 approval" }], link: { panel: "notes", params: { id: "n2" } } },
+                { id: "local", name: "local", state: "idle", group: "delivery", roles: ["observer"], since: new Date(opened).toISOString(), link: { panel: "log" } },
               ],
-              zones: ["queue", "work", "review", "done"].map((kind) => ({ id: kind, title: kind === "queue" ? "To do" : kind[0]!.toUpperCase() + kind.slice(1), kind, count: cards.filter((c) => c.zone === kind).length })),
+              zones: ["queue", "work", "review", "done"].map((kind) => ({ id: kind, title: kind === "queue" ? "To do" : kind[0]!.toUpperCase() + kind.slice(1), kind, group: kind === "review" ? "review" : "delivery", count: cards.filter((c) => c.zone === kind).length })),
               cards, links: [{ kind: "message", from: "claude", to: "codex", label: "Review handoff", at: new Date(opened).toISOString() }],
             }, cursor: 1 };
           }

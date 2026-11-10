@@ -179,15 +179,20 @@ export interface SearchHit {
 
 /** Public collaboration facts, never message bodies, task details, paths or symbols. */
 export interface SpaceScene {
+  groups?: { id: string; title: string }[];
   actors: {
     id: string; name: string; state: "idle" | "working" | "waiting" | "blocked" | "away";
-    pet?: string; card?: string;
+    pet?: string; card?: string; group?: string;
+    /** Public role names only, at most 4 entries of 32 characters each. */
+    roles?: string[];
+    /** ISO time of the last state change. */
+    since?: string;
     marks?: { kind: "approval" | "inbox" | "paused" | "mode"; text: string }[];
     link: { panel: string; params?: Record<string, string> };
   }[];
-  zones: { id: string; title: string; kind?: "queue" | "work" | "review" | "done"; count: number }[];
+  zones: { id: string; title: string; kind?: "queue" | "work" | "review" | "done"; count: number; group?: string }[];
   cards: {
-    id: string; title: string; zone: string; owner?: string; tone?: Tone;
+    id: string; title: string; zone: string; owner?: string; tone?: Tone; group?: string;
     link: { panel: string; params?: Record<string, string> };
   }[];
   links?: { kind: "message" | "overlap" | "conflict" | "cohort"; from: string; to: string; label?: string; at?: string }[];

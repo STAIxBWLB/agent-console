@@ -1862,7 +1862,7 @@ let spaceModule = null, spaceRenderer = null, spaceLoading = null;
 async function showSpace() {
   if (!spaceLoading) spaceLoading = import("/space.js").then((mod) => {
     spaceModule = mod;
-    spaceRenderer = mod.createSpaceRenderer($("view-space"), { h, navigate, petSprite, pets: () => state.pets, packs: () => state.assetPacks, onError: (error) => clientError("acon", "space 3D", error) });
+    spaceRenderer = mod.createSpaceRenderer($("view-space"), { h, navigate, petSprite, pets: () => state.pets, packs: () => state.assetPacks, onError: (error) => clientError("acon", "space 3D", error), navigateSpace: (params) => navigate(toolById("space") ? "~space" : "space", undefined, params) });
   }).catch((error) => {
     clientError("acon", "space load", error);
     $("view-space").replaceChildren(h("h1", { class: "lead", id: "space-lead", text: "Space" }), h("p", { class: "notice", text: "The space could not load. Details are in System." }));
@@ -1873,6 +1873,7 @@ async function showSpace() {
     if (!state.space.has(tool.tool)) state.space.set(tool.tool, { scene: null, cursor: 0, next: 0, busy: false, failed: false });
     else state.space.get(tool.tool).next = 0;
   }
+  spaceRenderer.setRoute(state.route.params);
   renderSpace(true);
   pollSpace();
 }
