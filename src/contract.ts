@@ -182,7 +182,11 @@ export interface SpaceScene {
   groups?: { id: string; title: string }[];
   actors: {
     id: string; name: string; state: "idle" | "working" | "waiting" | "blocked" | "away";
-    pet?: string; card?: string; group?: string; roles?: string[]; since?: string;
+    pet?: string; card?: string; group?: string;
+    /** Public role names only, at most 4 entries of 32 characters each. */
+    roles?: string[];
+    /** ISO time of the last state change. */
+    since?: string;
     marks?: { kind: "approval" | "inbox" | "paused" | "mode"; text: string }[];
     link: { panel: string; params?: Record<string, string> };
   }[];

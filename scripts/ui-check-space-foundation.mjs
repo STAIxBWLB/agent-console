@@ -69,6 +69,9 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
     const performance = await page.evaluate(() => { globalThis.foundationTasks.disconnect(); globalThis.foundationMutations.disconnect(); return { longTasks: globalThis.foundationLongTasks, unchangedWrites: globalThis.foundationWrites }; });
     assert.equal(performance.unchangedWrites, 0, "Unchanged raised-cap poll wrote DOM");
     assert(performance.longTasks.every((ms) => ms <= 50), `Raised-cap update has long tasks: ${performance.longTasks}`);
+    const screenshot = "foundation-raised-caps.png";
+    await page.screenshot({ path: join(output, screenshot) });
+    report.captures.push({ key: "foundation-raised-caps", screenshot, width: 1440, view: "space-foundation" });
     report.spaceFoundation.push({ actors: 96, cards: 200, links: 128, ...performance });
   } catch (error) { report.findings.push({ kind: "space-foundation-performance", detail: error.message }); }
   finally { await context.close(); }
