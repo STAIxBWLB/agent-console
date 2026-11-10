@@ -8,7 +8,9 @@ async function enterSpace(page, ticket, width, textPercent) {
   await page.evaluate((size) => { document.documentElement.style.fontSize = `${size}%`; localStorage.removeItem("acon.space.section"); location.hash = "#/local/space"; }, textPercent);
   await page.locator(".space-team").waitFor();
   if (await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").has("view"))) throw new Error("Default Team route unexpectedly contains an explicit view");
-  await page.locator("[data-space-actor]").first().waitFor();
+  // Do not begin the unchanged-poll measurement until both fixture producers have rendered.
+  await page.locator('.space-team [data-space-actor="demo:claude"]').waitFor();
+  await page.locator('.space-team [data-space-actor="echo:claude"]').waitFor();
 }
 
 async function unchangedWrites(page, mode) {
@@ -17,11 +19,13 @@ async function unchangedWrites(page, mode) {
     globalThis.teamProbeObserver = new MutationObserver((records) => { globalThis.teamProbeWrites += records.length; });
     globalThis.teamProbeObserver.observe(document.querySelector("#view-space"), { subtree: true, attributes: true, childList: true, characterData: true });
   });
-  const response = await page.waitForResponse((item) => {
-    if (new URL(item.url()).pathname !== "/p/demo/snapshot" || item.request().method() !== "POST") return false;
+  // A merged Space update waits on both tools; waiting only for demo can stop the
+  // observer before echo's reply is rendered or count its initial scene instead.
+  const responses = await Promise.all(["demo", "echo"].map((tool) => page.waitForResponse((item) => {
+    if (new URL(item.url()).pathname !== `/p/${tool}/snapshot` || item.request().method() !== "POST") return false;
     try { return item.request().postDataJSON()?.panel === "space"; } catch { return false; }
-  }, { timeout: 20000 });
-  await response.finished();
+  }, { timeout: 20000 })));
+  await Promise.all(responses.map((response) => response.finished()));
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const writes = await page.evaluate(() => { globalThis.teamProbeObserver.disconnect(); return globalThis.teamProbeWrites; });
   assert.equal(writes, 0, `Unchanged ${mode} poll wrote ${writes} DOM mutations`);
@@ -57,7 +61,7 @@ export async function runSpaceTeam({ browser, ticket, report, output }) {
       await actor.focus();
       await page.keyboard.press("Enter");
       await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
-      await page.waitForFunction((key) => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor") === key, actorKey);
+      assert.equal(await page.evaluate(() => new URLSearchParams(location.hash.split("?")[1] ?? "").get("actor")), actorKey, "Detail route selected the wrong actor");
       const detailWrites = await unchangedWrites(page, "detail");
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), "Detail caused horizontal page scroll");
       await page.keyboard.press("Escape");
@@ -88,7 +92,7 @@ export async function runSpaceTeam({ browser, ticket, report, output }) {
           await page.locator(`.space-team [data-space-actor="${actorKey}"]`).first().click();
           await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
           await page.locator(".space-agent-detail [data-detail-focus='open']").click();
-          await page.waitForFunction(() => !location.hash.includes("/space"));
+          await page.waitForURL((url) => !url.hash.includes("/space"));
           await page.goBack();
           await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
           await page.keyboard.press("Escape");
@@ -106,10 +110,10 @@ export async function runSpaceTeam({ browser, ticket, report, output }) {
         assert.equal(await page.evaluate(() => Boolean(document.querySelector(".space-view-bar")?.closest("[inert]"))), true, "Room controls stay interactive behind the detail");
         // Leaving for the producer panel and coming back puts focus inside the detail again.
         await page.locator(".space-agent-detail [data-detail-focus='open']").click();
-        await page.waitForFunction(() => !location.hash.includes("/space"));
+        await page.waitForURL((url) => !url.hash.includes("/space"));
         await page.goBack();
         await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
-        await page.waitForFunction(() => document.querySelector(".space-agent-detail")?.contains(document.activeElement));
+        await page.locator(".space-agent-detail :focus").waitFor();
         await page.keyboard.press("Escape");
         await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
       }

@@ -684,3 +684,24 @@ body.pip { margin: 0; overflow-y: auto; }
 @keyframes space-flow-arrival { from { background: var(--acon-accent-soft); } to { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .space-flow-events [data-new="true"] { animation: none; } }
 @media (min-width: 1024px) { .space-flow-layout { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); } }
+
+/* Each Board row owns its horizontal scroll; the page remains fluid. */
+.space-board, .space-board-group { min-width: 0; max-width: 100%; }
+.space-board-group { margin-bottom: var(--acon-space-5); }
+.space-board-group > h2 { font-size: var(--acon-text-lg); overflow-wrap: anywhere; }
+.space-board-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: var(--acon-space-3); overflow-x: auto; max-width: 100%; padding: var(--acon-space-1); align-items: start; }
+.space-board-column { min-width: 0; padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface); }
+.space-board-column > h3 { margin: 0 0 var(--acon-space-3); font-size: var(--acon-text-sm); overflow-wrap: anywhere; }
+.space-board-item { min-width: 0; margin-bottom: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); overflow-wrap: anywhere; }
+.space-board-card, .space-board-owner { display: flex; width: 100%; min-height: 44px; min-width: 0; padding: var(--acon-space-2); border: 0; border-radius: var(--acon-radius-2); background: transparent; color: var(--acon-text); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.space-board-card { flex-direction: column; align-items: start; gap: var(--acon-space-2); }
+.space-board-card strong { font-weight: 600; max-width: 100%; }
+.space-board-tone { padding: var(--acon-space-1) var(--acon-space-2); border-radius: var(--acon-radius-1); font-size: var(--acon-text-xs); color: var(--acon-text-2); }
+.space-board-item[data-tone="ok"] .space-board-tone { color: var(--acon-ok); background: var(--acon-ok-soft); }
+.space-board-item[data-tone="warn"] .space-board-tone { color: var(--acon-warn); background: var(--acon-warn-soft); }
+.space-board-item[data-tone="err"] .space-board-tone { color: var(--acon-err); background: var(--acon-err-soft); }
+.space-board-owner { align-items: center; gap: var(--acon-space-2); font-size: var(--acon-text-sm); }
+.space-board-owner > :last-child { min-width: 0; }
+.space-board-unassigned { padding: 0 var(--acon-space-2); }
+.space-board-done > summary { min-height: 44px; padding: var(--acon-space-2); cursor: pointer; overflow-wrap: anywhere; }
+.space-board :is(button, summary, [tabindex]):focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }

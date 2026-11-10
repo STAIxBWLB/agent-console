@@ -11,6 +11,8 @@
 
 ### Added
 
+- Add the Space Board view with per-group zone columns, producer-linked cards, owner detail controls, and collapsed Done history showing the last five supplied cards. Keep horizontal scrolling within each board row, preserve focus/disclosures, and cover the responsive matrix with a Board probe (#101).
+
 - Coalesce identical snapshots across viewers in a bounded in-memory LRU cache with per-panel TTL overrides, stale-while-revalidate, action/reload invalidation and separate principal keys. Declared readOnly principal tools preserve the cache; other principal actions and all console actions invalidate it. Keep producer bodies and error snapshots unchanged, expose freshness only through cache/age/sample-time headers and add System cache/provider timing diagnostics, and add a private-output snapshot timing probe (#105).
 
 - Add the Space Flow view with per-project actors, directed 15-minute message counts, distinct relationship strokes and recent activity. Keep at most 200 public link events for 30 minutes in page memory, and show per-peer counts and the last 10 events in agent detail. Suspend the minute refresh while Flow is hidden (#101).
@@ -22,6 +24,8 @@
 - Add opt-in principal tool declarations, dedicated principal snapshot/action ports and bounded public JSON results. Console dispatch builds person actors; principal dispatch never falls back to console ports. The conformance kit validates principal declarations while API 1 plugins remain compatible (#88, contract slice).
 
 ### Fixed
+
+- Restrict geometry-forced Space updates to Room: Team, Flow and Board use CSS layout and no longer rewrite unchanged root controls on ResizeObserver notifications. Wait for both fixture producers before measuring Team polls; remove its CSP-incompatible predicate waits (#101).
 
 - Honor `changed: false` panel replies without notifying listeners or rerendering, while updating the conditional cursor and retaining legacy full-snapshot deduplication (#63).
 - Safely release queued diagram visibility callbacks after frame handover or a visible theme redraw, without dereferencing a cleared observer (#90).
