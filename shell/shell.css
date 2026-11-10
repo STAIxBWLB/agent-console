@@ -612,6 +612,7 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-team-tile[data-state="waiting"] { border-color: var(--acon-warn); }
 .space-team-tile[data-state="blocked"] { border-color: var(--acon-err); }
 .space-team-tile[data-state="away"] { border-style: dashed; opacity: 0.78; }
+.space-team-tile[data-stale="true"], .space-team-attention-row[data-stale="true"] { border-style: dashed; }
 .space-team-avatar { grid-column: 1; grid-row: 1 / span 2; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; background: var(--acon-surface-2); color: var(--acon-accent-text); }
 .space-team-avatar > * { max-width: 40px; max-height: 40px; }
 .space-team-avatar .pet-sprite { --cell-w: 40px; --cell-h: calc(40px * 13 / 12); width: var(--cell-w); height: var(--cell-h); }

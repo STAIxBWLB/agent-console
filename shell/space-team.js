@@ -45,6 +45,7 @@ export function createSpaceTeam(root, host) {
       "data-team-focus": `${attention ? "attention" : "tile"}:${actor.id}`,
       "data-space-actor": actor.id,
       "data-state": info.className,
+      "data-stale": String(Boolean(actor.stale)),
       onclick: (event) => host.openActor(actor.id, event.currentTarget),
     });
     const avatar = element("span", { class: "space-team-avatar", "aria-hidden": "true" });
@@ -60,7 +61,7 @@ export function createSpaceTeam(root, host) {
 
     const state = element("span", { class: "space-team-state", "data-state": info.className },
       element("span", { "aria-hidden": "true", text: info.glyph }),
-      element("span", { text: info.label }));
+      element("span", { text: actor.stale ? `${info.label} (last reported, stale)` : info.label }));
     const details = element("span", { class: "space-team-taskline" });
     const card = (actor.card && cards.get(actor.card)) || actor.card;
     const taskTitle = typeof card === "object" ? card.title : undefined;

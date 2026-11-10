@@ -212,3 +212,10 @@ test("a state filter keeps an actor's current card even without a matching owner
   expect(filtered.actors.find((a:any)=>a.id==="demo:one")?.card).toBe("demo:task");
   expect(filtered.cards.map((c:any)=>c.id)).toContain("demo:task");
 });
+test("Team labels stale actors like Room and detail",()=>{
+  const h=harness();h.renderer.setRoute({});
+  h.renderer.update({...h.model,actors:h.model.actors.map((a:any)=>({...a,stale:true}))});
+  const tile=h.root.querySelector('[data-team-focus="tile:demo:one"]')!;
+  expect(tile.getAttribute("data-stale")).toBe("true");
+  expect(tile.textContent).toContain("(last reported, stale)");
+});
