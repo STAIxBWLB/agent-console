@@ -98,7 +98,7 @@ The Space header provides a summary strip, view tabs and a group filter. Routes 
 
 The exported `SpaceScene` contract contains:
 
-- Optional `groups: {id, title}[]` describe public groups. Actors, zones and cards may each carry an optional `group` id; the shell namespaces group ids by tool. If a scene omits groups, its content is assigned to one group named after that tool. These fields are additive API 1 metadata and may be ignored by older consoles.
+- Optional `groups: {id, title}[]` describe public groups. Actors, zones and cards may each carry an optional `group` id; the shell namespaces group ids by tool. If a scene omits groups, its content is assigned to one group named after that tool. In a scene with declared groups, items without a group remain visible under every project filter; zones needed by matching cards remain visible even across group boundaries. These fields are additive API 1 metadata and may be ignored by older consoles.
 - `actors`: `id`, `name`, `state` (`idle`, `working`, `waiting`, `blocked`, `away`), optional `pet`, `card`, `marks`, `group`, public `roles` (up to 4 role names, 32 characters each) and ISO `since`, plus a panel `link`.
 - `marks`: `kind` (`approval`, `inbox`, `paused`, `mode`) and public `text`.
 - `zones`: `id`, `title`, optional `kind` (`queue`, `work`, `review`, `done`) and a non-negative `count`.

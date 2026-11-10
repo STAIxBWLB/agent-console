@@ -17,10 +17,10 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
       assert(Math.abs(layout.view - layout.main) < 2, "Space does not fill main width");
       assert(layout.document <= layout.viewport + 1, "Space causes page overflow");
       await page.locator("[data-space-section-tab='team']").click();
-      await page.getByText("Team view is coming in a later PR. Use Room for the current scene.").waitFor();
+      await page.getByText("Team view is not available yet. Room shows the current scene.").waitFor();
       assert.equal(await page.evaluate(() => localStorage.getItem("acon.space.view")), "team");
       await page.reload();
-      await page.getByText("Team view is coming in a later PR. Use Room for the current scene.").waitFor();
+      await page.getByText("Team view is not available yet. Room shows the current scene.").waitFor();
       await page.locator("[data-space-section-tab='room']").click();
       await page.locator(".space-actor").nth(5).waitFor();
       await page.locator("#space-project").selectOption("demo:delivery");
@@ -65,7 +65,12 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
       globalThis.foundationMutations = new MutationObserver((list) => { globalThis.foundationWrites += list.length; });
       globalThis.foundationMutations.observe(document.querySelector("#view-space"), { subtree: true, attributes: true, childList: true, characterData: true });
     });
-    await page.waitForResponse(async (r) => r.url().includes("/p/demo/snapshot") && r.request().postDataJSON()?.panel === "space" && calls > before + 1);
+    const unchanged = await page.waitForResponse(async (r) => r.url().includes("/p/demo/snapshot") && r.request().postDataJSON()?.panel === "space" && calls > before + 1);
+    await unchanged.finished();
+    const payload = await unchanged.json();
+    assert(payload.scene.actors[0].name.includes("updated"), "Observed the wrong poll payload");
+    // Body completion and two animation frames allow the shell to process this response before inspection.
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const performance = await page.evaluate(() => { globalThis.foundationTasks.disconnect(); globalThis.foundationMutations.disconnect(); return { longTasks: globalThis.foundationLongTasks, unchangedWrites: globalThis.foundationWrites }; });
     assert.equal(performance.unchangedWrites, 0, "Unchanged raised-cap poll wrote DOM");
     assert(performance.longTasks.every((ms) => ms <= 50), `Raised-cap update has long tasks: ${performance.longTasks}`);

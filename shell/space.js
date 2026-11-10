@@ -45,12 +45,16 @@ export function mergeSpaceScenes(entries) {
 }
 
 export function filterSpaceModel(model, group, state) {
-  const actors = model.actors.filter((a) => (!group || a.group === group) && (!state || a.state === state));
+  // Missing metadata remains discoverable under every project filter.
+  const includes = (item) => !group || !item.group || item.group === group;
+  const known = !group || model.groups.some((g) => g.id === group);
+  const actors = model.actors.filter((a) => known && includes(a) && (!state || a.state === state));
   const actorIds = new Set(actors.map((a) => a.id));
-  const cards = model.cards.filter((c) => (!group || c.group === group) && (!state || actorIds.has(c.owner)));
+  const cards = model.cards.filter((c) => known && includes(c) && (!state || actorIds.has(c.owner)));
   const cardIds = new Set(cards.map((c) => c.id));
+  const zones = new Set(cards.map((c) => c.zone));
   return { ...model, actors: actors.map((a) => a.card && !cardIds.has(a.card) ? { ...a, card: undefined } : a),
-    zones: model.zones.filter((z) => !group || z.group === group),
+    zones: model.zones.filter((z) => known && (includes(z) || zones.has(z.id))),
     cards: cards.map((c) => c.owner && !actorIds.has(c.owner) ? { ...c, owner: undefined } : c),
     links: model.links.filter((l) => actorIds.has(l.from) && actorIds.has(l.to)) };
 }
@@ -138,7 +142,7 @@ export function createSpaceRenderer(root, host) {
     const button = h("button", { class: "btn", type: "button", onclick: () => choose({ state: selection.state === state ? "" : state }) });
     summary.append(button); summaryButtons.set(state, button);
   }
-  const groupSummary = h("button", { class: "btn", type: "button", onclick: () => choose({ group: "", state: "" }) });
+  const groupSummary = h("button", { class: "btn", type: "button", "aria-label": "Clear project and state filters", onclick: () => choose({ group: "", state: "" }) });
   summary.append(groupSummary);
   function setRoute(params = {}) {
     selection = { view: ["team", "flow", "board", "room"].includes(params.view) ? params.view : savedView,
@@ -152,13 +156,13 @@ export function createSpaceRenderer(root, host) {
   const actorNodes = new Map(), cardNodes = new Map(), zoneNodes = new Map(), linkNodes = new Map(), rosterNodes = new Map();
   const entries = new Map();
   const seenMessages = new Map(), samples = new Map();
-  let signature = "", layout = null, lastModel = null;
+  let signature = "", groupSignature = "", layout = null, lastModel = null;
   const setStyle = (el, name, value) => { if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value); };
   const setText = (el, value) => { if (el.textContent !== value) el.textContent = value; };
   const target = (key) => { const entry = entries.get(key); if (entry) host.navigate(entry.link.tool, entry.link.panel, entry.link.params); };
   const image = (el, variable, pack, name) => setStyle(el, variable, pack?.images.includes(name) ? `url("${location.origin}/assets/${pack.id}/${name}")` : "none");
   const prune = (nodes, keys) => { for (const [key, entry] of nodes) if (!keys.has(key)) { entry.roster?.remove(); (entry.el ?? entry).remove(); nodes.delete(key); } };
-  const place = (el, position) => setStyle(el, "transform", `translate(${position.x}px, ${position.y}px)`);
+  const place = (el, position) => { if (position) setStyle(el, "transform", `translate(${position.x}px, ${position.y}px)`); };
   const sprite = (actor) => {
     const pets = host.pets();
     const pet = pets.find((p) => p.id === actor.pet) ?? (pets.length ? pets[hash(actor.id) % pets.length] : null);
@@ -183,7 +187,7 @@ export function createSpaceRenderer(root, host) {
     root.dataset.spaceSection = selection.view;
     const room = selection.view === "room";
     content.hidden = !room; placeholder.hidden = room;
-    setText(placeholder, `${selection.view[0].toUpperCase() + selection.view.slice(1)} view is coming in a later PR. Use Room for the current scene.`);
+    setText(placeholder, `${selection.view[0].toUpperCase() + selection.view.slice(1)} view is not available yet. Room shows the current scene.`);
     for (const [id, button] of sectionButtons) button.setAttribute("aria-pressed", String(id === selection.view));
     const grouped = filterSpaceModel(model, selection.group, "");
     for (const [state, button] of summaryButtons) {
@@ -191,19 +195,24 @@ export function createSpaceRenderer(root, host) {
       button.setAttribute("aria-pressed", String(selection.state === state));
     }
     setText(groupSummary, `${model.groups.length} projects`);
-    project.replaceChildren(h("option", { value: "", text: "All projects" }), ...model.groups.map((g) => h("option", { value: g.id, text: g.title })));
+    const nextGroups = JSON.stringify(model.groups);
+    if (nextGroups !== groupSignature) {
+      groupSignature = nextGroups;
+      project.replaceChildren(h("option", { value: "", text: "All projects" }), ...model.groups.map((g) => h("option", { value: g.id, text: g.title })));
+    }
     project.value = selection.group;
+    const unknownGroup = selection.group && !model.groups.some((g) => g.id === selection.group);
     model = filterSpaceModel(model, selection.group, selection.state);
     image(plane, "--space-floor", pack, "floor"); image(wall, "--space-wall", pack, "wall");
     plane.dataset.pack = pack?.id ?? "fallback";
     if (pack) setStyle(plane, "background-size", `${pack.tile[0]}px ${pack.tile[1]}px`);
     else setStyle(plane, "background-size", "64px 32px");
     const hidden = Object.entries(model.dropped).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k} omitted`);
-    const message = [...(model.failed.length ? ["Some space data could not refresh. Last reported states are marked stale; details are in System."] : []), ...hidden].join(" ");
+    const message = [...(unknownGroup ? ["Project not in the current scene; showing none. Choose All projects."] : []), ...(model.failed.length ? ["Some space data could not refresh. Last reported states are marked stale; details are in System."] : []), ...hidden].join(" ");
     if (notice.hidden !== !message) notice.hidden = !message;
     setText(notice, message);
     const nothing = !model.actors.length && !model.cards.length;
-    if (empty.hidden !== (!nothing || !room)) empty.hidden = !nothing || !room;
+    if (empty.hidden !== (!nothing || !room || Boolean(unknownGroup))) empty.hidden = !nothing || !room || Boolean(unknownGroup);
     entries.clear();
     for (const actor of model.actors) {
       entries.set(`actor:${actor.id}`, actor);

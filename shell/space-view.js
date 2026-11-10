@@ -2,6 +2,7 @@
 const STORAGE_KEY = "acon.space.roomView";
 const radians = (degrees) => degrees * Math.PI / 180;
 export function roomTransform(position, width, height, camera) {
+  if (!position) return "";
   const { yaw, pitch } = camera;
   return `translate3d(${position.x + width / 2}px, ${position.y + height / 2}px, 2px) rotateZ(${-yaw}deg) rotateX(${-pitch}deg) translate(${-width / 2}px, ${-height}px)`;
 }
@@ -77,6 +78,7 @@ export function createSpaceViewController(host) {
     if (view === "flat") {
       for (const kind of ["actors", "cards", "zones"]) for (const item of state[kind]) {
         const position = state.layout[kind].get(item.id);
+        if (!position) continue;
         item.el.style.transform = `translate(${position.x}px, ${position.y}px)`;
       }
       return;
@@ -95,7 +97,9 @@ export function createSpaceViewController(host) {
       const add = (matrix, w, hgt) => { for (const [x, y] of [[0, 0], [w, 0], [0, hgt], [w, hgt]]) { const p = matrix.transformPoint(new DOMPoint(x, y, 0, 1)); xs.push(p.x / (p.w || 1)); ys.push(p.y / (p.w || 1)); } };
       add(planeMatrix, width, height);
       for (const kind of ["actors", "cards"]) for (const item of state[kind]) {
-        const transform = roomTransform(state.layout[kind].get(item.id), item.width, item.height, camera);
+        const position = state.layout[kind].get(item.id);
+        if (!position) continue;
+        const transform = roomTransform(position, item.width, item.height, camera);
         item.el.style.transform = transform;
         add(planeMatrix.multiply(new DOMMatrix(transform)), item.width, item.height);
       }
@@ -104,7 +108,7 @@ export function createSpaceViewController(host) {
       const offsetX = (stageWidth - (maxX - minX)) / 2 - minX, offsetY = pad - minY;
       stage.style.width = `${stageWidth}px`; stage.style.height = `${stageHeight}px`;
       plane.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0) ${camera3d}`;
-      for (const item of state.zones) { const p = state.layout.zones.get(item.id); item.el.style.transform = `translate3d(${p.x}px, ${p.y}px, 1px)`; }
+      for (const item of state.zones) { const p = state.layout.zones.get(item.id); if (!p) continue; item.el.style.transform = `translate3d(${p.x}px, ${p.y}px, 1px)`; }
       scroll.scrollLeft = Math.max(0, (stageWidth - scroll.clientWidth) / 2);
       scroll.scrollTop = 0;
       return;

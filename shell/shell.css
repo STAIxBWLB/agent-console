@@ -449,7 +449,7 @@ body.pip { margin: 0; overflow-y: auto; }
 
 /* PRIVATE Space scene. Public facts only; the roster remains the text equivalent. */
 .space-content { display: flex; flex-direction: column; gap: var(--acon-space-4); margin-top: var(--acon-space-4); min-width: 0; }
-.space-scroll { overflow: auto; max-width: 100%; max-height: 70vh; border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-bg); }
+.space-scroll { isolation: isolate; overflow: auto; max-width: 100%; max-height: 70vh; border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-bg); }
 .space-plane { position: relative; width: 100%; min-width: 1000px; min-height: 240px; background-color: var(--acon-bg); background-image: var(--space-floor, none), linear-gradient(135deg, var(--acon-line) 1px, transparent 1px); background-size: 64px 32px; }
 .space-wall { position: absolute; inset: 0 0 auto; height: 20px; background-color: var(--acon-surface-2); background-image: var(--space-wall, none); background-size: contain; }
 .space-actor { position: absolute; left: 0; top: 0; z-index: var(--shell-z-raised); display: flex; flex-direction: column; align-items: center; gap: var(--acon-space-1); width: 180px; min-height: 44px; padding: var(--acon-space-2); font: inherit; color: var(--acon-text); background: var(--acon-surface); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-2); cursor: pointer; overflow-wrap: anywhere; }
@@ -583,7 +583,7 @@ body.pip { margin: 0; overflow-y: auto; }
 
 /* Space uses the whole main area; its scene remains an independently bounded scroller. */
 #view-space { max-width: none; width: 100%; min-width: 0; }
-.space-header { position: sticky; top: 0; z-index: 2; padding-bottom: var(--acon-space-3); background: var(--acon-bg); border-bottom: 1px solid var(--acon-line); }
+.space-header { position: sticky; top: 0; z-index: var(--shell-z-raised); padding-bottom: var(--acon-space-3); background: var(--acon-bg); border-bottom: 1px solid var(--acon-line); }
 .space-header-controls, .space-summary, .space-section-tabs, .space-project-label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--acon-space-2); min-width: 0; }
 .space-header-controls { justify-content: space-between; margin-top: var(--acon-space-3); }
 .space-summary .btn, .space-section-tabs .btn { min-height: 44px; }

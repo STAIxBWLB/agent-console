@@ -30,3 +30,33 @@ test("old scenes without groups fall back to one tool-titled group for every ite
   expect(merged.groups).toEqual([{id:"legacy:~tool",title:"legacy"}]);
   for(const row of [...merged.actors,...merged.zones,...merged.cards]) expect(row.group).toBe("legacy:~tool");
 });
+
+test("group filters retain cross-group and ungrouped zones required by cards", () => {
+  const merged = model.mergeSpaceScenes(new Map([["a",{scene: {
+    ...scene,
+    zones: [...scene.zones, {id:"done",title:"Done",count:1}],
+    cards: [{...scene.cards[0]!, group:"beta"}, {...scene.cards[1]!, zone:"done"}],
+  }}]]));
+  const selected = model.filterSpaceModel(merged,"a:beta", "");
+  expect(selected.cards.map(c=>c.id)).toEqual(["a:a","a:b"]);
+  expect(selected.zones.map(z=>z.id)).toEqual(["a:work","a:queue","a:done"]);
+});
+test("ungrouped rows in a grouped scene remain visible under All and every known group", () => {
+  const merged = model.mergeSpaceScenes(new Map([["a",{scene: {
+    ...scene,
+    actors:[{...scene.actors[0]!,group:undefined}],
+    zones:[{...scene.zones[0]!,group:undefined}],
+    cards:[{...scene.cards[0]!,group:undefined}],
+  }}]]));
+  for (const group of ["", "a:alpha", "a:beta"]) {
+    const selected = model.filterSpaceModel(merged,group, "");
+    expect(selected.actors).toHaveLength(1);
+    expect(selected.cards).toHaveLength(1);
+    expect(selected.zones).toHaveLength(1);
+  }
+});
+test("Room transform tolerates a missing layout position", () => {
+  const source = readFileSync(new URL("../shell/space-view.js", import.meta.url), "utf8");
+  const transform = runInNewContext(`${source.replace(/^export /gm, "")}\nroomTransform`) as (p: unknown,w: number,h: number,c: unknown) => string;
+  expect(transform(undefined,180,100,{yaw:45,pitch:60})).toBe("");
+});
