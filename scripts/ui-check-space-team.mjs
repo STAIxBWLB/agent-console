@@ -79,6 +79,21 @@ export async function runSpaceTeam({ browser, ticket, report, output }) {
       await page.evaluate(() => { location.hash = "#/local/space?view=team"; });
       await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
 
+      if (width >= 1024) {
+        // Direct Room route: Room controls are created after the detail and must still be inert.
+        await page.evaluate((key) => { location.hash = `#/local/space?view=room&actor=${encodeURIComponent(key)}`; }, actorKey);
+        await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
+        await page.locator(".space-view-bar").waitFor({ state: "attached" });
+        assert.equal(await page.evaluate(() => Boolean(document.querySelector(".space-view-bar")?.closest("[inert]"))), true, "Room controls stay interactive behind the detail");
+        // Leaving for the producer panel and coming back puts focus inside the detail again.
+        await page.locator(".space-agent-detail [data-detail-focus='open']").click();
+        await page.waitForFunction(() => !location.hash.includes("/space"));
+        await page.goBack();
+        await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
+        await page.waitForFunction(() => document.querySelector(".space-agent-detail")?.contains(document.activeElement));
+        await page.keyboard.press("Escape");
+        await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
+      }
       await page.evaluate(() => { location.hash = "#/local/space?view=team&actor=unknown%3Aactor"; });
       await page.locator(".space-agent-detail .notice").filter({ hasText: /not in the current scene|waiting for agent data/i }).waitFor();
       assert.equal(await page.locator(".space-agent-detail").isVisible(), true, "Unknown actor notice is not shown in detail");

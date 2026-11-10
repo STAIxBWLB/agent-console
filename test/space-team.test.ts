@@ -197,3 +197,11 @@ test("an open detail makes every other Space child inert, including later siblin
   h.renderer.setRoute({});h.renderer.update(h.model);
   expect(sibling.inert).toBe(false);
 });
+test("entering Space with an open detail moves focus back into the dialog",()=>{
+  const h=harness();h.renderer.setRoute({actor:"demo:one"});h.renderer.update(h.model);
+  h.doc.activeElement=h.doc.body;
+  h.renderer.update(h.model);h.renderer.enter();
+  expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("back");
+  h.root.querySelector('[data-detail-focus="open"]')!.focus();h.renderer.enter();
+  expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("open");
+});

@@ -1876,6 +1876,7 @@ async function showSpace(internal = false) {
   }
   spaceRenderer.setRoute(state.route.params);
   renderSpace(!internal);
+  if (!internal) spaceRenderer.enter?.();
   if (!internal) pollSpace();
 }
 function renderSpace(force = false) {

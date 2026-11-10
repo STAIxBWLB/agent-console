@@ -112,7 +112,7 @@ The exported `SpaceScene` contract contains:
 - Optional `links`: `kind` (`message`, `overlap`, `conflict`, `cohort`), actor ids `from` and `to`, and optional public `label` and ISO `at`.
 - Panel links use `{panel, params?}`. Routing parameters must contain public identifiers, never bodies, private paths or task details.
 
-Strings are limited to 200 characters; at most 96 actors, 200 cards and 128 links are rendered across tools. The server copies only allowed fields and reports dropped records; the shell also caps the combined scene. Conformance rejects extra fields, oversized strings and excess records with named problems. All state labels include text and a glyph. Clicking an actor or card navigates to its panel; Space performs no action. A text roster lists the same actors and zone counts and leads on phones, with the visual scene inside its own scroll box.
+Strings are limited to 200 characters; at most 96 actors, 200 cards and 128 links are rendered across tools. The server copies only allowed fields and reports dropped records; the shell also caps the combined scene. Conformance rejects extra fields, oversized strings and excess records with named problems. All state labels include text and a glyph. Clicking a card navigates to its panel; clicking an actor opens its detail, whose Open in button navigates to the actor panel; Space performs no action. A text roster lists the same actors and zone counts and leads on phones, with the visual scene inside its own scroll box.
 
 Office packs live at `$AGENTHUB_HOME/console/assets/<id>/`. A `pack.json` is at most 16 KB and has this form:
 

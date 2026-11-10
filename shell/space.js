@@ -189,6 +189,10 @@ export function createSpaceRenderer(root, host) {
     }
   };
   document.addEventListener("keydown", onDetailKey, true);
+  // Everything in Space except the detail is inert while it is open, including siblings added later (Room controls).
+  function syncInert() { const on = Boolean(selection.actor); for (const element of root.children) if (element !== detailRoot && element.inert !== on) element.inert = on; }
+  // Entering Space (e.g. Back from a producer panel) moves focus to <main>; put it back in an open detail.
+  function enter() { if (selection.actor && !detailRoot.hidden && !detailRoot.contains(document.activeElement)) detailRoot.querySelector("[data-detail-focus=\"back\"]")?.focus({ preventScroll: true }); }
   function renderDetail(model) {
     const actor = model.actors.find((a) => a.id === selection.actor);
     const card = model.cards.find((c) => c.id === actor?.card);
@@ -202,7 +206,7 @@ export function createSpaceRenderer(root, host) {
     const hadFocus = detailRoot.contains(document.activeElement);
     const focusKey = hadFocus ? document.activeElement?.getAttribute("data-detail-focus") : null;
     detailRoot.hidden = !selection.actor;
-    for (const element of root.children) if (element !== detailRoot) element.inert = Boolean(selection.actor);
+    syncInert();
     if (!selection.actor) return;
     const back = h("button", { type: "button", class: "btn space-detail-back", "data-detail-focus": "back", text: "Back to Space", onclick: closeActor });
     if (!actor) {
@@ -279,6 +283,7 @@ export function createSpaceRenderer(root, host) {
     if (empty.hidden !== (!nothing || !room || Boolean(unknownGroup))) empty.hidden = !nothing || !room || Boolean(unknownGroup);
     if (!room) { views?.suspend(); restore(); return; }
     if (!views) views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError });
+    syncInert();
     image(plane, "--space-floor", pack, "floor"); image(wall, "--space-wall", pack, "wall");
     plane.dataset.pack = pack?.id ?? "fallback";
     if (pack) setStyle(plane, "background-size", `${pack.tile[0]}px ${pack.tile[1]}px`);
@@ -382,5 +387,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden) update(lastModel, true);
   });
   observer.observe(root);
-  return { update, setRoute, hide() { views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); views?.destroy(); root.replaceChildren(); } };
+  return { update, setRoute, enter, hide() { views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); views?.destroy(); root.replaceChildren(); } };
 }
