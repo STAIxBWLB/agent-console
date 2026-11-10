@@ -65,10 +65,10 @@ export function harness({ now = Date.now, pets = [], room = false }: { now?: () 
   const boardSource=readFileSync(new URL("../shell/space-board.js",import.meta.url),"utf8");
   const flowSource=readFileSync(new URL("../shell/space-flow.js",import.meta.url),"utf8");
   const source=readFileSync(new URL("../shell/space.js",import.meta.url),"utf8");
-  const windowResize = new Set<() => void>(), visualResize = new Set<() => void>();
+  const windowResize = new Set<() => void>(), visualResize = new Set<() => void>(), visualScroll = new Set<() => void>();
   const visualViewport = { width: 1024, height: 768, offsetLeft: 0, offsetTop: 0,
-    addEventListener(name: string, fn: () => void) { if(name === "resize")visualResize.add(fn); },
-    removeEventListener(name: string, fn: () => void) { if(name === "resize")visualResize.delete(fn); } };
+    addEventListener(name: string, fn: () => void) { if(name === "resize")visualResize.add(fn); if(name === "scroll")visualScroll.add(fn); },
+    removeEventListener(name: string, fn: () => void) { if(name === "resize")visualResize.delete(fn); if(name === "scroll")visualScroll.delete(fn); } };
   const browserWindow = { scrollX: 0, scrollY: 0, innerWidth: 1024, innerHeight: 768, visualViewport, scrollTo() {},
     addEventListener(name: string, fn: () => void) { if(name === "resize")windowResize.add(fn); },
     removeEventListener(name: string, fn: () => void) { if(name === "resize")windowResize.delete(fn); } };
@@ -77,7 +77,7 @@ export function harness({ now = Date.now, pets = [], room = false }: { now?: () 
   const renderer=api.createSpaceRenderer(root,{h,pets:()=>inventory,petSprite:(pet:{id:string},pose:string)=>h("span",{"data-pet":pet.id,"data-pose":pose}),packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
-  return {api,renderer,root,model,doc,nav,listeners,storage,browserWindow,visualViewport,windowResize,visualResize,runTimers:()=>{const due=timers.splice(0);for(const fn of due)fn?.();},pendingTimers:()=>timers.filter(Boolean).length,setPets:(next:{id:string}[])=>{inventory=next;},resize:()=>resize(),get writes(){return writes;},get back(){return back;}};
+  return {api,renderer,root,model,doc,nav,listeners,storage,browserWindow,visualViewport,windowResize,visualResize,visualScroll,runTimers:()=>{const due=timers.splice(0);for(const fn of due)fn?.();},pendingTimers:()=>timers.filter(Boolean).length,setPets:(next:{id:string}[])=>{inventory=next;},resize:()=>resize(),get writes(){return writes;},get back(){return back;}};
 }
 test("Team is default, shows attention/roles/task/badges and collapsed resting actors without Room initialization",()=>{
   const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);

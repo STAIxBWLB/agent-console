@@ -179,3 +179,14 @@ test("leaving an avatar without entering the popover closes it after the grace p
   expect(popup.hidden).toBe(false);
   h.runTimers(); expect(popup.hidden).toBe(true);
 });
+
+test("visualViewport panning (scroll without resize) hides a popover whose invoker left the view", () => {
+  const h = roomFixture(), actor = h.root.querySelector('.space-actor[data-key="demo:one"]')!;
+  resizeAnchor(actor); actor.focus();
+  const popup = h.root.querySelector(".space-actor-popover")!;
+  expect(popup.hidden).toBe(false); expect(h.visualScroll.size).toBe(1);
+  h.visualViewport.offsetTop = 900;
+  for (const listener of [...h.visualScroll]) listener();
+  expect(popup.hidden).toBe(true);
+  expect(h.visualScroll.size).toBe(0);
+});

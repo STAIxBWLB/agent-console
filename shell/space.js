@@ -201,6 +201,7 @@ export function createSpaceRenderer(root, host) {
     if (popupResizeWatching) {
       window.removeEventListener("resize", positionPopover);
       popupViewport?.removeEventListener("resize", positionPopover);
+      popupViewport?.removeEventListener("scroll", positionPopover);
       popupResizeWatching = false; popupViewport = null;
     }
     if (popupAnchor && popupAnchor.getAttribute("aria-describedby") === actorPopover.id) popupAnchor.removeAttribute("aria-describedby");
@@ -264,6 +265,8 @@ export function createSpaceRenderer(root, host) {
       window.addEventListener("resize", positionPopover);
       popupViewport = window.visualViewport ?? null;
       popupViewport?.addEventListener("resize", positionPopover);
+      // Pinch-zoom panning moves the visual viewport without resizing it.
+      popupViewport?.addEventListener("scroll", positionPopover);
       popupResizeWatching = true;
     }
     if (resetScroll && actorPopover.scrollTop) actorPopover.scrollTop = 0;
