@@ -796,10 +796,10 @@ let staticTransport = null;
 const pinnedRefs = new Map();
 const pluginPath = (path) => staticTransport ? staticTransport.resource(path, pinnedRefs) : path.replace(/^\/p\/([a-z][a-z0-9-]{1,15})\//, (whole, id) => (pinnedRefs.has(id) ? `/p/${pinnedRefs.get(id)}/` : whole));
 
-async function post(path, body = {}) {
+async function post(path, body = {}, requestHeaders = {}) {
   if (staticTransport) {
     state.lastRequest = Date.now();
-    const response = await staticTransport.post(path, body, pinnedRefs);
+    const response = await staticTransport.post(path, body, pinnedRefs, requestHeaders);
     if (response.status === 200) state.lastOk = Date.now();
     return response;
   }
@@ -807,7 +807,7 @@ async function post(path, body = {}) {
   state.lastRequest = Date.now();
   let res;
   try {
-    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "same-origin", cache: "no-store" });
+    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", ...requestHeaders }, body: JSON.stringify(body), credentials: "same-origin", cache: "no-store" });
   } catch {
     state.offline = true;
     renderLive();
@@ -1043,11 +1043,11 @@ async function pollInbox(fresh = true) {
 async function inboxFetch(t, seq) {
   const previous = state.inbox.get(t.tool);
   const startedAt = Date.now();
-  const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox", ...(previous?.version ? { known: previous.version } : {}) });
+  const r = await post(`/p/${t.tool}/snapshot`, { after: 0, panel: "inbox" }, previous?.version ? { "X-Acon-Known": previous.version } : {});
   // An older response that arrives late never overwrites a newer one.
   if ((inboxApplied.get(t.tool) ?? 0) > seq) return;
   inboxApplied.set(t.tool, seq);
-  const next = startedAt + adaptivePollMs(t.pollMs ?? INBOX_MS, Date.now() - startedAt);
+  const next = startedAt + Math.max(INBOX_MS, adaptivePollMs(t.pollMs ?? INBOX_MS, Date.now() - startedAt));
   const version = r.headers?.["x-acon-version"] ?? "";
   if (r.status === 200 && Array.isArray(r.data.items)) {
     const items = r.data.items.filter(validItem);
@@ -1605,7 +1605,7 @@ async function pollPanel() {
   const gen = p.gen;
   const after = p.cursor;
   const startedAt = Date.now();
-  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel, ...(p.version ? { known: p.version } : {}) });
+  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel }, p.version ? { "X-Acon-Known": p.version } : {});
   p.busy = false;
   p.next = startedAt + adaptivePollMs(tool?.pollMs, Date.now() - startedAt);
   const resume = p.resume; p.resume = false;
@@ -1918,17 +1918,23 @@ async function pollSpace() {
     if (!entry) { entry = { scene: null, cursor: 0, next: 0, busy: false, failed: false }; state.space.set(tool.tool, entry); }
     if (entry.busy || Date.now() < entry.next) return;
     const startedAt = Date.now();
+    const due = entry.next || startedAt;
     entry.busy = true;
-    const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor, ...(entry.version ? { known: entry.version } : {}) });
+    const res = await post(`/p/${tool.tool}/snapshot`, { panel: "space", after: entry.cursor }, entry.version ? { "X-Acon-Known": entry.version } : {});
     entry.busy = false;
-    entry.next = startedAt + adaptivePollMs(tool.pollMs, Date.now() - startedAt);
+    const interval = adaptivePollMs(tool.pollMs, Date.now() - startedAt);
+    // Preserve cadence across 1 s tick jitter instead of drifting into a skipped poll.
+    entry.next = due + (Math.floor((startedAt - due) / interval) + 1) * interval;
     const resume = entry.resume; entry.resume = false;
     if (resume && document.visibilityState === "visible") { entry.next = 0; queueMicrotask(() => pollSpace()); }
     entry.reported = true;
     if (res.status === 200 && (res.data.scene || (entry.scene && res.data.changed === false))) {
       const stale = res.headers?.["x-acon-cache"] === "stale";
       const sampledAt = Date.parse(res.headers?.["x-acon-sampled-at"] ?? "");
-      entry.sampledAt = Number.isFinite(sampledAt) ? sampledAt : stale ? (entry.sampledAt ?? Date.now()) : Date.now();
+      // Motion measures observations, not repeated/jumping cache sample timestamps.
+      entry.sampledAt = Date.now();
+      if (Number.isFinite(sampledAt)) entry.serverSampledAt = sampledAt;
+      else if (!stale) delete entry.serverSampledAt;
       if (res.data.scene) { entry.scene = res.data.scene; entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 }; }
       if (Number.isSafeInteger(res.data.cursor)) entry.cursor = res.data.cursor;
       entry.version = res.headers?.["x-acon-version"] ?? "";

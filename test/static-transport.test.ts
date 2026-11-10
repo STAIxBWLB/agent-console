@@ -6,7 +6,7 @@ interface Result { status: number; headers: Record<string, string>; data: Record
 interface Transport {
   nodes: { id: string; status: string }[];
   tools(): Promise<Result>;
-  post(path: string, body: object, refs?: Map<string, string>): Promise<Result>;
+  post(path: string, body: object, refs?: Map<string, string>, headers?: Record<string, string>): Promise<Result>;
   resource(path: string, refs?: Map<string, string>): string;
   setToken(id: string, token: string): void;
 }
@@ -260,7 +260,7 @@ test("inbox polling keeps one snapshot in flight per tool; an explicit refresh w
 });
 
 
-test("static snapshots retain exposed cache/version headers and forward known without changing the body", async () => {
+test("static snapshots retain response headers and send X-Acon-Known without reserving body fields", async () => {
   const known = "1".repeat(64);
   const snapshotHeaders = {
     "X-Acon-Version": known,
@@ -270,17 +270,23 @@ test("static snapshots retain exposed cache/version headers and forward known wi
     "X-Private-Diagnostic": "do not forward",
   };
   const sent: Record<string, unknown>[] = [];
+  const requestHeaders: Headers[] = [];
   const { make } = transport((async (input, init) => {
     const path = new URL(String(input)).pathname;
     if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
     if (path === "/tools") return Response.json({ tools: [] });
     sent.push(JSON.parse(String(init?.body)));
+    requestHeaders.push(new Headers(init?.headers));
     return Response.json({ changed: false }, { headers: snapshotHeaders });
   }) as typeof fetch);
   const client = make({ api: 1, nodes: [config.nodes[0]] });
   await client.tools();
-  const result = await client.post("/p/a:demo/snapshot", { panel: "space", after: 3, known });
-  expect(sent).toEqual([{ panel: "space", after: 3, known }]);
+  const body = { panel: "space", after: 3, known: { producerOwned: "not a hash" } };
+  const result = await client.post("/p/a:demo/snapshot", body, undefined, { "X-Acon-Known": known, "Content-Type": "unsafe", Authorization: "unsafe" });
+  expect(sent).toEqual([body]);
+  expect(requestHeaders[0]!.get("X-Acon-Known")).toBe(known);
+  expect(requestHeaders[0]!.get("Content-Type")).toBe("application/json");
+  expect(requestHeaders[0]!.get("Authorization")).toBeNull();
   expect(result.data).toEqual({ changed: false });
   expect(result.headers).toEqual({
     "x-acon-version": known,

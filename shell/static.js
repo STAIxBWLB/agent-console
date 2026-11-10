@@ -28,7 +28,10 @@ export function createStaticTransport(config, onStatus = () => {}) {
     } catch { notify(node, 'offline', 'Node is unreachable; start acon serve and check the node URL and network.'); }
     return { status: 0, headers: {}, data: { ok: false, error: node.detail } };
   };
-  const request = async (node, path, body) => {
+  const request = async (node, path, body, extraHeaders = {}) => {
+    const headers = headersFor(node, body !== undefined);
+    const known = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "x-acon-known")?.[1];
+    if (known !== undefined) headers["X-Acon-Known"] = known;
     const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
     const deadline = action ? 35000 : 8000;
     const signal = AbortSignal.timeout(deadline);
@@ -36,7 +39,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
     let response;
     let data = null;
     try {
-      response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: headersFor(node, body !== undefined), ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal, redirect: 'error' });
+      response = await fetch(`${node.url}${path}`, { method: body === undefined ? 'GET' : 'POST', headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), credentials: 'include', cache: 'no-store', signal, redirect: 'error' });
       try { data = await response.json(); }
       catch { if (action && response.status !== 401 && response.status !== 403) return uncertain(); }
     } catch (error) {
@@ -85,13 +88,13 @@ export function createStaticTransport(config, onStatus = () => {}) {
       const tools = nodes.flatMap((node) => (node.data?.tools ?? []).filter((tool) => TOOL_ID.test(tool?.tool)).map((tool) => ({ ...tool, tool: `${node.id}:${tool.tool}`, rawTool: tool.tool, node: node.id, title: `${node.id}: ${tool.title ?? tool.tool}`, readOnly: node.data.readOnly === true, ...(node.status === 'online' || node.status === 'slow' ? {} : { status: 'offline', reason: node.detail }) })));
       return { status: 200, headers: {}, data: { tools, pets: [], assetPacks: [], node: { id: 'static', version: 'H2' }, errors: [], readOnly: false } };
     },
-    async post(path, body, refs) {
+    async post(path, body, refs, headers = {}) {
       if (path === '/tools') return this.tools();
       if (path === '/ping') return { status: 200, headers: {}, data: { ok: true } };
       const route = resolve(path, refs);
       if (!route) return { status: 404, headers: {}, data: { ok: false, error: 'Unknown node/tool route; reload the static console.' } };
       if (route.node.status !== "online" && route.node.status !== "slow") return { status: 0, headers: {}, data: { ok: false, error: route.node.detail } };
-      return request(route.node, route.path, body);
+      return request(route.node, route.path, body, headers);
     },
     resource(path, refs) {
       const route = resolve(path, refs);

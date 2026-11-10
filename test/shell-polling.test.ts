@@ -14,7 +14,7 @@ const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve();
 
 function pollingHarness() {
   let clock = 0, writes = 0;
-  const requests: { url: string; body: any }[] = [];
+  const requests: { url: string; body: any; headers: any }[] = [];
   const document = { visibilityState: "visible" };
   const panel = { instance: {}, busy: false, next: 0, gen: 0, cursor: 0, lastSig: "", lastData: null, version: "", resume: false,
     banner: { hiddenValue: true, get hidden() { return this.hiddenValue; }, set hidden(value: boolean) { writes++; this.hiddenValue = value; } },
@@ -25,7 +25,7 @@ function pollingHarness() {
   let renders = 0, live = 0, inboxPolls = 0, pip: object | null = null;
   const api = runInNewContext(`${adaptive}\n${panelSource}\n${spaceSource}\n${tickSource}\n${visibilitySource}\n({pollPanel,pollSpace,resumeVisiblePolling,tick,adaptivePollMs})`, {
     state, document, Date: class extends Date { static now() { return clock; } }, queueMicrotask,
-    post: (url: string, body: any) => { requests.push({ url, body }); return response(url, body); },
+    post: (url: string, body: any, headers: any = {}) => { requests.push({ url, body, headers }); return response(url, body); },
     toolById: () => ({ pollMs: 2000 }), spaceTools: () => [{ tool: "demo", pollMs: 2000 }],
     spaceRenderer: {}, renderSpace: () => { renders++; }, safe: (_tool: string, _name: string, fn: () => void) => fn(),
     renderLive: () => { live++; }, pollInbox: async () => { inboxPolls++; }, loadTools: async () => {}, clientError() {},
@@ -43,7 +43,7 @@ test("panel polling stretches from start time, caps and recovers with faster cal
   h.setClock(9000); h.setResponse(async () => { h.setClock(9100); return { status: 200, data: { changed: false }, headers: { "x-acon-version": VERSION } }; });
   const before = h.writes;
   await h.api.pollPanel(); expect(h.panel.next).toBe(11000); expect(h.writes).toBe(before);
-  expect(h.requests[1]!.body.known).toBe(VERSION); expect(h.panel.cursor).toBe(1);
+  expect(h.requests[1]!.headers["X-Acon-Known"]).toBe(VERSION); expect(h.panel.cursor).toBe(1);
   expect(h.api.adaptivePollMs(2000, 40000)).toBe(60000);
 });
 
@@ -71,24 +71,25 @@ test("a visibility return during an in-flight panel queues only one immediate fo
   await first; await flush(); expect(h.requests).toHaveLength(2);
 });
 
-test("Space SWR headers keep the original sample without failing healthy actors", async () => {
+test("Space keeps server samples separately from the healthy motion observation clock", async () => {
   const h = pollingHarness(); h.state.route.area = "space";
   const scene = { actors: [{ id: "one" }], zones: [], cards: [] };
   h.setClock(100000);
   h.setResponse(async () => ({ status: 200, data: { scene, cursor: 7 }, headers: { "x-acon-version": VERSION, "x-acon-cache": "hit", "x-acon-sampled-at": new Date(1000).toISOString() } }));
   await h.api.pollSpace();
-  const entry = h.state.space.get("demo"); expect(entry.sampledAt).toBe(1000); expect(entry.failed).toBe(false);
+  const entry = h.state.space.get("demo"); expect(entry.serverSampledAt).toBe(1000); expect(entry.sampledAt).toBe(100000); expect(entry.failed).toBe(false);
   h.setClock(entry.next);
   h.setResponse(async () => ({ status: 200, data: { changed: false }, headers: { "x-acon-version": VERSION, "x-acon-cache": "stale", "x-acon-sampled-at": new Date(1000).toISOString() } }));
   await h.api.pollSpace();
-  expect(h.requests[1]!.body).toMatchObject({ after: 7, known: VERSION });
-  expect(entry.scene).toEqual(scene); expect(entry.sampledAt).toBe(1000); expect(entry.failed).toBe(false);
+  expect(h.requests[1]!.body).toEqual({ panel: "space", after: 7 });
+  expect(h.requests[1]!.headers["X-Acon-Known"]).toBe(VERSION);
+  expect(entry.scene).toEqual(scene); expect(entry.serverSampledAt).toBe(1000); expect(entry.sampledAt).toBe(102000); expect(entry.failed).toBe(false);
   const mergeSource = readFileSync(new URL("../shell/space.js", import.meta.url), "utf8").replace(/^import .*;$/gm, "").replace(/^export /gm, "");
   const merge = runInNewContext(`${mergeSource}\nmergeSpaceScenes`);
   entry.scene = { ...scene, actors: [{ id: "one", name: "One", state: "working", link: { panel: "notes" } }] };
   expect(merge(h.state.space).actors[0].stale).toBe(false);
   h.setClock(entry.next); h.setResponse(async () => ({ status: 502, data: { ok: false } }));
-  await h.api.pollSpace(); expect(entry.sampledAt).toBe(1000); expect(entry.failed).toBe(true);
+  await h.api.pollSpace(); expect(entry.serverSampledAt).toBe(1000); expect(entry.sampledAt).toBe(102000); expect(entry.failed).toBe(true);
   expect(merge(h.state.space).actors[0].stale).toBe(true);
 });
 
@@ -114,23 +115,23 @@ test("panel known replies write nothing, and producer cursor replies still advan
 test("progressive inbox renders fast replies before slow ones and has per-tool adaptive deadlines", async () => {
   let now = 0, release!: (response: any) => void;
   const state = { inbox: new Map<string, any>(), route: { area: "inbox" }, peekKey: null };
-  const calls: { tool: string; input: any }[] = [], renders: string[][] = [];
+  const calls: { tool: string; input: any; headers: any }[] = [], renders: string[][] = [];
   let rendered = "";
   const poll = runInNewContext(`${inboxSource}\npollInbox`, {
     state, INBOX_MS: 5000, Date: class extends Date { static now() { return now; } },
     readyTools: () => [{ tool: "slow", pollMs: 2000, capabilities: { inbox: true } }, { tool: "fast", pollMs: 2000, capabilities: { inbox: true } }],
     validItem: () => true, clientError() {}, renderRail() {}, renderMini() {}, renderPeek() {}, renderInbox: () => { const signature = JSON.stringify([...state.inbox].map(([tool, entry]) => [tool, entry.items, entry.failed])); if (signature !== rendered) { rendered = signature; renders.push([...state.inbox.keys()]); } },
-    post: (url: string, input: any) => { const tool = url.split("/")[2]!; calls.push({ tool, input });
+    post: (url: string, input: any, headers: any = {}) => { const tool = url.split("/")[2]!; calls.push({ tool, input, headers });
       return tool === "slow" ? new Promise((resolve) => { release = resolve; }) : Promise.resolve({ status: 200, data: calls.filter((call) => call.tool === "fast").length === 1 ? { items: [{ id: "fast" }] } : { changed: false }, headers: { "x-acon-version": VERSION } }); },
   });
   const pending = poll(false); await flush();
-  expect(renders).toEqual([["fast"]]); expect(state.inbox.get("fast").next).toBe(2000);
+  expect(renders).toEqual([["fast"]]); expect(state.inbox.get("fast").next).toBe(5000);
   now = 6000; release({ status: 200, data: { items: [] } }); await pending;
   expect(state.inbox.get("slow").next).toBe(18000);
   const before = renders.length;
   await poll(false); expect(calls.filter((call) => call.tool === "slow")).toHaveLength(1);
   expect(calls.filter((call) => call.tool === "fast")).toHaveLength(2);
-  expect(calls.at(-1)!.input.known).toBe(VERSION); expect(renders).toHaveLength(before);
+  expect(calls.at(-1)!.headers["X-Acon-Known"]).toBe(VERSION); expect(renders).toHaveLength(before);
 });
 
 
@@ -193,4 +194,47 @@ test("signature-unchanged rail refreshes do not rewrite the document title", () 
     needsMeCount: () => 0, renderPet() {}, spaceTools: () => [], readyTools: () => [],
   });
   render(); render(); expect(titleWrites).toBe(0);
+});
+
+test("repeated or jumping server samples do not create a Room observation sourceGap", async () => {
+  const h = pollingHarness(); h.state.route.area = "space";
+  const space = readFileSync(new URL("../shell/space.js", import.meta.url), "utf8");
+  const merge = runInNewContext(`${space.replace(/^import .*;$/gm, "").replace(/^export /gm, "")}\nmergeSpaceScenes`);
+  const begin = space.indexOf("    let sourceGap = false, firstSource = false;");
+  const end = space.indexOf("    const sig =", begin);
+  const sourceGapBody = space.slice(begin, end);
+  const samples = new Map();
+  const scene = { actors: [{ id: "one", name: "One", state: "working", link: { panel: "notes" } }], zones: [], cards: [] };
+  for (const [index, sample] of [1000, 1000, 60000, 60000].entries()) {
+    h.setClock(100000 + index * 2000);
+    h.setResponse(async () => ({ status: 200, data: index ? { changed: false } : { scene }, headers: { "x-acon-version": VERSION, "x-acon-cache": "stale", "x-acon-sampled-at": new Date(sample).toISOString() } }));
+    await h.api.pollSpace();
+    const model = merge(h.state.space);
+    const result = runInNewContext(`${sourceGapBody}\n({sourceGap,firstSource})`, { samples, receivedSamples: model.samples });
+    expect(result.sourceGap).toBe(false);
+    expect(h.state.space.get("demo").sampledAt).toBe(100000 + index * 2000);
+    expect(h.state.space.get("demo").serverSampledAt).toBe(sample);
+  }
+});
+
+test("a producer body known field survives independently of the conditional header", async () => {
+  const h = pollingHarness(); h.state.route.params = { known: { provider: "value" } };
+  await h.api.pollPanel(); h.setClock(h.panel.next); await h.api.pollPanel();
+  expect(h.requests[1]!.body.known).toEqual({ provider: "value" });
+  expect(h.requests[1]!.headers["X-Acon-Known"]).toBe(VERSION);
+});
+
+
+test("Space cadence survives timer jitter without a false observation gap", async () => {
+  const h = pollingHarness(); h.state.route.area = "space";
+  const scene = { actors: [], zones: [], cards: [] };
+  h.setResponse(async () => { h.setClock(h.clock + 10); return { status: 200, data: { scene }, headers: { "x-acon-sampled-at": new Date(1000).toISOString() } }; });
+  let previous = 0;
+  for (const tick of [100000, 102001, 104000, 105002, 106001]) {
+    h.setClock(tick); await h.api.pollSpace();
+    const observed = h.state.space.get("demo").sampledAt;
+    if (previous && observed !== previous) expect(observed - previous).toBeLessThanOrEqual(3000);
+    previous = observed;
+  }
+  expect(h.requests).toHaveLength(4);
 });

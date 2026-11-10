@@ -3,8 +3,8 @@
 // source and remove that metadata, while protocol behavior is tested separately.
 const metadata = new Set(["x-acon-version", "x-acon-cache", "x-acon-cache-age-ms", "x-acon-sampled-at", "content-length"]);
 export async function fetchFullSnapshot(route) {
-  const { known: _known, ...input } = route.request().postDataJSON();
-  return route.fetch({ postData: JSON.stringify(input) });
+  const headers = Object.fromEntries(Object.entries(route.request().headers()).filter(([name]) => name.toLowerCase() !== "x-acon-known"));
+  return route.fetch({ headers });
 }
 export async function fulfillSnapshotFixture(route, response, body) {
   const headers = Object.fromEntries(Object.entries(response.headers()).filter(([name]) => !metadata.has(name.toLowerCase())));

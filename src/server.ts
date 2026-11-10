@@ -182,10 +182,9 @@ export function startServer(options: ServerOptions) {
     ? { tool: p.tool, ref: p.ref ?? p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, commands: p.manifest.commands ?? [], capabilities: p.manifest.capabilities ?? {} }
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
-  async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {
-    // Transport control is never provider input or part of the canonical snapshot cache key.
-    const { known, ...pluginInput } = input;
-    if (known !== undefined && (typeof known !== "string" || !/^[0-9a-f]{64}$/.test(known))) return reject(400, "known must be a SHA-256 version from X-Acon-Version");
+  async function snapshot(entry: PluginEntry, input: Record<string, unknown>, known: string | null) {
+    // Conditional transport is header-only; every body field remains plugin input.
+    if (known !== null && !/^[0-9a-f]{64}$/.test(known)) return reject(400, "X-Acon-Known must be a SHA-256 version from X-Acon-Version");
     const caps = entry.manifest!.capabilities ?? {};
     const panel = input.panel;
     const allowed = declaresPanel(entry.manifest!, panel);
@@ -198,7 +197,7 @@ export function startServer(options: ServerOptions) {
       if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) return reject(400, "limit must be 1-10");
     }
     try {
-      const request = { ...pluginInput, after, panel };
+      const request = { ...input, after, panel };
       const reply = await snapshots.read({ provider: entry.provider!, tool: entry.tool, panel, namespace: "console", input: request,
         ttlMs: snapshotMaxAge(entry.manifest!, panel), load: async () => {
           const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, request));
@@ -331,8 +330,8 @@ export function startServer(options: ServerOptions) {
       if (serve && req.method === "OPTIONS") {
         const method = req.headers.get("access-control-request-method");
         const headers = (req.headers.get("access-control-request-headers") ?? "").toLowerCase().split(",").map((h) => h.trim()).filter(Boolean);
-        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization/content-type only");
-        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type", "Access-Control-Max-Age": "300" } });
+        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type", "x-acon-known"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization, content-type or x-acon-known");
+        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Acon-Known", "Access-Control-Max-Age": "300" } });
       }
       prune(resources);
       const grant = resources.get(url.searchParams.get("acon_resource") ?? "");
@@ -453,7 +452,7 @@ export function startServer(options: ServerOptions) {
       }
       const entry = pluginEntry();
       if (!entry) return unknownTool();
-      return plugin![2] === "snapshot" ? snapshot(entry, input) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
+      return plugin![2] === "snapshot" ? snapshot(entry, input, req.headers.get("x-acon-known")) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
   }
   const server = Bun.serve({
     hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",
