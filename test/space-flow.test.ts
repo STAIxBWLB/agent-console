@@ -123,3 +123,53 @@ test("Flow owns one minute timer and clears it on hiding or destruction without 
   flow.setVisible(true); flow.destroy(); callback!();
   expect(cancels).toBe(2);
 });
+
+test("changed snapshots do not rewrite the hidden Flow attribute", () => {
+  const h = harness();
+  h.renderer.setRoute({ view: "flow" }); h.renderer.update(h.model);
+  h.renderer.setRoute({ view: "team" }); h.renderer.update(h.model);
+  const flow = h.root.querySelector(".space-flow")!;
+  const writes = flow.hiddenWrites;
+  const children = [...flow.children];
+  h.renderer.update({ ...h.model, links: [...h.model.links, { ...message(), from: "demo:one", to: "demo:two" }] });
+  expect(flow.hidden).toBe(true);
+  expect(flow.hiddenWrites).toBe(writes);
+  expect(flow.children).toEqual(children);
+});
+
+test("Flow renders the selected empty group even when filtered facts are identical", () => {
+  const h = harness();
+  const scene = { ...h.model, groups: [{ id: "empty:a", title: "Empty A" }, { id: "empty:b", title: "Empty B" }] };
+  for (const group of ["empty:a", "empty:b", "empty:a"]) {
+    h.renderer.setRoute({ view: "flow", group }); h.renderer.update(scene);
+    const panels = h.root.querySelectorAll(".space-flow-group");
+    expect(panels).toHaveLength(1);
+    expect(panels[0]!.getAttribute("data-flow-group")).toBe(group);
+  }
+});
+
+test("an unchanged Team snapshot expires open detail history and peer counts", () => {
+  let now = 0;
+  const h = harness({ now: () => now });
+  const scene = { ...h.model, links: [{ ...message(), from: "demo:one", to: "demo:two" }] };
+  h.renderer.setRoute({ view: "team", actor: "demo:one" }); h.renderer.update(scene);
+  const detail = () => h.root.querySelector(".space-detail-interactions")!;
+  expect(detail().textContent).toContain("Resting: 1 sent, 0 received");
+  expect(detail().textContent).toContain("Counts and events cover the last 30 minutes.");
+  expect(detail().textContent).not.toContain("message counts cover 15 minutes");
+  expect(detail().textContent).toContain("just now");
+  const before = h.writes;
+  h.renderer.update(scene);
+  expect(h.writes).toBe(before);
+  now = 2 * 60000;
+  h.renderer.update(scene);
+  expect(detail().textContent).toContain("2 min ago");
+  now = 31 * 60000;
+  h.renderer.update(scene);
+  expect(detail().textContent).toContain("No activity observed yet.");
+  expect(detail().textContent).not.toContain("sent");
+  expect(detail().querySelectorAll("li")).toHaveLength(0);
+  const expired = h.writes;
+  h.renderer.update(scene);
+  expect(h.writes).toBe(expired);
+});

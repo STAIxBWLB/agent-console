@@ -1,4 +1,4 @@
-import { createActivityBuffer, createSpaceFlow, flowRelativeTime, FLOW_HISTORY } from "./space-flow.js";
+import { createActivityBuffer, createSpaceFlow, flowRelativeTime } from "./space-flow.js";
 import { createSpaceTeam, focusSpaceControl } from "./space-team.js";
 import { createSpaceViewController } from "./space-view.js";
 
@@ -165,6 +165,7 @@ export function createSpaceRenderer(root, host) {
   let signature = "", groupSignature = "", layout = null, lastModel = null;
   const setStyle = (el, name, value) => { if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value); };
   const setText = (el, value) => { if (el.textContent !== value) el.textContent = value; };
+  const setHidden = (el, value) => { if (el.hidden !== value) el.hidden = value; };
   const target = (key, invoker) => { const entry = entries.get(key); if (!entry) return; if (key.startsWith("actor:")) openActor(entry.id, invoker); else host.navigate(entry.link.tool, entry.link.panel, entry.link.params); };
   const image = (el, variable, pack, name) => setStyle(el, variable, pack?.images.includes(name) ? `url("${location.origin}/assets/${pack.id}/${name}")` : "none");
   const prune = (nodes, keys) => { for (const [key, entry] of nodes) if (!keys.has(key)) { entry.roster?.remove(); (entry.el ?? entry).remove(); nodes.delete(key); } };
@@ -229,7 +230,7 @@ export function createSpaceRenderer(root, host) {
         h("div", { class: "space-agent-detail-body" }, h("section", {}, h("h3", { text: "Current task" }), card ? h("button", { type: "button", class: "btn", "data-detail-focus": "task", text: card.title, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) }) : h("p", { class: "sub", text: "No current task reported." })),
           h("section", {}, h("h3", { text: "Marks" }), ...marks),
           h("section", {}, h("h3", { text: "Partners" }), ...(partners.length ? partners.map((p) => h("p", { text: `${p.kind}: ${p.actor?.name ?? "Unknown actor"}` })) : [h("p", { class: "sub", text: "No current partners reported." })])),
-          h("section", { class: "space-detail-interactions" }, h("h3", { text: "Interactions" }), h("p", { class: "sub", text: FLOW_HISTORY }),
+          h("section", { class: "space-detail-interactions" }, h("h3", { text: "Interactions" }), h("p", { class: "sub", text: "History starts when this page opens. Counts and events cover the last 30 minutes." }),
             ...interactions.peers.map((peer) => h("p", { text: `${peer.name}: ${peer.sent} sent, ${peer.received} received` })),
             ...(interactions.events.length ? [h("ol", { class: "space-flow-events" }, ...interactions.events.map((event) => h("li", {},
               h("strong", { text: `${event.fromName} → ${event.toName}` }), h("span", { text: `${event.kind}${event.label ? `: ${event.label}` : ""}` }),
@@ -264,13 +265,14 @@ export function createSpaceRenderer(root, host) {
       samples.set(tool, at);
     }
     const sig = JSON.stringify([selection, facts, pack, host.pets().map((p) => p.id)]);
-    if (!force && sig === signature) { if (layout) layout.at = Math.max(layout.at, sampledAt); return; }
+    if (!force && sig === signature) { if (selection.actor) renderDetail(model); if (layout) layout.at = Math.max(layout.at, sampledAt); return; }
     const factChange = sig !== signature;
     const freshCards = new Set();
     signature = sig;
     root.dataset.spaceSection = selection.view;
     const room = selection.view === "room";
-    content.hidden = !room; teamRoot.hidden = selection.view !== "team"; flowRoot.hidden = selection.view !== "flow"; placeholder.hidden = selection.view !== "board";
+    setHidden(content, !room); setHidden(teamRoot, selection.view !== "team");
+    setHidden(flowRoot, selection.view !== "flow"); setHidden(placeholder, selection.view !== "board");
     // A section switch (e.g. a Team Board/Flow shortcut) must not leave focus on a now-hidden control.
     const active = document.activeElement;
     if (active && active !== root && root.contains(active) && !detailRoot.contains(active) && active.offsetParent === null) sectionButtons.get(selection.view)?.focus({ preventScroll: true });
