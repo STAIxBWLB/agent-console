@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 // Agent-run browser probe. Playwright is discovered at runtime, never a package dependency.
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -846,7 +847,7 @@ async function runSpaceMotion(ticket) {
     const currentStage = stage;
     const gate = currentStage === 3 ? gapGate : null;
     const tool = new URL(route.request().url()).pathname.split("/")[2];
-    const response = await route.fetch();
+    const response = await fetchFullSnapshot(route);
     const body = await response.json();
     if (tool === "demo" && body.scene) {
       const { scene } = body;
@@ -882,7 +883,7 @@ async function runSpaceMotion(ticket) {
       if (gate.pending.has("demo") && gate.pending.has("echo")) gate.markReady();
       await gate.promise;
     }
-    await route.fulfill({ response, json: body });
+    await fulfillSnapshotFixture(route, response, body);
   });
   try {
     await page.goto((await ticket()).url, { waitUntil: "networkidle" });
@@ -1170,9 +1171,9 @@ async function runSpaceViews(ticket) {
       if (width === 1440 && theme === "light" && textPercent === 100) {
         const beforeBurst = await page.locator(".space-webgl").evaluate((el) => Number(el.dataset.renderCount));
         await page.route("**/p/demo/snapshot", async (route) => {
-          const response = await route.fetch(), body = await response.json();
+          const response = await fetchFullSnapshot(route), body = await response.json();
           if (body.scene) body.scene.actors[0].state = "blocked";
-          await route.fulfill({ response, json: body });
+          await fulfillSnapshotFixture(route, response, body);
         });
         findings.push(...await waitSpacePoll(page));
         await page.locator(".space-webgl[data-pending-frames='0']").waitFor();

@@ -11,6 +11,8 @@
 
 ### Added
 
+- Add header-only snapshot versions and reserved `known` conditional requests, preserving plugin cursor replies and forwarding version/freshness headers through the static transport. Adapt polling to request duration, pause hidden panel/Space polls with immediate visible refresh, progressively render inbox sources, and retain stale Space sample times and actor labels (#105).
+
 - Add the Space Board view with per-group zone columns, producer-linked cards, owner detail controls, and collapsed Done history showing the last five supplied cards. Keep horizontal scrolling within each board row, preserve focus/disclosures, and cover the responsive matrix with a Board probe (#101).
 
 - Coalesce identical snapshots across viewers in a bounded in-memory LRU cache with per-panel TTL overrides, stale-while-revalidate, action/reload invalidation and separate principal keys. Declared readOnly principal tools preserve the cache; other principal actions and all console actions invalidate it. Keep producer bodies and error snapshots unchanged, expose freshness only through cache/age/sample-time headers and add System cache/provider timing diagnostics, and add a private-output snapshot timing probe (#105).

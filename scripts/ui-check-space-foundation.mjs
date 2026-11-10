@@ -1,3 +1,4 @@
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 // #101 Delivery 1: routing/layout and raised-cap performance, synthetic scenes only.
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -50,7 +51,7 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
   try {
     const page = await context.newPage(); let calls = 0, change = false;
     await page.route("**/p/*/snapshot", async (route) => {
-      const response = await route.fetch(); const data = await response.json();
+      const response = await fetchFullSnapshot(route); const data = await response.json();
       if (route.request().postDataJSON()?.panel !== "space" || !data.scene) { await route.fulfill({ response }); return; }
       if (route.request().url().includes("/p/echo/")) data.scene = { actors: [], zones: [], cards: [], links: [] };
       else {
@@ -60,7 +61,7 @@ export async function runSpaceFoundation({ browser, ticket, report, output }) {
         scene.cards = Array.from({ length: 200 }, (_, i) => ({ ...card, id: `card-${i}`, owner: `actor-${i % 96}`, group: "delivery" }));
         scene.links = Array.from({ length: 128 }, (_, i) => ({ kind: "cohort", from: `actor-${i % 96}`, to: `actor-${(i + 1) % 96}`, label: `Public relation ${i}` }));
       }
-      await route.fulfill({ response, json: data });
+      await fulfillSnapshotFixture(route, response, data);
     });
     await page.goto((await ticket()).url); await page.evaluate(() => { location.hash = "#/local/space?view=room"; });
     await page.waitForFunction(() => document.querySelectorAll(".space-actor").length === 96 && document.querySelectorAll(".space-card").length === 200);

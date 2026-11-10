@@ -1,3 +1,4 @@
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 // #101 Delivery 3: public-link observations, Flow layout and detail return paths.
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -88,14 +89,14 @@ async function changedLinkProbe({ browser, ticket, report }) {
       try { input = route.request().postDataJSON(); } catch { await route.continue(); return; }
       if (input?.panel !== "space") { await route.continue(); return; }
       const observedStage = stage;
-      const response = await route.fetch();
+      const response = await fetchFullSnapshot(route);
       const body = await response.json();
       if (body.scene) {
         if (observedStage >= 1) body.scene.links.push({ kind: "message", from: "claude", to: "codex", label: "Flow changed-link probe", at });
         if (observedStage >= 2) body.scene.actors.find((actor) => actor.id === "local").name = "Flow rerender probe";
         if (observedStage >= 3) body.scene.links.push({ kind: "message", from: "codex", to: "local", label: "Flow hidden-link probe", at });
       }
-      await route.fulfill({ response, json: body });
+      await fulfillSnapshotFixture(route, response, body);
     });
     await enterFlow(page, ticket, 100);
     await page.evaluate(() => {

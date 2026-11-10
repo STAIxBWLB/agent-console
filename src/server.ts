@@ -183,6 +183,9 @@ export function startServer(options: ServerOptions) {
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
   async function snapshot(entry: PluginEntry, input: Record<string, unknown>) {
+    // Transport control is never provider input or part of the canonical snapshot cache key.
+    const { known, ...pluginInput } = input;
+    if (known !== undefined && (typeof known !== "string" || !/^[0-9a-f]{64}$/.test(known))) return reject(400, "known must be a SHA-256 version from X-Acon-Version");
     const caps = entry.manifest!.capabilities ?? {};
     const panel = input.panel;
     const allowed = declaresPanel(entry.manifest!, panel);
@@ -195,17 +198,22 @@ export function startServer(options: ServerOptions) {
       if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) return reject(400, "limit must be 1-10");
     }
     try {
-      const request = { ...input, after, panel };
+      const request = { ...pluginInput, after, panel };
       const reply = await snapshots.read({ provider: entry.provider!, tool: entry.tool, panel, namespace: "console", input: request,
         ttlMs: snapshotMaxAge(entry.manifest!, panel), load: async () => {
           const result = await call(entry.tool, "snapshot", () => dispatchConsoleSnapshot(entry, request));
           if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("snapshot must return an object");
           if (result.ok === false || panel !== "space" || caps.space !== true) return result;
+          const cursor = Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {};
+          // A Space cursor-only reply carries no scene to project. Keep its bounded transport fields.
+          if (result.changed === false && result.scene === undefined) return { changed: false, ...cursor };
           const clean = sanitizeSpaceScene(result.scene);
-          return { ok: true, ...clean, ...(Number.isSafeInteger(result.cursor) && (result.cursor as number) >= 0 ? { cursor: result.cursor } : {}) };
+          return { ok: true, ...clean, ...(result.changed === false ? { changed: false } : {}), ...cursor };
         } });
-      return json(reply.value, 200, { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs),
-        "X-Acon-Sampled-At": new Date(reply.sampledAt).toISOString() });
+      // A producer cursor/changed:false reply is authoritative, including legacy full replies.
+      const unchanged = known === reply.version && reply.value.changed !== false && reply.value.ok !== false;
+      return json(unchanged ? { changed: false } : reply.value, 200, { "X-Acon-Cache": reply.status, "X-Acon-Cache-Age-Ms": String(reply.ageMs),
+        "X-Acon-Sampled-At": new Date(reply.sampledAt).toISOString(), "X-Acon-Version": reply.version });
     } catch (error) {
       record(entry.tool, `snapshot ${panel}`, error);
       return reject(502, `${entry.tool} could not refresh; details are in System`);
@@ -462,7 +470,7 @@ export function startServer(options: ServerOptions) {
         if (requestOrigin && serve.origins.includes(requestOrigin)) {
           response.headers.set("Access-Control-Allow-Origin", requestOrigin);
           response.headers.set("Access-Control-Allow-Credentials", "true");
-          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms, X-Acon-Sampled-At");
+          response.headers.set("Access-Control-Expose-Headers", "X-Acon-Cache, X-Acon-Cache-Age-Ms, X-Acon-Sampled-At, X-Acon-Version");
         }
       }
       return response;
