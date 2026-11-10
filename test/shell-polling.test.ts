@@ -77,19 +77,19 @@ test("Space keeps server samples separately from the healthy motion observation 
   h.setClock(100000);
   h.setResponse(async () => ({ status: 200, data: { scene, cursor: 7 }, headers: { "x-acon-version": VERSION, "x-acon-cache": "hit", "x-acon-sampled-at": new Date(1000).toISOString() } }));
   await h.api.pollSpace();
-  const entry = h.state.space.get("demo"); expect(entry.serverSampledAt).toBe(1000); expect(entry.sampledAt).toBe(100000); expect(entry.failed).toBe(false);
+  const entry = h.state.space.get("demo"); expect(entry.sampledAt).toBe(100000); expect(entry.failed).toBe(false);
   h.setClock(entry.next);
   h.setResponse(async () => ({ status: 200, data: { changed: false }, headers: { "x-acon-version": VERSION, "x-acon-cache": "stale", "x-acon-sampled-at": new Date(1000).toISOString() } }));
   await h.api.pollSpace();
   expect(h.requests[1]!.body).toEqual({ panel: "space", after: 7 });
   expect(h.requests[1]!.headers["X-Acon-Known"]).toBe(VERSION);
-  expect(entry.scene).toEqual(scene); expect(entry.serverSampledAt).toBe(1000); expect(entry.sampledAt).toBe(102000); expect(entry.failed).toBe(false);
+  expect(entry.scene).toEqual(scene); expect(entry.sampledAt).toBe(102000); expect(entry.failed).toBe(false);
   const mergeSource = readFileSync(new URL("../shell/space.js", import.meta.url), "utf8").replace(/^import .*;$/gm, "").replace(/^export /gm, "");
   const merge = runInNewContext(`${mergeSource}\nmergeSpaceScenes`);
   entry.scene = { ...scene, actors: [{ id: "one", name: "One", state: "working", link: { panel: "notes" } }] };
   expect(merge(h.state.space).actors[0].stale).toBe(false);
   h.setClock(entry.next); h.setResponse(async () => ({ status: 502, data: { ok: false } }));
-  await h.api.pollSpace(); expect(entry.serverSampledAt).toBe(1000); expect(entry.sampledAt).toBe(102000); expect(entry.failed).toBe(true);
+  await h.api.pollSpace(); expect(entry.sampledAt).toBe(102000); expect(entry.failed).toBe(true);
   expect(merge(h.state.space).actors[0].stale).toBe(true);
 });
 
@@ -213,7 +213,6 @@ test("repeated or jumping server samples do not create a Room observation source
     const result = runInNewContext(`${sourceGapBody}\n({sourceGap,firstSource})`, { samples, receivedSamples: model.samples });
     expect(result.sourceGap).toBe(false);
     expect(h.state.space.get("demo").sampledAt).toBe(100000 + index * 2000);
-    expect(h.state.space.get("demo").serverSampledAt).toBe(sample);
   }
 });
 
@@ -237,4 +236,13 @@ test("Space cadence survives timer jitter without a false observation gap", asyn
     previous = observed;
   }
   expect(h.requests).toHaveLength(4);
+});
+
+test("a transport failure (status 0) clears the panel version so the next poll asks for a full reply", async () => {
+  const h = pollingHarness(); await h.api.pollPanel();
+  expect(h.panel.version).toBe(VERSION);
+  h.setClock(h.panel.next); h.setResponse(async () => ({ status: 0, data: { ok: false, error: "offline" }, headers: {} }));
+  await h.api.pollPanel(); expect(h.panel.version).toBe("");
+  h.setClock(h.panel.next); h.setResponse(async () => ({ status: 200, data: { notes: [2], cursor: 2 }, headers: { "x-acon-version": VERSION } }));
+  await h.api.pollPanel(); expect(h.requests.at(-1)!.headers).toEqual({});
 });

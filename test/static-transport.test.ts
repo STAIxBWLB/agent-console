@@ -296,6 +296,29 @@ test("static snapshots retain response headers and send X-Acon-Known without res
   });
 });
 
+test("a node that refuses X-Acon-Known in preflight gets a plain retry and no header afterwards", async () => {
+  const known = "2".repeat(64);
+  const seen: (string | null)[] = [];
+  const { make } = transport((async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+    if (path === "/tools") return Response.json({ tools: [] });
+    const header = new Headers(init?.headers).get("X-Acon-Known");
+    seen.push(header);
+    // A CORS preflight refusal surfaces to fetch as a TypeError.
+    if (header !== null) throw new TypeError("Failed to fetch");
+    return Response.json({ ok: true, rows: [1] });
+  }) as typeof fetch);
+  const client = make({ api: 1, nodes: [config.nodes[0]] });
+  await client.tools();
+  const first = await client.post("/p/a:demo/snapshot", { panel: "notes", after: 0 }, undefined, { "X-Acon-Known": known });
+  expect(first.status).toBe(200);
+  expect(first.data).toEqual({ ok: true, rows: [1] });
+  const second = await client.post("/p/a:demo/snapshot", { panel: "notes", after: 0 }, undefined, { "X-Acon-Known": known });
+  expect(second.status).toBe(200);
+  expect(seen).toEqual([known, null, null]);
+});
+
 test("static transport accepts older nodes with no cache headers or response-header interface", async () => {
   for (const noHeadersInterface of [false, true]) {
     const { make } = transport((async (input) => {

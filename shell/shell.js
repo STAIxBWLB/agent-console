@@ -1633,8 +1633,10 @@ async function pollPanel() {
     p.lastSig = sig;
     p.lastData = data;
     for (const cb of p.snapListeners) safe(r.tool, "onSnapshot", () => cb(data));
-  } else if (res.status) {
+  } else {
+    // Any failed reply, a transport failure (status 0) included, drops the conditional version.
     p.version = "";
+    if (!res.status) return;
     if (p.banner.hidden) p.banner.hidden = false;
     p.banner.replaceChildren(icon("alert"), h("span", { text: `${tool?.title ?? r.tool} could not refresh. ` }), h("a", { href: hashFor("system"), text: "Details in System" }));
   }
@@ -1929,12 +1931,8 @@ async function pollSpace() {
     if (resume && document.visibilityState === "visible") { entry.next = 0; queueMicrotask(() => pollSpace()); }
     entry.reported = true;
     if (res.status === 200 && (res.data.scene || (entry.scene && res.data.changed === false))) {
-      const stale = res.headers?.["x-acon-cache"] === "stale";
-      const sampledAt = Date.parse(res.headers?.["x-acon-sampled-at"] ?? "");
       // Motion measures observations, not repeated/jumping cache sample timestamps.
       entry.sampledAt = Date.now();
-      if (Number.isFinite(sampledAt)) entry.serverSampledAt = sampledAt;
-      else if (!stale) delete entry.serverSampledAt;
       if (res.data.scene) { entry.scene = res.data.scene; entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 }; }
       if (Number.isSafeInteger(res.data.cursor)) entry.cursor = res.data.cursor;
       entry.version = res.headers?.["x-acon-version"] ?? "";

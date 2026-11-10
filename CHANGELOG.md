@@ -7,6 +7,7 @@
 - Planned 0.2.0 N-1 support targets 0.1.8, the latest published patch of 0.1.x, and remains additive on API 1:
   - Plugin API: verified by a directional type bridge (old plugin values accepted by the current console; current console values satisfy old plugins; historical optional keys are retained) and the exact published 0.1.8 conformance kit against a 0.1.8-shaped provider opened by the current loader. New principal capabilities remain opt-in.
   - Routes: verified for the legacy browser session, tool listing, ping, panel snapshots, actions, confirmation-token exchange and a sample plugin asset through both tool-id and load-reference paths. Other Access/bearer and static-shell routes remain supported by policy but are not exercised by the added historical probe.
+  - Space route: a producer Space reply `{changed: false, cursor}` without a scene now passes through unchanged instead of being projected to an empty scene. A 0.1.8 static shell treats it as a failed source for that poll instead of blanking the scene; current shells keep the last scene.
   - Manifest files: verified for unversioned and versioned API 1 plugin registrations with module/hash validation. Existing pet/asset pack manifests and static node configuration remain supported by policy but are not covered by this N-1 probe; the principal registry is an additive new surface.
 
 ### Added
