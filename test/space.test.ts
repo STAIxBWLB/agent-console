@@ -32,7 +32,7 @@ describe("SpaceScene public contract", () => {
     expect(spaceSceneProblems({ ...s, body: "PRIVATE" })).toContain("scene.body is not a public field");
     expect(spaceSceneProblems({ ...s, actors: [{ ...actors[0], detail: "PRIVATE" }] })).toContain("scene.actors[0].detail is not a public field");
     expect(spaceSceneProblems({ ...s, actors: [{ ...actors[0], name: "x".repeat(201) }] })).toContain("scene.actors[0].name must be a string of 1-200 characters");
-    expect(spaceSceneProblems({ ...s, actors: Array.from({ length: 33 }, (_, i) => ({ ...actors[0], id: String(i) })) })).toContain("scene.actors exceeds 32");
+    expect(spaceSceneProblems({ ...s, actors: Array.from({ length: 97 }, (_, i) => ({ ...actors[0], id: String(i) })) })).toContain("scene.actors exceeds 96");
   });
   test("transport removes private marker fields at every declared nesting boundary", async () => {
     const s = await scene();
@@ -49,11 +49,11 @@ describe("SpaceScene public contract", () => {
     const s = await scene();
     const actor = (s.actors as Record<string, unknown>[])[0]!;
     const card = (s.cards as Record<string, unknown>[])[0]!;
-    const cleaned = sanitizeSpaceScene({ ...s, actors: Array.from({ length: 40 }, (_, i) => ({ ...actor, id: `actor-${i}` })), cards: Array.from({ length: 205 }, (_, i) => ({ ...card, id: `card-${i}` })), links: Array.from({ length: 70 }, () => ({ kind: "cohort", from: "actor-0", to: "actor-1" })) });
-    expect(cleaned.scene.actors).toHaveLength(32);
+    const cleaned = sanitizeSpaceScene({ ...s, actors: Array.from({ length: 100 }, (_, i) => ({ ...actor, id: `actor-${i}` })), cards: Array.from({ length: 205 }, (_, i) => ({ ...card, id: `card-${i}` })), links: Array.from({ length: 130 }, () => ({ kind: "cohort", from: "actor-0", to: "actor-1" })) });
+    expect(cleaned.scene.actors).toHaveLength(96);
     expect(cleaned.scene.cards).toHaveLength(200);
-    expect(cleaned.scene.links).toHaveLength(64);
-    expect(cleaned.dropped).toEqual({ actors: 8, cards: 5, links: 6 });
+    expect(cleaned.scene.links).toHaveLength(128);
+    expect(cleaned.dropped).toEqual({ actors: 4, cards: 5, links: 2 });
     expect(cleaned.scene.actors[0]!.card).toBeUndefined();
     expect(cleaned.scene.cards[0]!.owner).toBeUndefined();
     expect(spaceSceneProblems(cleaned.scene)).toEqual([]);
@@ -80,6 +80,38 @@ describe("SpaceScene public contract", () => {
     expect(clean.scene.links).toEqual([]);
     expect(clean.dropped.actors).toBe(1);
     expect(clean.dropped.links).toBe(1);
+  });
+  test("groups, roles and since are projected only when bounded and declared", async () => {
+    const s = await scene();
+    const actor = (s.actors as Record<string, unknown>[])[0]!;
+    const card = (s.cards as Record<string, unknown>[])[0]!;
+    const zone = (s.zones as Record<string, unknown>[]).find((candidate) => candidate.id === card.zone)!;
+    const input = {
+      ...s,
+      groups: [
+        { id: "team", title: "Team" },
+        { id: "team", title: "Duplicate" },
+        { id: "g".repeat(201), title: "Invalid identity" },
+        { id: "broken", title: "x".repeat(201) },
+      ],
+      actors: [
+        { ...actor, group: "team", roles: ["planner", "reviewer"], since: "2026-11-09T12:30:00Z" },
+        { ...actor, id: "unknown-group", group: "missing", roles: ["x".repeat(33)], since: "yesterday" },
+      ],
+      zones: [{ ...zone, group: "missing" }],
+      cards: [{ ...card, group: "team" }],
+    };
+    const cleaned = sanitizeSpaceScene(input);
+    expect(cleaned.scene.groups).toEqual([{ id: "team", title: "Team" }]);
+    expect(cleaned.scene.actors[0]).toMatchObject({ group: "team", roles: ["planner", "reviewer"], since: "2026-11-09T12:30:00Z" });
+    expect(cleaned.scene.actors[1]).not.toHaveProperty("group");
+    expect(cleaned.scene.actors[1]).not.toHaveProperty("roles");
+    expect(cleaned.scene.actors[1]).not.toHaveProperty("since");
+    expect(cleaned.scene.zones[0]).not.toHaveProperty("group");
+    expect(cleaned.scene.cards[0]).toHaveProperty("group", "team");
+    expect(spaceSceneProblems(cleaned.scene)).toEqual([]);
+    expect(spaceSceneProblems({ ...cleaned.scene, actors: [{ ...cleaned.scene.actors[0], group: "missing" }] })).toContain("scene.actors[0].group must reference a declared group");
+    expect(spaceSceneProblems({ ...cleaned.scene, actors: [{ ...cleaned.scene.actors[0], roles: ["a", "b", "c", "d", "e"] }] })).toContain("scene.actors[0].roles must contain at most 4 strings of 1-32 characters");
   });
 });
 
@@ -136,16 +168,16 @@ describe("space model and evidence layout", () => {
   });
   test("scene rendering has no timer, frame loop or outward action and caps match transport", () => {
     expect(source).not.toMatch(/setInterval\s*\(|requestAnimationFrame\s*\(|\bfetch\s*\(|\bpost\s*\(|\.action\s*\(/);
-    expect(browserModel.SPACE_CAPS).toEqual({ actors: 32, cards: 200, links: 64 });
+    expect(browserModel.SPACE_CAPS).toEqual({ actors: 96, cards: 200, links: 128 });
   });
   test("caps apply across tools and omitted actors cannot leave misleading assignments", async () => {
     const base = await scene() as unknown as SpaceScene;
-    const s = { ...base, actors: Array.from({ length: 32 }, (_, i) => ({ ...base.actors[0]!, id: `actor-${i}` })), links: [{ kind: "cohort" as const, from: "actor-0", to: "actor-1" }], cards: [{ ...base.cards[0]!, owner: "actor-0" }] };
+    const s = { ...base, actors: Array.from({ length: 96 }, (_, i) => ({ ...base.actors[0]!, id: `actor-${i}` })), links: Array.from({ length: 128 }, (_, i) => ({ kind: "cohort" as const, from: "actor-0", to: "actor-1", label: String(i) })), cards: [{ ...base.cards[0]!, owner: "actor-0" }] };
     const model = browserModel.mergeSpaceScenes(new Map([["demo", { scene: s }], ["echo", { scene: s }]]));
-    expect(model.actors).toHaveLength(32);
-    expect(model.dropped.actors).toBe(32);
-    expect(model.links).toHaveLength(1);
-    expect(model.dropped.links).toBe(1);
+    expect(model.actors).toHaveLength(96);
+    expect(model.dropped.actors).toBe(96);
+    expect(model.links).toHaveLength(128);
+    expect(model.dropped.links).toBe(128);
     expect(model.cards.find((c) => c.id === "echo:n1")!.owner).toBeUndefined();
   });
 });

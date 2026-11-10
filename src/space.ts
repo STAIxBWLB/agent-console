@@ -7,6 +7,10 @@ const MARKS = ["approval", "inbox", "paused", "mode"];
 const KINDS = ["queue", "work", "review", "done"];
 const LINKS = ["message", "overlap", "conflict", "cohort"];
 const TONES = ["ok", "warn", "err", "neutral"];
+const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/;
+const GROUP_CAP = PUBLIC_CAPS.items;
+const ROLE_COUNT_CAP = 4;
+const ROLE_TEXT_CAP = 32;
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= PUBLIC_CAPS.text;
 
@@ -27,7 +31,23 @@ export function spaceSceneProblems(value: unknown): string[] {
     if (v.params !== undefined && (!object(v.params) || Object.entries(v.params).some(([k, x]) => !text(k) || typeof x !== "string" || x.length > PUBLIC_CAPS.text))) out.push(`${path}.params must contain string routing values of at most 200 characters`);
   };
   if (!object(value)) return ["scene must be an object"];
-  fields(value, ["actors", "zones", "cards", "links"], "scene");
+  fields(value, ["groups", "actors", "zones", "cards", "links"], "scene");
+  const declaredGroups = new Set<string>();
+  if (value.groups !== undefined) {
+    if (!Array.isArray(value.groups)) out.push("scene.groups must be an array");
+    else {
+      if (value.groups.length > GROUP_CAP) out.push(`scene.groups exceeds ${GROUP_CAP}`);
+      value.groups.forEach((g: unknown, i: number) => {
+        const path = `scene.groups[${i}]`;
+        if (!object(g)) { out.push(`${path} must be an object`); return; }
+        fields(g, ["id", "title"], path); required(g, "id", path); required(g, "title", path);
+        if (typeof g.id === "string") {
+          if (declaredGroups.has(g.id)) out.push(`${path}.id is duplicated`);
+          declaredGroups.add(g.id);
+        }
+      });
+    }
+  }
   for (const key of ["actors", "zones", "cards", "links"] as const) {
     if (key === "links" && value[key] === undefined) continue;
     const list = value[key];
@@ -42,8 +62,12 @@ export function spaceSceneProblems(value: unknown): string[] {
         if (typeof v.id === "string") { if (ids.has(v.id)) out.push(`${path}.id is duplicated`); ids.add(v.id); }
       }
       if (key === "actors") {
-        fields(v, ["id", "name", "state", "pet", "card", "marks", "link"], path);
+        fields(v, ["id", "name", "state", "pet", "card", "group", "roles", "since", "marks", "link"], path);
         required(v, "name", path); choice(v, "state", STATES, path); optional(v, "pet", path); optional(v, "card", path); link(v.link, `${path}.link`);
+        optional(v, "group", path);
+        if (v.group !== undefined && !declaredGroups.has(v.group as string)) out.push(`${path}.group must reference a declared group`);
+        if (v.roles !== undefined && (!Array.isArray(v.roles) || v.roles.length > ROLE_COUNT_CAP || v.roles.some((r) => !text(r) || r.length > ROLE_TEXT_CAP))) out.push(`${path}.roles must contain at most ${ROLE_COUNT_CAP} strings of 1-${ROLE_TEXT_CAP} characters`);
+        if (v.since !== undefined && (typeof v.since !== "string" || !ISO_TIME.test(v.since) || Number.isNaN(Date.parse(v.since)))) out.push(`${path}.since must be an ISO time`);
         if (v.marks !== undefined) {
           if (!Array.isArray(v.marks)) out.push(`${path}.marks must be an array`);
           else v.marks.forEach((m: unknown, j: number) => {
@@ -53,10 +77,12 @@ export function spaceSceneProblems(value: unknown): string[] {
           });
         }
       } else if (key === "zones") {
-        fields(v, ["id", "title", "kind", "count"], path); required(v, "title", path); choice(v, "kind", KINDS, path, true);
+        fields(v, ["id", "title", "kind", "count", "group"], path); required(v, "title", path); choice(v, "kind", KINDS, path, true); optional(v, "group", path);
+        if (v.group !== undefined && !declaredGroups.has(v.group as string)) out.push(`${path}.group must reference a declared group`);
         if (!Number.isSafeInteger(v.count) || (v.count as number) < 0) out.push(`${path}.count must be a non-negative integer`);
       } else if (key === "cards") {
-        fields(v, ["id", "title", "zone", "owner", "tone", "link"], path); required(v, "title", path); required(v, "zone", path);
+        fields(v, ["id", "title", "zone", "owner", "tone", "group", "link"], path); required(v, "title", path); required(v, "zone", path); optional(v, "group", path);
+        if (v.group !== undefined && !declaredGroups.has(v.group as string)) out.push(`${path}.group must reference a declared group`);
         optional(v, "owner", path); choice(v, "tone", TONES, path, true); link(v.link, `${path}.link`);
       } else {
         fields(v, ["kind", "from", "to", "label", "at"], path); choice(v, "kind", LINKS, path);
@@ -79,6 +105,14 @@ export function sanitizeSpaceScene(value: unknown): { scene: SpaceScene; dropped
     return { panel: s(l.panel), ...(params ? { params } : {}) };
   };
   const rows = (key: "actors" | "zones" | "cards" | "links") => Array.isArray(src[key]) ? src[key].filter(object) : [];
+  const seenGroups = new Set<string>();
+  const groups = (Array.isArray(src.groups) ? src.groups : []).filter(object)
+    .filter((g) => text(g.id) && text(g.title) && g.id.length <= PUBLIC_CAPS.text && g.title.length <= PUBLIC_CAPS.text)
+    .filter((g) => { const id = g.id as string; if (seenGroups.has(id)) return false; seenGroups.add(id); return true; })
+    .slice(0, GROUP_CAP)
+    .map((g) => ({ id: g.id as string, title: g.title as string }));
+  const groupIds = new Set(groups.map((g) => g.id));
+  const group = (v: unknown) => typeof v === "string" && groupIds.has(v) ? v : undefined;
   const unique = (list: Record<string, unknown>[]) => {
     const seen = new Set<string>();
     return list.filter((v) => { if (!text(v.id) || seen.has(v.id)) return false; seen.add(v.id); return true; });
@@ -96,11 +130,15 @@ export function sanitizeSpaceScene(value: unknown): { scene: SpaceScene; dropped
   dropped.cards = (Array.isArray(src.cards) ? src.cards.length : 0) - keptCards.length;
   dropped.links = (Array.isArray(src.links) ? src.links.length : 0) - Math.min(links.length, SPACE_CAPS.links);
   const scene: SpaceScene = {
+    ...(groups.length ? { groups } : {}),
     actors: keptActors.map((a) => ({ id: s(a.id), name: s(a.name), state: a.state as SpaceScene["actors"][number]["state"],
       ...(text(a.pet) ? { pet: a.pet } : {}), ...(text(a.card) && cardIds.has(a.card) ? { card: a.card } : {}),
+      ...(group(a.group) ? { group: group(a.group) } : {}),
+      ...(Array.isArray(a.roles) && a.roles.length <= ROLE_COUNT_CAP && a.roles.every((r) => text(r) && r.length <= ROLE_TEXT_CAP) ? { roles: a.roles.slice() as string[] } : {}),
+      ...(typeof a.since === "string" && ISO_TIME.test(a.since) && !Number.isNaN(Date.parse(a.since)) ? { since: a.since } : {}),
       ...(Array.isArray(a.marks) ? { marks: a.marks.filter(object).filter((m) => MARKS.includes(m.kind as string) && typeof m.text === "string").map((m) => ({ kind: m.kind as "approval" | "inbox" | "paused" | "mode", text: s(m.text) })) } : {}), link: route(a.link) })),
-    zones: zones.map((z) => ({ id: s(z.id), title: s(z.title), ...(KINDS.includes(z.kind as string) ? { kind: z.kind as "queue" | "work" | "review" | "done" } : {}), count: z.count as number })),
-    cards: keptCards.map((c) => ({ id: s(c.id), title: s(c.title), zone: s(c.zone), ...(text(c.owner) && actorIds.has(c.owner) ? { owner: c.owner } : {}), ...(TONES.includes(c.tone as string) ? { tone: c.tone as "ok" | "warn" | "err" | "neutral" } : {}), link: route(c.link) })),
+    zones: zones.map((z) => ({ id: s(z.id), title: s(z.title), ...(group(z.group) ? { group: group(z.group) } : {}), ...(KINDS.includes(z.kind as string) ? { kind: z.kind as "queue" | "work" | "review" | "done" } : {}), count: z.count as number })),
+    cards: keptCards.map((c) => ({ id: s(c.id), title: s(c.title), zone: s(c.zone), ...(group(c.group) ? { group: group(c.group) } : {}), ...(text(c.owner) && actorIds.has(c.owner) ? { owner: c.owner } : {}), ...(TONES.includes(c.tone as string) ? { tone: c.tone as "ok" | "warn" | "err" | "neutral" } : {}), link: route(c.link) })),
     links: links.slice(0, SPACE_CAPS.links).map((l) => ({ kind: l.kind as "message" | "overlap" | "conflict" | "cohort", from: s(l.from), to: s(l.to), ...(typeof l.label === "string" ? { label: s(l.label) } : {}), ...(typeof l.at === "string" && !Number.isNaN(Date.parse(l.at)) ? { at: s(l.at) } : {}) })),
   };
   return { scene, dropped };

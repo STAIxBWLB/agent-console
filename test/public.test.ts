@@ -67,9 +67,9 @@ describe("public value projection", () => {
     expect(projected.items).toHaveLength(PUBLIC_CAPS.items);
     const record = Object.fromEntries(Array.from({ length: PUBLIC_CAPS.items + 1 }, (_, i) => [`field${i}`, i]));
     expect(Object.keys(projectPublicValue(record) as object)).toHaveLength(PUBLIC_CAPS.items);
-    expect(SPACE_CAPS.actors).toBe(32);
+    expect(SPACE_CAPS.actors).toBe(96);
     expect(SPACE_CAPS.cards).toBe(200);
-    expect(SPACE_CAPS.links).toBe(64);
+    expect(SPACE_CAPS.links).toBe(128);
     const depthTwo = projected.nested.a as Record<string, unknown>;
     const depthThree = depthTwo.b as Record<string, unknown>;
     const depthFour = depthThree.c as Record<string, unknown>;

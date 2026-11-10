@@ -1,5 +1,5 @@
 // View controller shared by the CSS room and the optional, lazily imported WebGL view.
-const STORAGE_KEY = "acon.space.view";
+const STORAGE_KEY = "acon.space.roomView";
 const radians = (degrees) => degrees * Math.PI / 180;
 export function roomTransform(position, width, height, camera) {
   const { yaw, pitch } = camera;
@@ -21,7 +21,7 @@ export function createSpaceViewController(host) {
   let available = false;
   try { const probe = document.createElement("canvas"); const context = probe.getContext("webgl2"); available = Boolean(context); context?.getExtension("WEBGL_lose_context")?.loseContext(); } catch { /* Room is always available. */ }
   let view = "flat", saved = "flat";
-  try { saved = localStorage.getItem(STORAGE_KEY) ?? "flat"; } catch { /* Storage may be disabled. */ }
+  try { saved = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem("acon.space.view") ?? "flat"; } catch { /* Storage may be disabled. */ }
   let state = null, webgl = null, lastReady = null, generation = 0, destroyed = false;
   let camera = { yaw: 45, pitch: 60, zoom: 1 };
   let cameraTouched = false;

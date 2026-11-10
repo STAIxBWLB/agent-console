@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runVisualCheck } from "./ui-check-visual.mjs";
 import { runLoginCheck } from "./ui-check-login.mjs";
+import { runSpaceFoundation } from "./ui-check-space-foundation.mjs";
 import { runStaticCheck } from "./ui-check-static.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -142,6 +143,7 @@ provider.assets = {js:${JSON.stringify(`export default ${fixturePanel.toString()
 const snapshot = provider.snapshot.bind(provider);
 provider.snapshot = async (input) => {
   const result = await snapshot(input);
+  if (result.scene) return {...result,scene:{...result.scene,groups:result.scene.groups.map((group)=>({...group,title:tool==="echo"?"Echo "+group.title:group.title}))}};
   if (result.notes) return {...result,notes:result.notes.map((note)=>({...note,title:note.title+" with additional review context"}))};
   return result;
 };
@@ -1243,7 +1245,7 @@ try {
     await runMini(ticket, { width: 375, theme: "light", textPercent: 100 }, "mini-fallback", 1000, false);
   }
   if (!focused || options.spaceMotionOnly) await runSpaceMotion(ticket);
-  if (!focused || options.spaceViewsOnly) await runSpaceViews(ticket);
+  if (!focused || options.spaceViewsOnly) { await runSpaceViews(ticket); await runSpaceFoundation({ browser, ticket, report, output: options.output }); }
   if (!focused || options.visualOnly) await runVisualCheck({ browser, root, report, output: options.output, env, scratch });
   if (!focused || options.loginOnly) await runLoginCheck({ browser, root, report, output: options.output, forceOverflow: options.forceOverflow, env, scratch });
   if (!focused || options.staticOnly) await runStaticCheck({ browser, root, capture, report, output: options.output, forceOverflow: options.forceOverflow });
