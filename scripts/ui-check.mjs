@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 // Agent-run browser probe. Playwright is discovered at runtime, never a package dependency.
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";

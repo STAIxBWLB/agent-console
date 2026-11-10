@@ -48,7 +48,7 @@ describe("H2 static build (#46)", () => {
     expect(html).toContain(`content="${staticCsp(result.config).replace("; frame-ancestors 'none'", "")}"`);
     expect(html).not.toMatch(/<script\b[^>]*>\s*[^\s<]/i);
     expect(html).not.toMatch(/<style\b|\sstyle\s*=|\son[a-z]+\s*=/i);
-    for (const file of ["shell.js", "static.js", "shell.css", "space-flow.js", "space-board.js", "vendor/three.module.js", "visual/frame.html", "visual/frame.js", "visual/mermaid.js", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css", "_headers", "vercel.json", "wrangler.jsonc", ".assetsignore", ".vercelignore"]) expect(existsSync(join(out, file))).toBe(true);
+    for (const file of ["shell.js", "static.js", "snapshot-headers.js", "shell.css", "space-flow.js", "space-board.js", "vendor/three.module.js", "visual/frame.html", "visual/frame.js", "visual/mermaid.js", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css", "_headers", "vercel.json", "wrangler.jsonc", ".assetsignore", ".vercelignore"]) expect(existsSync(join(out, file))).toBe(true);
     const headers = readFileSync(join(out, "_headers"), "utf8");
     const broad = headers.split("\n\n")[0]!;
     expect(broad).toStartWith("/*\n");

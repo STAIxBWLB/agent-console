@@ -71,7 +71,7 @@ test("a visibility return during an in-flight panel queues only one immediate fo
   await first; await flush(); expect(h.requests).toHaveLength(2);
 });
 
-test("Space reads stale headers on known replies without replacing scene or advancing sample time", async () => {
+test("Space SWR headers keep the original sample without failing healthy actors", async () => {
   const h = pollingHarness(); h.state.route.area = "space";
   const scene = { actors: [{ id: "one" }], zones: [], cards: [] };
   h.setClock(100000);
@@ -82,10 +82,13 @@ test("Space reads stale headers on known replies without replacing scene or adva
   h.setResponse(async () => ({ status: 200, data: { changed: false }, headers: { "x-acon-version": VERSION, "x-acon-cache": "stale", "x-acon-sampled-at": new Date(1000).toISOString() } }));
   await h.api.pollSpace();
   expect(h.requests[1]!.body).toMatchObject({ after: 7, known: VERSION });
-  expect(entry.scene).toEqual(scene); expect(entry.sampledAt).toBe(1000); expect(entry.failed).toBe(true);
+  expect(entry.scene).toEqual(scene); expect(entry.sampledAt).toBe(1000); expect(entry.failed).toBe(false);
   const mergeSource = readFileSync(new URL("../shell/space.js", import.meta.url), "utf8").replace(/^import .*;$/gm, "").replace(/^export /gm, "");
   const merge = runInNewContext(`${mergeSource}\nmergeSpaceScenes`);
   entry.scene = { ...scene, actors: [{ id: "one", name: "One", state: "working", link: { panel: "notes" } }] };
+  expect(merge(h.state.space).actors[0].stale).toBe(false);
+  h.setClock(entry.next); h.setResponse(async () => ({ status: 502, data: { ok: false } }));
+  await h.api.pollSpace(); expect(entry.sampledAt).toBe(1000); expect(entry.failed).toBe(true);
   expect(merge(h.state.space).actors[0].stale).toBe(true);
 });
 
@@ -112,10 +115,11 @@ test("progressive inbox renders fast replies before slow ones and has per-tool a
   let now = 0, release!: (response: any) => void;
   const state = { inbox: new Map<string, any>(), route: { area: "inbox" }, peekKey: null };
   const calls: { tool: string; input: any }[] = [], renders: string[][] = [];
+  let rendered = "";
   const poll = runInNewContext(`${inboxSource}\npollInbox`, {
     state, INBOX_MS: 5000, Date: class extends Date { static now() { return now; } },
     readyTools: () => [{ tool: "slow", pollMs: 2000, capabilities: { inbox: true } }, { tool: "fast", pollMs: 2000, capabilities: { inbox: true } }],
-    validItem: () => true, clientError() {}, renderRail() {}, renderMini() {}, renderPeek() {}, renderInbox: () => renders.push([...state.inbox.keys()]),
+    validItem: () => true, clientError() {}, renderRail() {}, renderMini() {}, renderPeek() {}, renderInbox: () => { const signature = JSON.stringify([...state.inbox].map(([tool, entry]) => [tool, entry.items, entry.failed])); if (signature !== rendered) { rendered = signature; renders.push([...state.inbox.keys()]); } },
     post: (url: string, input: any) => { const tool = url.split("/")[2]!; calls.push({ tool, input });
       return tool === "slow" ? new Promise((resolve) => { release = resolve; }) : Promise.resolve({ status: 200, data: calls.filter((call) => call.tool === "fast").length === 1 ? { items: [{ id: "fast" }] } : { changed: false }, headers: { "x-acon-version": VERSION } }); },
   });
@@ -148,4 +152,45 @@ test("a re-hidden pending refresh does not leave a second resume queued", async 
   h.document.visibilityState = "visible";
   h.setResponse(async () => ({ status: 200, data: { changed: false }, headers: { "x-acon-version": VERSION } }));
   h.api.resumeVisiblePolling(); await flush(); expect(h.requests).toHaveLength(2);
+});
+
+
+test("snooze expiry refreshes Inbox, Mini/PiP and pet pose without changed provider data", async () => {
+  let now = 0, calls = 0;
+  const state = { inbox: new Map<string, any>(), route: { area: "inbox" }, peekKey: null };
+  const at = "1970-01-01T00:00:00.000Z";
+  const snoozes = { "demo:item": { at, until: 100 } };
+  const item = { id: "item", title: "Decision", at, group: "decision", verbs: [], link: { panel: "notes" } };
+  const visibleSource = source.slice(source.indexOf("function snoozes()"), source.indexOf("function validItem("));
+  const poseSource = source.slice(source.indexOf("function petState()"), source.indexOf("// Oldest first across groups"));
+  const observed: Record<string, string[]> = { inbox: [], mini: [], pet: [] };
+  let api: any;
+  const record = (surface: string, value: string) => { const values = observed[surface]!; if (values.at(-1) !== value) values.push(value); };
+  api = runInNewContext(`${visibleSource}\n${poseSource}\n${inboxSource}\n({pollInbox,visibleItems,petState})`, {
+    state, INBOX_MS: 5000, Date: class extends Date { static now() { return now; } }, store: () => snoozes,
+    readyTools: () => [{ tool: "demo", capabilities: { inbox: true } }], validItem: () => true, clientError() {}, renderPeek() {},
+    renderRail: () => record("pet", api.petState()),
+    renderMini: () => record("mini", api.visibleItems().map((item: any) => item.id).join(",")),
+    renderInbox: () => record("inbox", api.visibleItems().map((item: any) => item.id).join(",")),
+    post: async () => { calls++; return { status: 200, data: { items: [item] }, headers: { "x-acon-version": VERSION } }; },
+  });
+  await api.pollInbox(false);
+  expect(observed).toEqual({ inbox: [""], mini: [""], pet: ["idle"] });
+  now = 101; await api.pollInbox(false); // Before the provider deadline: only snooze time changed.
+  expect(calls).toBe(1);
+  expect(observed).toEqual({ inbox: ["", "item"], mini: ["", "item"], pet: ["idle", "waiting"] });
+  now = 102; await api.pollInbox(false);
+  expect(observed.inbox).toHaveLength(2); expect(observed.mini).toHaveLength(2); expect(observed.pet).toHaveLength(2);
+});
+
+test("signature-unchanged rail refreshes do not rewrite the document title", () => {
+  let titleWrites = 0;
+  const railSource = source.slice(source.indexOf("function renderRail()"), source.indexOf("function renderCrumbs()"));
+  const signature = JSON.stringify(["inbox", undefined, 0, 0, false, []]);
+  const render = runInNewContext(`let railSig = ${JSON.stringify(signature)}; ${railSource}\nrenderRail`, {
+    state: { route: { area: "inbox" }, tools: [], serverErrors: [], clientErrors: [] },
+    document: { get title() { return "acon"; }, set title(_value: string) { titleWrites++; } },
+    needsMeCount: () => 0, renderPet() {}, spaceTools: () => [], readyTools: () => [],
+  });
+  render(); render(); expect(titleWrites).toBe(0);
 });

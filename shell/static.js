@@ -1,11 +1,7 @@
 // H2 transport. Credentials live only in this tab; the static host serves no node data.
+import { snapshotHeaders } from "./snapshot-headers.js";
 const NODE_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const TOOL_ID = /^[a-z][a-z0-9-]{1,15}$/;
-const SNAPSHOT_HEADERS = ['x-acon-version', 'x-acon-cache', 'x-acon-cache-age-ms', 'x-acon-sampled-at'];
-const responseHeaders = (response) => Object.fromEntries(SNAPSHOT_HEADERS.flatMap((name) => {
-  const value = response.headers?.get?.(name);
-  return typeof value === 'string' ? [[name, value]] : [];
-}));
 const loopback = (host) => host === 'localhost' || host === '[::1]' || /^127\.\d+\.\d+\.\d+$/.test(host);
 
 export function createStaticTransport(config, onStatus = () => {}) {
@@ -56,7 +52,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
       node.grant = '';
       notify(node, 'unauthorized', 'Authentication refused; enter this node\'s bearer token or sign in to its Access application, then reconnect.');
     } else notify(node, 'online', 'Connected');
-    return { status: response.status, headers: responseHeaders(response), data: data ?? { ok: false, error: `Node answered HTTP ${response.status} without JSON; check its System log.` } };
+    return { status: response.status, headers: snapshotHeaders(response), data: data ?? { ok: false, error: `Node answered HTTP ${response.status} without JSON; check its System log.` } };
   };
   const connect = async (node) => {
     if (!node.grant || Date.now() >= node.grantUntil) {

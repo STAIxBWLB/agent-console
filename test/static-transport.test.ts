@@ -11,9 +11,10 @@ interface Transport {
   setToken(id: string, token: string): void;
 }
 function transport(fetchImpl: typeof fetch, signals: { timeout(milliseconds: number): AbortSignal } = AbortSignal) {
-  const source = readFileSync(new URL("../shell/static.js", import.meta.url), "utf8").replace("export function createStaticTransport", "function createStaticTransport");
+  const source = readFileSync(new URL("../shell/static.js", import.meta.url), "utf8").replace(/^import .*;$/gm, "").replace("export function createStaticTransport", "function createStaticTransport");
+  const metadata = readFileSync(new URL("../shell/snapshot-headers.js", import.meta.url), "utf8").replace(/^export /gm, "");
   const storage = new Map<string, string>();
-  const make = runInNewContext(`${source}\ncreateStaticTransport`, {
+  const make = runInNewContext(`${metadata}\n${source}\ncreateStaticTransport`, {
     URL, AbortSignal: signals, fetch: fetchImpl,
     sessionStorage: { getItem: (key: string) => storage.get(key), setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) },
   }) as (config: unknown) => Transport;

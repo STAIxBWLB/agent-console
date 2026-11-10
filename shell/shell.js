@@ -1,4 +1,5 @@
 // acon shell (H0). Vanilla ES module under a strict CSP: no inline code, and data is rendered as text, never as markup.
+import { snapshotHeaders } from "./snapshot-headers.js";
 import { ICONS as TABLER } from "./vendor/icons/icons.js";
 const NODE = "local";
 const GROUPS = [["decision", "Needs your decision"], ["review", "To review"], ["result", "Results"], ["candidate", "Candidates"], ["alert", "Alerts"]];
@@ -818,7 +819,7 @@ async function post(path, body = {}) {
   try { data = await res.json(); } catch { /* non-JSON error body */ }
   if (res.status === 401 && path !== "/session") endSession("This console session ended.");
   return { status: res.status, data: data ?? { ok: false, error: `HTTP ${res.status}` },
-    headers: Object.fromEntries(["x-acon-version", "x-acon-cache", "x-acon-cache-age-ms", "x-acon-sampled-at"].flatMap((name) => { const value = res.headers?.get?.(name); return value === null || value === undefined ? [] : [[name, value]]; })) };
+    headers: snapshotHeaders(res) };
 }
 function clientError(tool, where, error) {
   state.clientErrors.unshift({ at: new Date().toISOString(), tool, where, message: String(error?.message ?? error).split("\n")[0].slice(0, 200) });
@@ -906,7 +907,8 @@ let railSig = "";
 function renderRail() {
   const r = state.route;
   const count = needsMeCount();
-  document.title = count ? `acon (${count})` : "acon";
+  const title = count ? `acon (${count})` : "acon";
+  if (document.title !== title) document.title = title;
   renderPet();
   const issues = state.serverErrors.length + state.clientErrors.length + state.tools.filter((t) => t.status !== "ready").length + (state.node?.pluginsError ? 1 : 0);
   const sig = JSON.stringify([r.area, r.tool, count, issues, spaceTools().length > 0, readyTools().map((t) => [t.tool, t.title, t.icon])]);
@@ -1034,6 +1036,9 @@ async function pollInbox(fresh = true) {
   for (const tool of [...state.inbox.keys()]) if (!tools.some((t) => t.tool === tool)) { state.inbox.delete(tool); removed = true; }
   if (removed) renderInboxSources();
   await Promise.all(tools.map((t) => inboxOnce(t, fresh)));
+  // Time-dependent snoozes can expire even when every provider result is unchanged.
+  renderRail(); renderMini();
+  if (state.route.area === "inbox") renderInbox();
 }
 async function inboxFetch(t, seq) {
   const previous = state.inbox.get(t.tool);
@@ -1927,7 +1932,8 @@ async function pollSpace() {
       if (res.data.scene) { entry.scene = res.data.scene; entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 }; }
       if (Number.isSafeInteger(res.data.cursor)) entry.cursor = res.data.cursor;
       entry.version = res.headers?.["x-acon-version"] ?? "";
-      entry.failed = stale;
+      // SWR grace is healthy reuse, not a failed refresh. Only unsuccessful replies fail a source.
+      entry.failed = false;
     } else { entry.failed = true; entry.version = ""; }
   }));
   renderSpace();

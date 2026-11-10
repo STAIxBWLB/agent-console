@@ -1,5 +1,5 @@
-import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 // #101 Delivery 1: routing/layout and raised-cap performance, synthetic scenes only.
+import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 import assert from "node:assert/strict";
 import { join } from "node:path";
 export async function runSpaceFoundation({ browser, ticket, report, output }) {
