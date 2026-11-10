@@ -25,7 +25,7 @@ const $ = (id) => document.getElementById(id);
 // Module references: these move into a Picture-in-Picture document with Mini, where getElementById cannot find them.
 const confirmEl = $("confirm");
 const state = {
-  tools: [], pets: [], assetPacks: [], space: new Map(), node: null, serverErrors: [], clientErrors: [],
+  tools: [], pets: [], assetPacks: [], space: new Map(), node: null, snapshotCache: null, serverErrors: [], clientErrors: [],
   route: { area: "inbox", params: {} },
   inbox: new Map(), inboxSig: "", selectedKey: null, peekKey: null,
   panels: new Map(),
@@ -1592,7 +1592,8 @@ async function pollPanel() {
   if (res.status === 200) {
     p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
-    let data = res.data;
+    // Cache transport metadata must not change the plugin cursor protocol or payload signature.
+    let { sampledAt: _sampledAt, stale: _stale, ...data } = res.data;
     if (data.changed === false && Object.keys(data).every((key) => key === "changed" || key === "cursor")) {
       if (p.lastSig !== "") return;
       if (!p.lastData) {
@@ -2060,8 +2061,31 @@ function staticNodeCards() {
   });
 }
 
+function snapshotCacheCard() {
+  const caches = staticTransport
+    ? staticTransport.nodes.filter((node) => node.data?.snapshotCache).map((node) => ({ id: node.id, ...node.data.snapshotCache }))
+    : state.snapshotCache ? [{ id: "local", ...state.snapshotCache }] : [];
+  const number = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+  const sections = caches.map((cache) => {
+    const metrics = Array.isArray(cache.metrics) ? cache.metrics : [];
+    return h("div", {},
+      h("h3", { class: "card-sub", text: cache.id }),
+      h("p", { class: "sub", text: `${fmtNum(number(cache.entries))} entries · ${fmtNum(number(cache.bytes) / 1024)} KiB in memory` }),
+      metrics.length ? h("ul", { class: "list" }, metrics.map((metric) => h("li", {},
+        h("strong", { text: `${str(metric.tool)} / ${str(metric.panel)}` }),
+        h("span", { class: "meta", text: str(metric.namespace) }),
+        h("span", { text: `${fmtNum(number(metric.hits))} hit · ${fmtNum(number(metric.misses))} miss · ${fmtNum(number(metric.stale))} stale` }),
+        h("span", { class: "meta", text: `Provider p50 ${fmtNum(number(metric.p50Ms))} ms · p95 ${fmtNum(number(metric.p95Ms))} ms · ${fmtNum(number(metric.samples))} samples` }))))
+        : h("p", { class: "sub", text: "No snapshot requests measured yet." }));
+  });
+  return h("section", { class: "card wide", "data-snapshot-cache": "true" },
+    h("h2", { text: "Snapshot cache" }),
+    h("p", { class: "sub", text: "Counts are per tool and panel. Provider timings use the latest 128 calls; cache hits do not add timing samples." }),
+    ...(sections.length ? sections : [h("p", { class: "sub", text: "This node does not report snapshot cache diagnostics." })]));
+}
+
 function renderSystem(force = false) {
-  const sig = JSON.stringify([state.node, state.tools, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off", staticTransport?.nodes.map((n) => [n.id, n.status, n.detail])]);
+  const sig = JSON.stringify([state.node, state.tools, state.snapshotCache, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off", staticTransport?.nodes.map((n) => [n.id, n.status, n.detail, n.data?.snapshotCache])]);
   if (!force && sig === systemSig && $("view-system").childElementCount) return;
   systemSig = sig;
   // Keep keyboard focus on the same control across re-renders.
@@ -2092,6 +2116,7 @@ function renderSystem(force = false) {
         state.tools.length ? h("ul", { class: "list" }, state.tools.map((t) => h("li", {}, h("strong", { text: t.title ?? t.tool }), h("span", { class: "meta mono", text: t.tool }), statusChip(t.status),
           h("span", { class: "meta", text: t.status === "ready" ? `${t.version} · ${plural(t.panels.length, "panel")}${t.capabilities?.inbox ? " · inbox" : ""}${t.capabilities?.search ? " · search" : ""}${t.update ? ` · ${t.update} is registered; reload the page to use it` : ""}` : str(t.reason) }))))
           : h("p", { class: "sub", text: "No plugin manifests were found. A tool registers itself with its setup command." })),
+      snapshotCacheCard(),
       h("section", { class: "card wide" }, h("h2", { text: `Errors (${errors.length})` }),
         errors.length ? h("ul", { class: "list" }, errors.map((e) => h("li", {}, h("span", { class: "meta mono", text: new Date(e.at).toLocaleTimeString() }), h("strong", { text: e.tool }), h("span", { class: "meta", text: e.where }), h("span", { text: e.message }))))
           : h("p", { class: "sub", text: "No errors since the console started." }))));
@@ -2115,6 +2140,7 @@ async function loadTools() {
   updateReadOnly();
   state.pets = Array.isArray(r.data.pets) ? r.data.pets.filter((p) => p && PET_ID.test(str(p.id)) && str(p.name)) : [];
   state.assetPacks = Array.isArray(r.data.assetPacks) ? r.data.assetPacks.filter((p) => p && PET_ID.test(str(p.id)) && Array.isArray(p.images) && p.images.every((id) => PET_ID.test(str(id))) && Array.isArray(p.tile) && p.tile.length === 2 && p.tile.every((n) => Number.isSafeInteger(n) && n > 0)) : [];
+  state.snapshotCache = r.data.snapshotCache && typeof r.data.snapshotCache === "object" ? r.data.snapshotCache : null;
   state.serverErrors = Array.isArray(r.data.errors) ? r.data.errors : [];
   renderRail();
   if (state.route.area === "system") renderSystem();

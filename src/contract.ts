@@ -21,7 +21,8 @@ export interface ConsolePanelManifest {
   title: string;
   /** Area icon name the shell knows (agents, memory, vault, ...); unknown names fall back to a generic glyph. */
   icon?: string;
-  panels: { id: string; title: string; icon?: string; order?: number }[];
+  /** maxAgeMs opts a panel into snapshot reuse for 0-60000 ms; 0 disables reuse. */
+  panels: { id: string; title: string; icon?: string; order?: number; maxAgeMs?: number }[];
   /** Palette entries; each runs action({...input, action}) through the same confirm path as a verb. */
   commands?: ConsoleCommand[];
   /** Poll interval for the visible panel; the shell clamps it to 2-60 s. */
@@ -32,10 +33,14 @@ export interface ConsolePanelManifest {
     multiProject?: boolean;
     /** snapshot({panel: "inbox", after}) returns {items: InboxItem[]}. */
     inbox?: boolean;
+    /** Inbox snapshot reuse for 0-60000 ms; absent uses the poll-derived default. */
+    inboxMaxAgeMs?: number;
     /** snapshot({panel: "search", q, limit}) returns {hits: SearchHit[], total}. */
     search?: boolean;
     /** snapshot({panel: "space", after}) returns {scene: SpaceScene}, public fields only. */
     space?: boolean;
+    /** Space snapshot reuse for 0-60000 ms; absent uses the poll-derived default. */
+    spaceMaxAgeMs?: number;
     /** Principal-only tools; never dispatched through the person snapshot/action ports (#88). */
     principal?: { tools: PrincipalTool[] };
   };
