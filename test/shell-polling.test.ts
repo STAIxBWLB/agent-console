@@ -246,3 +246,31 @@ test("a transport failure (status 0) clears the panel version so the next poll a
   h.setClock(h.panel.next); h.setResponse(async () => ({ status: 200, data: { notes: [2], cursor: 2 }, headers: { "x-acon-version": VERSION } }));
   await h.api.pollPanel(); expect(h.requests.at(-1)!.headers).toEqual({});
 });
+
+test("an open item peek is refreshed after every inbox round, including snooze-only changes", async () => {
+  let peeks = 0;
+  const state = { inbox: new Map<string, any>(), route: { area: "inbox" }, peekKey: "item:demo:item" };
+  const item = { id: "item", title: "Decision", at: "1970-01-01T00:00:00.000Z", group: "decision", verbs: [], link: { panel: "notes" } };
+  const api = runInNewContext(`${inboxSource}\n({pollInbox})`, {
+    state, INBOX_MS: 5000, Date, readyTools: () => [{ tool: "demo", capabilities: { inbox: true } }], validItem: () => true, clientError() {},
+    renderRail() {}, renderMini() {}, renderInbox() {}, renderPeek: () => { peeks++; },
+    post: async () => ({ status: 200, data: { items: [item] }, headers: { "x-acon-version": VERSION } }),
+  });
+  await api.pollInbox(false); const after = peeks;
+  await api.pollInbox(false); expect(peeks).toBeGreaterThan(after);
+});
+
+test("producer ok:false with changed:false keeps failure handling for inbox and Space", async () => {
+  const state = { inbox: new Map<string, any>([["demo", { items: [{ id: "x" }], failed: false, next: 0, version: VERSION }]]), route: { area: "inbox" }, peekKey: null };
+  const api = runInNewContext(`${inboxSource}\n({pollInbox})`, {
+    state, INBOX_MS: 5000, Date, readyTools: () => [{ tool: "demo", capabilities: { inbox: true } }], validItem: () => true, clientError() {},
+    renderRail() {}, renderMini() {}, renderInbox() {}, renderPeek() {},
+    post: async () => ({ status: 200, data: { ok: false, changed: false, error: "producer failed" }, headers: {} }),
+  });
+  await api.pollInbox(true); expect(state.inbox.get("demo").failed).toBe(true);
+  const h = pollingHarness(); h.state.route.area = "space";
+  h.setResponse(async () => ({ status: 200, data: { scene: { actors: [], zones: [], cards: [], links: [] } }, headers: { "x-acon-version": VERSION } }));
+  await h.api.pollSpace(); const entry = h.state.space.get("demo"); expect(entry.failed).toBe(false);
+  h.setClock(entry.next); h.setResponse(async () => ({ status: 200, data: { ok: false, changed: false, error: "producer failed" }, headers: {} }));
+  await h.api.pollSpace(); expect(entry.failed).toBe(true);
+});

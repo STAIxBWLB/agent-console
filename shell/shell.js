@@ -1039,6 +1039,7 @@ async function pollInbox(fresh = true) {
   // Time-dependent snoozes can expire even when every provider result is unchanged.
   renderRail(); renderMini();
   if (state.route.area === "inbox") renderInbox();
+  if (state.peekKey?.startsWith("item:")) renderPeek();
 }
 async function inboxFetch(t, seq) {
   const previous = state.inbox.get(t.tool);
@@ -1053,7 +1054,7 @@ async function inboxFetch(t, seq) {
     const items = r.data.items.filter(validItem);
     if (items.length !== r.data.items.length) clientError(t.tool, "inbox", new Error(`${r.data.items.length - items.length} malformed inbox items were skipped`));
     state.inbox.set(t.tool, { items, failed: false, next, version });
-  } else if (r.status === 200 && r.data.changed === false && previous) {
+  } else if (r.status === 200 && r.data.changed === false && r.data.ok !== false && previous) {
     state.inbox.set(t.tool, { ...previous, failed: false, next, version });
   } else {
     state.inbox.set(t.tool, { items: previous?.items ?? [], failed: true, next, version: "" });
@@ -1930,7 +1931,7 @@ async function pollSpace() {
     const resume = entry.resume; entry.resume = false;
     if (resume && document.visibilityState === "visible") { entry.next = 0; queueMicrotask(() => pollSpace()); }
     entry.reported = true;
-    if (res.status === 200 && (res.data.scene || (entry.scene && res.data.changed === false))) {
+    if (res.status === 200 && res.data.ok !== false && (res.data.scene || (entry.scene && res.data.changed === false))) {
       // Motion measures observations, not repeated/jumping cache sample timestamps.
       entry.sampledAt = Date.now();
       if (res.data.scene) { entry.scene = res.data.scene; entry.dropped = res.data.dropped ?? { actors: 0, cards: 0, links: 0 }; }

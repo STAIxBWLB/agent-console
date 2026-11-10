@@ -12,7 +12,7 @@
 
 ### Added
 
-- Add header-only snapshot versions and `X-Acon-Known` conditional request headers, preserving plugin cursor replies and forwarding version/freshness headers through the static transport. Adapt polling to request duration while keeping the inbox's 5-second minimum, pause hidden panel/Space polls with immediate visible refresh, progressively render inbox sources, refresh expired snoozes on unchanged rounds, and retain server data sample times separately from the Room observation clock without marking healthy SWR sources failed (#105).
+- Add header-only snapshot versions and `X-Acon-Known` conditional request headers, preserving plugin cursor replies and forwarding version/freshness headers through the static transport. Adapt polling to request duration while keeping the inbox's 5-second minimum, pause hidden panel/Space polls with immediate visible refresh, progressively render inbox sources, refresh expired snoozes on unchanged rounds, and drive Room motion from the client observation clock without marking healthy SWR sources failed (#105).
 
 - Add the Space Board view with per-group zone columns, producer-linked cards, owner detail controls, and collapsed Done history showing the last five supplied cards. Keep horizontal scrolling within each board row, preserve focus/disclosures, and cover the responsive matrix with a Board probe (#101).
 
