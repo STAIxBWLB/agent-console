@@ -60,3 +60,57 @@ test("Room transform tolerates a missing layout position", () => {
   const transform = runInNewContext(`${source.replace(/^export /gm, "")}\nroomTransform`) as (p: unknown,w: number,h: number,c: unknown) => string;
   expect(transform(undefined,180,100,{yaw:45,pitch:60})).toBe("");
 });
+
+test("Room spacing separates measured actor/card billboards across camera rotations and text sizes", () => {
+  const source = readFileSync(new URL("../shell/space-view.js", import.meta.url), "utf8");
+  const geometry = runInNewContext(`${source.replace(/^export /gm, "")}\nroomGeometry`);
+  const layout = { width: 1000, height: 900,
+    actors: new Map(Array.from({length: 6}, (_, i) => [`a${i}`, { x: 10 + (i % 5) * 200, y: 12 + Math.floor(i / 5) * 144 }])),
+    cards: new Map([["c0", {x:18,y:400}], ["c1", {x:18,y:500}], ["c2", {x:268,y:400}]]),
+    zones: new Map([["zone", {x:8,y:330,height:370}]]),
+  };
+  for (const textScale of [1, 2]) for (const yaw of [45, 135, 225, 315]) for (const zoom of [.65, 1, 1.35]) {
+    const camera = { yaw, pitch: 60, zoom };
+    const actors = Array.from({length:6}, (_, i) => ({id:`a${i}`,width:112,height:72 + 24 * textScale}));
+    const cards = Array.from({length:3}, (_, i) => ({id:`c${i}`,width:214,height:64 * textScale}));
+    const result = geometry(layout, actors, cards, camera);
+    expect(Number.isFinite(result.spacing)).toBe(true);
+    expect(result.spacing).toBeGreaterThanOrEqual(1);
+    const angle = yaw * Math.PI / 180, tilt = Math.cos(Math.PI / 3);
+    const rects = [actors,cards].flatMap((rows,index) => rows.map((item) => {
+      const position = result[index ? "cards" : "actors"].get(item.id);
+      const x = position.x + item.width / 2, y = position.y + item.height / 2;
+      const anchorX = (Math.cos(angle) * x - Math.sin(angle) * y) * zoom;
+      const anchorY = tilt * (Math.sin(angle) * x + Math.cos(angle) * y) * zoom;
+      return {left:anchorX-item.width*zoom/2,right:anchorX+item.width*zoom/2,top:anchorY-item.height*zoom,bottom:anchorY};
+    }));
+    for (let i=0;i<rects.length;i++) for(let j=i+1;j<rects.length;j++) {
+      const a=rects[i]!,b=rects[j]!;
+      expect(a.right <= b.left || b.right <= a.left || a.bottom <= b.top || b.bottom <= a.top).toBe(true);
+    }
+  }
+  expect(layout.actors.get("a0")).toEqual({x:10,y:12});
+  expect(layout.zones.get("zone")).toEqual({x:8,y:330,height:370});
+});
+
+test("Room links meet upright avatar centers and Flat restores its original endpoints", () => {
+  const view = readFileSync(new URL("../shell/space-view.js", import.meta.url), "utf8").replace(/^export /gm, "");
+  const geometry = runInNewContext(`${view}\nspaceLinkGeometry`);
+  const actors = [{ id: "a", width: 112, height: 96 }, { id: "b", width: 112, height: 132 }];
+  const layout = { actors: new Map([["a", { x: 20, y: 40 }], ["b", { x: 620, y: 280 }]]) };
+  const link = { from: "a", to: "b" };
+  expect(geometry(layout, actors, link).from).toEqual({ x: 76, y: 70 });
+  expect(geometry(layout, actors, link).to).toEqual({ x: 676, y: 310 });
+  for (const yaw of [45, 135, 225, 315]) {
+    const camera = { yaw, pitch: 60 }, theta = yaw * Math.PI / 180, pitch = Math.PI / 3;
+    const project = (x: number, y: number, z: number) => ({ x: Math.cos(theta) * x - Math.sin(theta) * y, y: Math.cos(pitch) * (Math.sin(theta) * x + Math.cos(theta) * y) - Math.sin(pitch) * z });
+    const result = geometry(layout, actors, link, camera);
+    for (const [index, side] of (["from", "to"] as const).entries()) {
+      const actor = actors[index]!, p = layout.actors.get(actor.id)!;
+      const anchor = project(p.x + actor.width / 2, p.y + actor.height / 2, 2);
+      const endpoint = project(result[side].x, result[side].y, 1);
+      expect(endpoint.x).toBeCloseTo(anchor.x, 6);
+      expect(endpoint.y).toBeCloseTo(anchor.y - actor.height + 30, 6);
+    }
+  }
+});

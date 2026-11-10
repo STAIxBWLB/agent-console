@@ -60,6 +60,7 @@ export function createSpaceTeam(root, host) {
     identity.append(roles);
 
     const state = element("span", { class: "space-team-state", "data-state": info.className },
+      element("span", { class: "space-activity-dot", "aria-hidden": "true" }),
       element("span", { "aria-hidden": "true", text: info.glyph }),
       element("span", { text: actor.stale ? `${info.label} (last reported, stale)` : info.label }));
     const details = element("span", { class: "space-team-taskline" });
@@ -89,7 +90,7 @@ export function createSpaceTeam(root, host) {
     const stableModel = { ...model };
     delete stableModel.sampledAt;
     delete stableModel.samples;
-    const nextSignature = JSON.stringify(stableModel);
+    const nextSignature = JSON.stringify([stableModel, host.petIds?.() ?? []]);
     if (nextSignature === signature) return;
 
     const previousOpen = new Map([...root.querySelectorAll("details[data-group-id]")].map((node) => [node.dataset.groupId, node.open]));

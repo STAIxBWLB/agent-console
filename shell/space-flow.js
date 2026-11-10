@@ -102,7 +102,7 @@ export function createSpaceFlow(root, host) {
     const actorIds = new Set(model.actors.map((actor) => actor.id));
     const recent = events.filter((event) => actorIds.has(event.from) || actorIds.has(event.to));
     const edges = flowEdges(model, events, at);
-    const snapshot = [group, state, model.groups, model.actors, edges, recent.map((event) => [event, flowRelativeTime(event.observedAt, at)])];
+    const snapshot = [group, state, host.petIds?.() ?? [], model.groups, model.actors, edges, recent.map((event) => [event, flowRelativeTime(event.observedAt, at)])];
     const next = JSON.stringify(snapshot);
     if (next === signature) return;
     signature = next;
@@ -118,8 +118,10 @@ export function createSpaceFlow(root, host) {
       const panel = h("section", { class: "space-flow-group", "data-flow-group": item.id }, h("h2", { text: item.title }));
       const actors = h("div", { class: "space-flow-actors" });
       for (const actor of members) actors.append(h("button", { type: "button", class: "space-flow-actor", "data-space-actor": actor.id,
+        "data-state": actor.state, "data-stale": String(Boolean(actor.stale)),
         "data-flow-focus": `actor:${actor.id}`, onclick: (event) => host.openActor(actor.id, event.currentTarget) },
       h("span", { class: "space-team-avatar", "aria-hidden": "true" }, host.sprite(actor)),
+      h("span", { class: "space-activity-dot", "aria-hidden": "true" }),
       h("span", { text: actor.name }), h("span", { class: "sub", text: `${actor.state}${actor.stale ? " (stale)" : ""}` })));
       panel.append(actors);
       const connections = h("ul", { class: "space-flow-edges", "aria-label": `${item.title} connections` });

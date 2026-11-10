@@ -12,6 +12,8 @@
 
 ### Added
 
+- Refit Room into the remaining viewport with compact avatar/name-tag controls, hover/focus fact popovers, non-overlapping CSS billboards and the existing projected 3D overlays. Keep Scene style controls inside Room, one scene scroll region, a screen-reader summary and a visible Team text alternative. Unify Space state styling and working indicators using existing tokens (#101).
+
 - Add header-only snapshot versions and `X-Acon-Known` conditional request headers, preserving plugin cursor replies and forwarding version/freshness headers through the static transport. Adapt polling to request duration while keeping the inbox's 5-second minimum, pause hidden panel/Space polls with immediate visible refresh, progressively render inbox sources, refresh expired snoozes on unchanged rounds, and drive Room motion from the client observation clock without marking healthy SWR sources failed (#105).
 
 - Add the Space Board view with per-group zone columns, producer-linked cards, owner detail controls, and collapsed Done history showing the last five supplied cards. Keep horizontal scrolling within each board row, preserve focus/disclosures, and cover the responsive matrix with a Board probe (#101).
@@ -27,6 +29,8 @@
 - Add opt-in principal tool declarations, dedicated principal snapshot/action ports and bounded public JSON results. Console dispatch builds person actors; principal dispatch never falls back to console ports. The conformance kit validates principal declarations while API 1 plugins remain compatible (#88, contract slice).
 
 ### Fixed
+
+- Refresh Team, Flow, Board and Room avatars when installed pet ids change without scene fact changes; retain focus, disclosure state and unchanged-poll memo behavior (#101).
 
 - Restrict geometry-forced Space updates to Room: Team, Flow and Board use CSS layout and no longer rewrite unchanged root controls on ResizeObserver notifications. Wait for both fixture producers before measuring Team polls; remove its CSP-incompatible predicate waits (#101).
 

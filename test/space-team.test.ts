@@ -2,7 +2,8 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 
-export function harness({ now = Date.now }: { now?: () => number } = {}) {
+export function harness({ now = Date.now, pets = [], room = false }: { now?: () => number; pets?: { id: string }[]; room?: boolean } = {}) {
+  let inventory = pets;
   let writes = 0;
   let resize: () => void = () => {};
   const listeners = new Map<string, (e:any)=>void>();
@@ -13,6 +14,14 @@ export function harness({ now = Date.now }: { now?: () => number } = {}) {
     get hidden() { return this.hiddenValue; }
     set hidden(value: boolean) { this.hiddenValue = value; this.hiddenWrites++; writes++; }
     value = ""; open = false; ownText = ""; ownerDocument = doc; onclick?: (e: unknown) => void; scrollTop = 0; scrollLeft = 0;
+    style = { values: new Map<string, string>(), getPropertyValue(name: string) { return this.values.get(name) ?? ""; },
+      setProperty(name: string, value: string) { this.values.set(name, value); writes++; }, removeProperty(name: string) { const previous = this.values.get(name); if (this.values.delete(name)) writes++; return previous ?? ""; } };
+    get id() { return this.getAttribute("id") ?? ""; }
+    get firstElementChild(): Element | null { return this.children[0] ?? null; }
+    get offsetWidth() { return (this.getAttribute("class") ?? "").includes("space-actor-popover") ? 280 : (this.getAttribute("class") ?? "").includes("space-card") ? 214 : 112; }
+    get offsetHeight() { return (this.getAttribute("class") ?? "").includes("space-actor-popover") ? 200 : 96; }
+    getBoundingClientRect() { const match = /translate\(([-.0-9]+)px, ([-.0-9]+)px\)/.exec(this.style.getPropertyValue("transform")); const left=Number(match?.[1]??0),top=Number(match?.[2]??0); return {left,top,width:this.offsetWidth,height:this.offsetHeight,right:left+this.offsetWidth,bottom:top+this.offsetHeight}; }
+    removeAttribute(name: string) { if(this.attributes.delete(name))writes++; }
     constructor(public tag: string) {}
     set textContent(v: string) { this.ownText = v; this.children = []; writes++; }
     get textContent(): string { return this.ownText + this.children.map(c=>c.textContent).join(""); }
@@ -38,7 +47,9 @@ export function harness({ now = Date.now }: { now?: () => number } = {}) {
     focus() {
       if(this.offsetParent===null)return;
       for(let n=this.parent;n;n=n.parent)if(n.tag==="details"&&!n.open&&n.querySelector("summary")!==this)return;
-      doc.activeElement=this;
+      if(doc.activeElement===this)return;
+      const previous=doc.activeElement;doc.activeElement=this;
+      previous?.onblur?.({relatedTarget:this});(this as any).onfocus?.({currentTarget:this});
     }
     closest(s:string) {
       if(s === "[hidden],[inert]") { for(let n:Element|null=this;n;n=n.parent)if(n.hidden || (n as any).inert)return n;return null; }
@@ -54,11 +65,11 @@ export function harness({ now = Date.now }: { now?: () => number } = {}) {
   const flowSource=readFileSync(new URL("../shell/space-flow.js",import.meta.url),"utf8");
   const source=readFileSync(new URL("../shell/space.js",import.meta.url),"utf8");
   const storage=new Map(); const nav: any[]=[]; let back=0;
-  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${flowSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${boardSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel,boardGroups})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{constructor(callback:()=>void){resize=callback;}observe(){}disconnect(){}},getComputedStyle:()=>({fontSize:"16px"}),CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date: class extends Date { static now = now; },setInterval(){return 1;},clearInterval(){}});
-  const renderer=api.createSpaceRenderer(root,{h,pets:()=>[],packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
+  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${flowSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${boardSource.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel,boardGroups,actorPopoverPosition})`,{document:doc,window:{scrollX:0,scrollY:0,innerWidth:1024,innerHeight:768,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{constructor(callback:()=>void){resize=callback;}observe(){}disconnect(){}},getComputedStyle:()=>({fontSize:"16px"}),CSS:{escape:(v:string)=>v},createSpaceViewController(){if(!room)throw new Error("Hidden Room initialized");return{update(){root.dataset.spaceView="flat";},suspend(){},destroy(){},stats:{view:"flat",renderCount:0,pendingFrames:0}};},Date: class extends Date { static now = now; },setInterval(){return 1;},clearInterval(){}});
+  const renderer=api.createSpaceRenderer(root,{h,pets:()=>inventory,petSprite:(pet:{id:string},pose:string)=>h("span",{"data-pet":pet.id,"data-pose":pose}),packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
-  return {api,renderer,root,model,doc,nav,listeners,storage,resize:()=>resize(),get writes(){return writes;},get back(){return back;}};
+  return {api,renderer,root,model,doc,nav,listeners,storage,setPets:(next:{id:string}[])=>{inventory=next;},resize:()=>resize(),get writes(){return writes;},get back(){return back;}};
 }
 test("Team is default, shows attention/roles/task/badges and collapsed resting actors without Room initialization",()=>{
   const h=harness();h.renderer.setRoute({});h.renderer.update(h.model);
@@ -244,4 +255,17 @@ test("Team geometry notifications do not force unchanged root writes", () => {
   expect(h.writes).toBe(before);
   h.renderer.update({ ...h.model, sampledAt: 2 });
   expect(h.writes).toBe(before);
+});
+
+test("Team pet inventory changes refresh avatars without facts while preserving focus", () => {
+  const h = harness({ pets: [{ id: "first" }] });
+  h.renderer.setRoute({ view: "team" }); h.renderer.update(h.model);
+  const team = h.root.querySelector(".space-team")!;
+  expect(team.querySelectorAll('[data-pet="first"]').length).toBeGreaterThan(0);
+  team.querySelector('[data-team-focus="tile:demo:one"]')!.focus();
+  h.setPets([{ id: "second" }]); h.renderer.update(h.model);
+  expect(team.querySelectorAll('[data-pet="first"]')).toHaveLength(0);
+  expect(team.querySelectorAll('[data-pet="second"]').length).toBeGreaterThan(0);
+  expect(h.doc.activeElement.getAttribute("data-team-focus")).toBe("tile:demo:one");
+  const writes = h.writes; h.renderer.update({ ...h.model, sampledAt: 2 }); expect(h.writes).toBe(writes);
 });

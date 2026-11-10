@@ -5,7 +5,7 @@ import { createSpaceViewController } from "./space-view.js";
 
 // Private shell module. Public collaboration facts enter through the space snapshot allowlist.
 export const SPACE_CAPS = { actors: 96, cards: 200, links: 128 };
-const ACTOR_WIDTH = 180, ACTOR_STEP = 200, ZONE_WIDTH = 234, ZONE_STEP = 250;
+const ACTOR_WIDTH = 112, ACTOR_STEP = 200, ZONE_WIDTH = 234, ZONE_STEP = 250;
 
 export function mergeSpaceScenes(entries) {
   const model = { groups: [], actors: [], zones: [], cards: [], links: [], dropped: { actors: 0, cards: 0, links: 0 }, failed: [], pending: 0, received: 0, sampledAt: 0, samples: new Map() };
@@ -105,6 +105,16 @@ export function spaceLayout(model, previous, now, sizes = {}) {
   return { slots, rowHeights, actors, zones, cards, signatures, received: model.received ?? 1, at: now, settle: !previous || previous.received === 0 || now - previous.at > 3000 || changed > 6, height: Math.max(y, zoneTop + 80), width: 1000 };
 }
 
+/** Keep the informational popover within the viewport, above the anchor when needed. */
+export function actorPopoverPosition(anchor, popup, viewport) {
+  const margin = 8;
+  const x = Math.max(margin, Math.min(anchor.left + anchor.width / 2 - popup.width / 2, viewport.width - popup.width - margin));
+  const below = anchor.bottom + margin;
+  const preferredY = below + popup.height <= viewport.height - margin ? below : anchor.top - popup.height - margin;
+  const y = Math.max(margin, Math.min(preferredY, viewport.height - popup.height - margin));
+  return { x, y };
+}
+
 const stateText = { idle: "idle", working: "working", waiting: "waiting", blocked: "blocked", away: "away" };
 const stateGlyph = { idle: "○", working: "▶", waiting: "?", blocked: "!", away: "-" };
 const poseFor = { idle: "idle", working: "working", waiting: "waiting", blocked: "failed", away: "idle" };
@@ -117,8 +127,8 @@ export function createSpaceRenderer(root, host) {
   const plane = h("div", { class: "space-plane" });
   const wall = h("div", { class: "space-wall", "aria-hidden": "true" });
   plane.append(wall);
-  const scroll = h("div", { class: "space-scroll", tabindex: "0", role: "region", "aria-label": "Collaboration scene, scroll to explore" }, plane);
-  const roster = h("section", { class: "space-roster", "aria-label": "Space roster" });
+  const scroll = h("div", { onscroll: positionPopover, class: "space-scroll", tabindex: "0", role: "region", "aria-label": "Collaboration scene, scroll to explore" }, plane);
+  const roster = h("section", { class: "space-roster", "aria-label": "Space text summary; Team is the visual text view" });
   const empty = h("p", { class: "sub", text: "No actors or work items are reported yet.", hidden: true });
   const summary = h("div", { class: "space-summary", role: "group", "aria-label": "Filter actors by state" });
   const tabs = h("div", { class: "space-section-tabs", role: "group", "aria-label": "Space sections" });
@@ -128,9 +138,12 @@ export function createSpaceRenderer(root, host) {
   const boardRoot = h("section", { class: "space-board", hidden: true });
   const flowRoot = h("section", { class: "space-flow", hidden: true });
   const teamRoot = h("section", { class: "space-team", tabindex: "-1" });
+  const actorPopover = h("aside", { id: "space-actor-popover", class: "space-actor-popover", role: "tooltip", hidden: true,
+    onpointerenter: () => { popupHovered = true; }, onpointerleave: (event) => { popupHovered = false; endPopoverPointer(popupActor, event.relatedTarget); } });
+  let popupActor = "", popupAnchor = null, popupSignature = "", hoveredActor = "", popupHovered = false;
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
-  root.replaceChildren(header, notice, teamRoot, flowRoot, boardRoot, content, empty, detailRoot);
+  root.replaceChildren(header, notice, teamRoot, flowRoot, boardRoot, content, empty, actorPopover, detailRoot);
   let selection = { view: "team", group: "", state: "", actor: "" };
   let savedView = "team";
   let returnPoint = null, restorePoint = null, detailSignature = "";
@@ -176,17 +189,68 @@ export function createSpaceRenderer(root, host) {
     const pet = pets.find((p) => p.id === actor.pet) ?? (pets.length ? pets[hash(actor.id) % pets.length] : null);
     return pet ? host.petSprite(pet, actor.stale ? "idle" : poseFor[actor.state]) : h("span", { class: "space-token", "aria-hidden": "true", text: actor.name.slice(0, 1).toUpperCase() });
   };
+  const petIds = () => host.pets().map((pet) => pet.id);
   const activity = createActivityBuffer();
-  const flow = createSpaceFlow(flowRoot, { h, sprite, openActor, activity, sectionTab: () => sectionButtons.get(selection.view), onTime: () => { if (lastModel && !root.hidden) renderDetail(lastModel); } });
-  const board = createSpaceBoard(boardRoot, { h, sprite, openActor, navigate: host.navigate, sectionTab: () => sectionButtons.get(selection.view) });
-  const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
+  const flow = createSpaceFlow(flowRoot, { h, sprite, petIds, openActor, activity, sectionTab: () => sectionButtons.get(selection.view), onTime: () => { if (lastModel && !root.hidden) renderDetail(lastModel); } });
+  const board = createSpaceBoard(boardRoot, { h, sprite, petIds, openActor, navigate: host.navigate, sectionTab: () => sectionButtons.get(selection.view) });
+  const team = createSpaceTeam(teamRoot, { h, sprite, petIds, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
+  function closePopover() {
+    if (popupAnchor && popupAnchor.getAttribute("aria-describedby") === actorPopover.id) popupAnchor.removeAttribute("aria-describedby");
+    setHidden(actorPopover, true); popupActor = ""; popupAnchor = null; popupHovered = false;
+  }
+  function endPopoverPointer(id, relatedTarget) {
+    if (!popupActor || popupActor !== id || actorPopover.contains(relatedTarget)) return;
+    const focused = document.activeElement;
+    if (root.contains(focused) && focused?.getAttribute("data-space-focus")?.startsWith("actor:")) {
+      showPopover(focused.getAttribute("data-key"), focused);
+    } else closePopover();
+  }
+  function positionPopover() {
+    if (actorPopover.hidden || !popupAnchor || root.hidden || selection.view !== "room") return;
+    const anchor = popupAnchor.getBoundingClientRect();
+    const box = actorPopover.getBoundingClientRect();
+    const point = actorPopoverPosition(anchor, box, { width: window.innerWidth, height: window.innerHeight });
+    setStyle(actorPopover, "--space-popover-x", `${point.x}px`); setStyle(actorPopover, "--space-popover-y", `${point.y}px`);
+  }
+  function showPopover(id, anchor) {
+    if (root.hidden || selection.view !== "room" || selection.actor) return;
+    const actor = lastModel?.actors.find((item) => item.id === id);
+    if (!actor || !anchor?.isConnected) { closePopover(); return; }
+    const card = lastModel.cards.find((item) => item.id === actor.card);
+    const group = lastModel.groups.find((item) => item.id === actor.group);
+    const sig = JSON.stringify([actor, card, group, petIds()]);
+    if (popupAnchor && popupAnchor !== anchor && popupAnchor.getAttribute("aria-describedby") === actorPopover.id) popupAnchor.removeAttribute("aria-describedby");
+    popupActor = id; popupAnchor = anchor;
+    if (sig !== popupSignature) {
+      popupSignature = sig;
+      actorPopover.replaceChildren(h("header", { class: "space-popover-header" }, h("span", { class: "space-team-avatar", "aria-hidden": "true" }, sprite(actor)),
+        h("strong", { class: "space-popover-name", text: actor.name })),
+      h("p", { class: "sub", text: group?.title ?? actor.link.tool }),
+      h("div", { class: "space-team-roles" }, ...(actor.roles ?? []).map((role) => h("span", { class: "space-team-role", text: role }))),
+      h("span", { class: "space-team-state", "data-state": actor.state, "data-stale": String(actor.stale) }, h("span", { class: "space-activity-dot", "aria-hidden": "true" }),
+        `${stateGlyph[actor.state] ?? "○"} ${stateText[actor.state] ?? actor.state}${actor.stale ? " (last reported, stale)" : ""}`),
+      h("p", { class: "space-popover-task space-team-taskline", text: card?.title ?? "No current task reported." }),
+      h("div", { class: "space-team-badges" }, ...["inbox", "approval"].flatMap((kind) => {
+        const marks = actor.marks.filter((mark) => mark.kind === kind);
+        return marks.length ? [h("span", { class: `space-team-badge${kind === "approval" ? " space-team-badge-approval" : ""}`,
+          text: marks.find((mark) => mark.text)?.text ?? `${kind} ${marks.length}` })] : [];
+      })));
+    }
+    if (anchor.getAttribute("aria-describedby") !== actorPopover.id) anchor.setAttribute("aria-describedby", actorPopover.id);
+    setHidden(actorPopover, false); positionPopover();
+  }
   function openActor(id, element) {
-    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus") ?? element?.getAttribute("data-flow-focus") ?? element?.getAttribute("data-board-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
+    closePopover();
+    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus") ?? element?.getAttribute("data-flow-focus") ?? element?.getAttribute("data-board-focus") ?? element?.getAttribute("data-space-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
     choose({ actor: id });
   }
   function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
   const onDetailKey = (event) => {
-    if (!selection.actor || root.hidden || document.querySelector("dialog[open]")) return;
+    if (root.hidden || document.querySelector("dialog[open]")) return;
+    if (!selection.actor) {
+      if (event.key === "Escape" && !actorPopover.hidden) { event.preventDefault(); event.stopPropagation(); closePopover(); }
+      return;
+    }
     if (!detailRoot.contains(document.activeElement) && document.activeElement !== document.body) return;
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeActor(); }
     if (event.key === "Tab") {
@@ -209,7 +273,7 @@ export function createSpaceRenderer(root, host) {
     const partners = links.map((l) => ({ kind: l.kind, actor: model.actors.find((a) => a.id === (l.from === actor.id ? l.to : l.from)) }));
     const group = model.groups.find((g) => g.id === actor?.group);
     const interactions = selection.actor ? activity.interactions(selection.actor) : { peers: [], events: [] };
-    const sig = JSON.stringify([selection.actor, actor, card, partners, group, Boolean(model.pending), interactions, interactions.events.map((event) => flowRelativeTime(event.observedAt))]);
+    const sig = JSON.stringify([selection.actor, actor, card, partners, group, Boolean(model.pending), petIds(), interactions, interactions.events.map((event) => flowRelativeTime(event.observedAt))]);
     if (sig === detailSignature) return;
     detailSignature = sig;
     const wasHidden = detailRoot.hidden;
@@ -244,7 +308,7 @@ export function createSpaceRenderer(root, host) {
   function restore() {
     if (!restorePoint) return;
     const point = restorePoint; restorePoint = null;
-    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"],[data-flow-focus="${CSS.escape(point.focusKey)}"],[data-board-focus="${CSS.escape(point.focusKey)}"]`) : null;
+    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"],[data-flow-focus="${CSS.escape(point.focusKey)}"],[data-board-focus="${CSS.escape(point.focusKey)}"],[data-space-focus="${CSS.escape(point.focusKey)}"]`) : null;
     const element = point.element?.isConnected ? point.element : keyed ?? (point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null);
     focusSpaceControl(element, sectionButtons.get(selection.view));
     const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
@@ -255,6 +319,7 @@ export function createSpaceRenderer(root, host) {
   }
   function update(model, force = false) {
     lastModel = model;
+    if (selection.view !== "room" || selection.actor) closePopover();
     activity.observe(model);
     flow.setVisible(selection.view === "flow" && !root.hidden);
     board.setVisible(selection.view === "board" && !root.hidden);
@@ -306,8 +371,9 @@ export function createSpaceRenderer(root, host) {
     const nothing = !model.actors.length && !model.cards.length;
     if (empty.hidden !== (!nothing || !room || Boolean(unknownGroup))) empty.hidden = !nothing || !room || Boolean(unknownGroup);
     if (!room) { views?.suspend(); restore(); return; }
-    if (!views) views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError });
+    if (!views) views = createSpaceViewController({ root, plane, scroll, h, onError: host.onError, onTextView: () => choose({ view: "team" }) });
     syncInert();
+    const focusedSceneControl = plane.contains(document.activeElement) ? document.activeElement : null;
     image(plane, "--space-floor", pack, "floor"); image(wall, "--space-wall", pack, "wall");
     plane.dataset.pack = pack?.id ?? "fallback";
     if (pack) setStyle(plane, "background-size", `${pack.tile[0]}px ${pack.tile[1]}px`);
@@ -317,9 +383,15 @@ export function createSpaceRenderer(root, host) {
       entries.set(`actor:${actor.id}`, actor);
       let n = actorNodes.get(actor.id);
       if (!n) {
-        const name = h("strong"), status = h("span", { class: "row-sub" }), marks = h("span", { class: "space-marks" }), visual = h("span", { class: "space-visual" });
-        const el = h("button", { type: "button", class: "space-actor", "data-key": actor.id, onclick: (event) => target(`actor:${actor.id}`, event.currentTarget) }, visual, name, status, marks);
-        plane.append(el); n = { el, name, status, marks, visual, sig: "" }; actorNodes.set(actor.id, n);
+        const name = h("strong", { class: "space-actor-name" }), visual = h("span", { class: "space-visual space-team-avatar", "aria-hidden": "true" });
+        let el;
+        el = h("button", { type: "button", class: "space-actor", "data-key": actor.id, "data-space-actor": actor.id, "data-space-focus": `actor:${actor.id}`,
+          onclick: (event) => target(`actor:${actor.id}`, event.currentTarget),
+          onpointerenter: (event) => { if (event.pointerType !== "touch") { hoveredActor = actor.id; showPopover(actor.id, el); } },
+          onpointerleave: (event) => { if (hoveredActor === actor.id) hoveredActor = ""; endPopoverPointer(actor.id, event.relatedTarget); },
+          onfocus: () => showPopover(actor.id, el), onblur: () => { if (popupActor === actor.id && hoveredActor !== actor.id && !popupHovered) closePopover(); } },
+        visual, name, h("span", { class: "space-activity-dot", "aria-hidden": "true" }));
+        plane.append(el); n = { el, name, visual, sig: "" }; actorNodes.set(actor.id, n);
       }
       const card = model.cards.find((c) => c.id === actor.card);
       const displayName = `${actor.link.tool} / ${actor.name}`;
@@ -327,15 +399,13 @@ export function createSpaceRenderer(root, host) {
       const ownSig = JSON.stringify([actor, card?.title, host.pets().map((p) => p.id), pack?.id]);
       if (ownSig !== n.sig) {
         n.sig = ownSig; n.el.dataset.state = actor.state; n.el.dataset.stale = String(actor.stale);
-        setText(n.name, displayName); setText(n.status, text);
+        setText(n.name, actor.name);
         n.el.setAttribute("aria-label", `${displayName}: ${text}${actor.marks.length ? `; ${actor.marks.map((m) => m.text).join(", ")}` : ""}`);
-        n.marks.replaceChildren(...actor.marks.map((m) => h("span", { class: "chip", text: `${m.kind}: ${m.text}` })));
-        n.visual.replaceChildren(sprite(actor), h("span", { class: "space-desk", "aria-hidden": "true" }));
-        image(n.visual, "--space-desk", pack, "desk");
+        n.visual.replaceChildren(sprite(actor));
       }
       let r = rosterNodes.get(`actor:${actor.id}`);
-      if (!r) { r = h("button", { type: "button", class: "space-roster-actor btn", "data-key": actor.id, onclick: (event) => target(`actor:${actor.id}`, event.currentTarget) }); roster.append(r); rosterNodes.set(`actor:${actor.id}`, r); }
-      setText(r, `${displayName}: ${text}`);
+      if (!r) { r = h("p", { class: "space-roster-actor", "data-key": actor.id }); roster.append(r); rosterNodes.set(`actor:${actor.id}`, r); }
+      setText(r, `${displayName}: ${text}${actor.roles?.length ? `; ${actor.roles.join(", ")}` : ""}${actor.marks.length ? `; ${actor.marks.map((mark) => `${mark.kind}: ${mark.text}`).join(", ")}` : ""}`);
     }
     for (const zone of model.zones) {
       let n = zoneNodes.get(zone.id);
@@ -400,8 +470,11 @@ export function createSpaceRenderer(root, host) {
     views.update({ model, layout, pack, pets: host.pets(), plane, scroll,
       actors: actorMetrics,
       cards: cardMetrics,
+      links: [...linkNodes].map(([key, node]) => ({ ...JSON.parse(key), el: node.el })),
       zones: [...zoneNodes].map(([id, n]) => ({ id, el: n.el, width: n.el.offsetWidth, height: n.el.offsetHeight })) });
+    if (focusedSceneControl && !focusedSceneControl.isConnected) focusSpaceControl(null, sectionButtons.get("room"));
     restore();
+    if (popupActor) showPopover(popupActor, popupAnchor);
   }
   let geometry = "";
   const observer = new ResizeObserver(() => {
@@ -412,5 +485,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden && selection.view === "room") update(lastModel, true);
   });
   observer.observe(root);
-  return { update, setRoute, enter, hide() { board.setVisible(false); flow.setVisible(false); views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); flow.destroy(); board.destroy(); views?.destroy(); root.replaceChildren(); } };
+  return { update, setRoute, enter, hide() { closePopover(); board.setVisible(false); flow.setVisible(false); views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { closePopover(); observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); flow.destroy(); board.destroy(); views?.destroy(); root.replaceChildren(); } };
 }

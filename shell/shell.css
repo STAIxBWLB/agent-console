@@ -452,18 +452,19 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-scroll { isolation: isolate; overflow: auto; max-width: 100%; max-height: 70vh; border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-bg); }
 .space-plane { position: relative; width: 100%; min-width: 1000px; min-height: 240px; background-color: var(--acon-bg); background-image: var(--space-floor, none), linear-gradient(135deg, var(--acon-line) 1px, transparent 1px); background-size: 64px 32px; }
 .space-wall { position: absolute; inset: 0 0 auto; height: 20px; background-color: var(--acon-surface-2); background-image: var(--space-wall, none); background-size: contain; }
-.space-actor { position: absolute; left: 0; top: 0; z-index: var(--shell-z-raised); display: flex; flex-direction: column; align-items: center; gap: var(--acon-space-1); width: 180px; min-height: 44px; padding: var(--acon-space-2); font: inherit; color: var(--acon-text); background: var(--acon-surface); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-2); cursor: pointer; overflow-wrap: anywhere; }
+.space-actor { position: absolute; left: 0; top: 0; z-index: var(--shell-z-raised); display: flex; flex-direction: column; align-items: center; gap: var(--acon-space-1); width: 112px; min-height: 44px; padding: var(--acon-space-2); font: inherit; color: var(--acon-text); background: var(--acon-surface); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-2); cursor: pointer; overflow-wrap: anywhere; }
 .space-actor strong { max-width: 100%; font-weight: 600; }
+.space-actor-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: var(--acon-text-xs); line-height: 1.25; text-align: center; }
 .space-actor .row-sub { width: 100%; }
+.space-actor[data-state="working"] { border-color: var(--acon-accent); }
 .space-actor[data-state="waiting"] { border-color: var(--acon-warn); }
 .space-actor[data-state="blocked"] { border-color: var(--acon-err); }
 .space-actor[data-state="away"], .space-actor[data-stale="true"] { border-style: dashed; }
+.space-actor[data-state="away"] { opacity: 0.72; }
 .space-actor:focus-visible, .space-card:focus-visible { outline-offset: -3px; }
-.space-visual { display: flex; flex-direction: column; align-items: center; width: 112px; min-height: 176px; padding: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); }
-.space-visual .pet-sprite { --cell-w: 72px; --cell-h: 78px; }
-/* Artwork remains legible on a light tile when the surrounding UI is dark. */
-:root[data-theme="dark"] .space-visual { background: var(--acon-text); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .space-visual { background: var(--acon-text); } }
+.space-visual { display: flex; align-items: center; justify-content: center; width: 40px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: var(--acon-surface-2); }
+.space-visual .pet-sprite { --cell-w: 40px; --cell-h: calc(40px * 13 / 12); }
+.space-visual .space-token { width: 40px; height: 40px; border-radius: 50%; }
 .space-desk { display: block; width: 64px; height: 82px; background-image: var(--space-desk, none); background-position: center bottom; background-size: contain; background-repeat: no-repeat; border-bottom: 2px solid var(--acon-line-2); }
 .space-plane[data-pack="fallback"] .space-desk { background-color: var(--acon-surface-2); border: 1px solid var(--acon-line-2); }
 .space-token { display: inline-flex; align-items: center; justify-content: center; width: 72px; height: 78px; border: 1px solid var(--acon-line-2); border-radius: var(--acon-radius-2); color: var(--acon-accent-text); background: var(--acon-accent-soft); font-weight: 600; }
@@ -563,9 +564,9 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-view-bar { gap: var(--acon-space-4); margin-top: var(--acon-space-3); }
 .space-view-choices .btn[aria-pressed="true"] { color: var(--acon-accent-text); background: var(--acon-accent-soft); border-color: var(--acon-accent); }
 .space-stage { position: relative; min-width: 100%; }
-[data-space-view="room"] .space-scroll { perspective: 4000px; perspective-origin: center 240px; }
+[data-space-view="room"] .space-scroll { perspective: none; }
 [data-space-view="room"] .space-stage, [data-space-view="room"] .space-plane { transform-style: preserve-3d; }
-[data-space-view="room"] .space-plane { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: transform var(--acon-duration-normal) var(--acon-ease-out); }
+[data-space-view="room"] .space-plane { position: absolute; top: 0; left: 0; transform-origin: 0 0; transition: none; }
 [data-space-view="room"] .space-wall { height: 80px; transform: rotateX(-90deg); transform-origin: top; backface-visibility: visible; }
 [data-space-view="room"] .space-plane::after { content: ""; position: absolute; left: 0; top: 0; width: 80px; height: 100%; background: var(--acon-surface-2); border: 1px solid var(--acon-line); transform: rotateY(90deg); transform-origin: left; }
 [data-space-view="room"] .space-actor, [data-space-view="room"] .space-card { z-index: auto; transform-origin: 0 0; transition: none; backface-visibility: visible; }
@@ -597,7 +598,7 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-team-attention { display: flex; flex-direction: column; gap: var(--acon-space-2); min-width: 0; }
 .space-team-attention h2, .space-team-group-title h2 { margin: 0; font-size: var(--acon-text-lg); }
 .space-team-empty { margin: 0; color: var(--acon-text-2); }
-.space-team-attention-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto minmax(0, 2fr) auto; align-items: center; gap: var(--acon-space-3); width: 100%; min-height: 56px; padding: var(--acon-space-2) var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface); color: var(--acon-text); font: inherit; text-align: left; cursor: pointer; }
+.space-team-attention-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto minmax(0, 2fr) auto; align-items: center; gap: var(--acon-space-3); width: 100%; min-height: 56px; padding: var(--acon-space-2) var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface); color: var(--acon-text); font: inherit; text-align: left; cursor: pointer; }
 .space-team-attention-row[data-state="waiting"] { border-color: var(--acon-warn); }
 .space-team-attention-row[data-state="blocked"] { border-color: var(--acon-err); }
 .space-team-group { display: flex; flex-direction: column; gap: var(--acon-space-3); min-width: 0; padding-top: var(--acon-space-3); border-top: 1px solid var(--acon-line); }
@@ -664,7 +665,7 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-flow-group, .space-flow-activity { padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface); }
 .space-flow h2 { margin: 0 0 var(--acon-space-3); font-size: var(--acon-text-lg); overflow-wrap: anywhere; }
 .space-flow-actors { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: var(--acon-space-2); }
-.space-flow-actor { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: var(--acon-space-2); min-width: 0; min-height: 56px; padding: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); color: var(--acon-text); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.space-flow-actor { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: var(--acon-space-2); min-width: 0; min-height: 56px; padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface-2); color: var(--acon-text); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 .space-flow-actor > .sub { grid-column: 2; }
 .space-flow-actor:focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
 .space-flow-edges { list-style: none; padding: 0; margin: var(--acon-space-3) 0 0; }
@@ -692,7 +693,7 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-board-columns { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: var(--acon-space-3); overflow-x: auto; max-width: 100%; padding: var(--acon-space-1); align-items: start; }
 .space-board-column { min-width: 0; padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface); }
 .space-board-column > h3 { margin: 0 0 var(--acon-space-3); font-size: var(--acon-text-sm); overflow-wrap: anywhere; }
-.space-board-item { min-width: 0; margin-bottom: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); overflow-wrap: anywhere; }
+.space-board-item { min-width: 0; margin-bottom: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface-2); overflow-wrap: anywhere; }
 .space-board-card, .space-board-owner { display: flex; width: 100%; min-height: 44px; min-width: 0; padding: var(--acon-space-2); border: 0; border-radius: var(--acon-radius-2); background: transparent; color: var(--acon-text); font: inherit; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
 .space-board-card { flex-direction: column; align-items: start; gap: var(--acon-space-2); }
 .space-board-card strong { font-weight: 600; max-width: 100%; }
@@ -705,3 +706,67 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-board-unassigned { padding: 0 var(--acon-space-2); }
 .space-board-done > summary { min-height: 44px; padding: var(--acon-space-2); cursor: pointer; overflow-wrap: anywhere; }
 .space-board :is(button, summary, [tabindex]):focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
+
+
+/* Room consumes the column's available viewport; only its scene can scroll.
+   Its plain-text roster stays available to assistive technology; Team is the
+   visible text alternative, so there are no clipped focusable controls. */
+html:has(#view-space[data-space-section="room"]:not([hidden])),
+body:has(#view-space[data-space-section="room"]:not([hidden])) { overflow: hidden; }
+.app:has(#view-space[data-space-section="room"]:not([hidden])) { height: 100dvh; min-height: 0; overflow: hidden; }
+.column:has(#view-space[data-space-section="room"]:not([hidden])) { min-height: 0; height: 100%; overflow: hidden; }
+main:has(> #view-space[data-space-section="room"]:not([hidden])) { display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 0; }
+#view-space[data-space-section="room"] { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#view-space[data-space-section="room"] > .space-header { flex: none; padding: var(--acon-space-3) var(--acon-space-4); }
+#view-space[data-space-section="room"] > .notice { flex: none; }
+#view-space[data-space-section="room"] .space-content { position: relative; flex: 1; min-height: 0; gap: var(--acon-space-2); margin-top: 0; overflow: hidden; }
+#view-space[data-space-section="room"] .space-view-bar { flex: none; gap: var(--acon-space-3); margin-top: 0; padding: 0 var(--acon-space-4); }
+#view-space[data-space-section="room"] .space-selection,
+#view-space[data-space-section="room"] .space-view-notice { flex: none; margin: 0 var(--acon-space-4); }
+#view-space[data-space-section="room"] .space-scroll { flex: 1; min-height: 0; max-height: none; width: 100%; border-radius: 0; }
+#view-space[data-space-section="room"] .space-roster { position: absolute; width: 1px; height: 1px; margin: 0; padding: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.space-room-text-view { margin-left: auto; }
+
+/* A single viewport-anchored tooltip avoids clipping inside the transformed
+   scene. Frequent hover/focus details are intentionally immediate. */
+.space-actor-popover { position: fixed; left: var(--space-popover-x, 0px); top: var(--space-popover-y, 0px); z-index: var(--shell-z-rail); width: min(300px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: hidden; padding: var(--acon-space-3); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-3); background: var(--acon-surface); color: var(--acon-text); box-shadow: var(--acon-shadow); overflow-wrap: anywhere; }
+.space-actor-popover > :first-child { margin-top: 0; }
+.space-actor-popover > :last-child { margin-bottom: 0; }
+.space-actor-popover strong { display: block; font-weight: 600; }
+.space-actor-popover .space-team-roles,
+.space-actor-popover .space-team-badges { margin-top: var(--acon-space-2); }
+.space-actor-popover .space-team-state { margin-top: var(--acon-space-2); }
+.space-actor-popover .space-team-taskline { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin-top: var(--acon-space-2); color: var(--acon-text-2); }
+
+/* State is always named in the markup; these are shared, redundant signals. */
+.space-team-attention-row[data-state="working"],
+.space-flow-actor[data-state="working"] { border-color: var(--acon-accent); }
+.space-flow-actor[data-state="waiting"] { border-color: var(--acon-warn); }
+.space-flow-actor[data-state="blocked"] { border-color: var(--acon-err); }
+.space-flow-actor[data-state="away"],
+.space-board-owner[data-state="away"],
+.space-team-attention-row[data-state="away"] { border-style: dashed; opacity: 0.72; }
+.space-flow-actor[data-stale="true"],
+.space-board-owner[data-stale="true"] { border-style: dashed; }
+.space-board-owner[data-state="working"] { color: var(--acon-accent-text); background: var(--acon-accent-soft); }
+.space-board-owner[data-state="waiting"] { color: var(--acon-warn); background: var(--acon-warn-soft); }
+.space-board-owner[data-state="blocked"] { color: var(--acon-err); background: var(--acon-err-soft); }
+.space-board-owner[data-state="away"],
+.space-board-owner[data-stale="true"] { border-width: 1px; }
+.space-activity-dot { display: none; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--acon-accent); }
+[data-state="working"] > .space-activity-dot { display: inline-block; animation: space-working-dot var(--acon-duration-slow) var(--acon-ease-out) infinite alternate; }
+.space-board-owner .space-team-avatar { flex: none; }
+.space-flow-actor > .space-activity-dot,
+.space-actor > .space-activity-dot { position: absolute; top: var(--acon-space-1); right: var(--acon-space-1); }
+@keyframes space-working-dot { from { opacity: 0.35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .space-activity-dot { display: none !important; animation: none; } }
+
+/* Keep Room chrome readable at 200% text without consuming the scene viewport.
+   The bottom navigation remains outside the column on phones. */
+#view-space[data-space-section="room"] .space-summary .btn,
+#view-space[data-space-section="room"] .space-section-tabs .btn,
+#view-space[data-space-section="room"] .space-view-bar { font-size: var(--acon-text-sm); }
+#view-space[data-space-section="room"] .space-view-bar .btn { font-size: inherit; }
+#view-space[data-space-section="room"] .space-selection { position: absolute; z-index: var(--shell-z-raised); left: 0; right: 0; bottom: var(--acon-space-2); padding: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface); pointer-events: none; }
+
+[data-stale="true"] .space-activity-dot { display: none; animation: none; }

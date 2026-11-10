@@ -107,3 +107,21 @@ test("every Board column preserves producer totals when supplied or filtered car
   expect(heading("done")).toBe("Done (20) · 0 shown");
   expect(heading("work")).toBe("Work (12) · 1 shown");
 });
+
+test("Board pet inventory changes refresh owner avatars without changing facts or focus", () => {
+  const h = harness({ pets: [{ id: "first" }] });
+  const model = { ...h.model, cards: h.model.cards.map((card: any) => ({ ...card, owner: "demo:one" })) };
+  h.renderer.setRoute({ view: "board" }); h.renderer.update(model);
+  const board = h.root.querySelector(".space-board")!;
+  expect(board.querySelectorAll('[data-pet="first"]')).toHaveLength(1);
+  const owner = board.querySelector('[data-board-focus="owner:demo:task"]')!;
+  expect(owner.getAttribute("data-state")).toBe("working");
+  expect(owner.textContent).toContain("working");
+  expect(owner.getAttribute("aria-label")).toContain("working");
+  owner.focus();
+  h.setPets([{ id: "second" }]); h.renderer.update(model);
+  expect(board.querySelectorAll('[data-pet="first"]')).toHaveLength(0);
+  expect(board.querySelectorAll('[data-pet="second"]')).toHaveLength(1);
+  expect(h.doc.activeElement.getAttribute("data-board-focus")).toBe("owner:demo:task");
+  const writes = h.writes; h.renderer.update({ ...model, sampledAt: 2 }); expect(h.writes).toBe(writes);
+});
