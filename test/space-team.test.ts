@@ -48,7 +48,7 @@ function harness() {
   const teamSource=readFileSync(new URL("../shell/space-team.js",import.meta.url),"utf8");
   const source=readFileSync(new URL("../shell/space.js",import.meta.url),"utf8");
   const storage=new Map(); const nav: any[]=[]; let back=0;
-  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{observe(){}disconnect(){}},CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date});
+  const api=runInNewContext(`${teamSource.replace(/^export /gm,"")}\n${source.replace(/^import .*;$/gm,"").replace(/^export /gm,"")}\n({createSpaceRenderer,mergeSpaceScenes,filterSpaceModel})`,{document:doc,window:{scrollX:0,scrollY:0,scrollTo(){}},history:{back(){back++;}},localStorage:{getItem:(k:string)=>storage.get(k),setItem:(k:string,v:string)=>storage.set(k,v)},ResizeObserver:class{observe(){}disconnect(){}},CSS:{escape:(v:string)=>v},createSpaceViewController(){throw new Error("Hidden Room initialized");},Date});
   const renderer=api.createSpaceRenderer(root,{h,pets:()=>[],packs:()=>[],navigateSpace:(params:any)=>nav.push(params),navigate:(...args:any[])=>nav.push(args)});
   const scene={groups:[{id:"alpha",title:"Alpha"}],actors:[{id:"one",name:"Exact / name",state:"working",roles:["implementer"],since:"2026-01-01T00:00:00Z",group:"alpha",card:"task",marks:[{kind:"inbox",text:"3 inbox"},{kind:"approval",text:"1 approval"}],link:{panel:"notes"}},{id:"two",name:"Resting",state:"idle",group:"alpha",marks:[],link:{panel:"notes"}}],zones:[{id:"work",title:"Work",count:1,group:"alpha"}],cards:[{id:"task",title:"Task title",zone:"work",group:"alpha",link:{panel:"notes",params:{id:"task"}}}],links:[{kind:"cohort",from:"one",to:"two"}]};
   const model=api.mergeSpaceScenes(new Map([["demo",{scene,sampledAt:1}]]));
@@ -204,4 +204,11 @@ test("entering Space with an open detail moves focus back into the dialog",()=>{
   expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("back");
   h.root.querySelector('[data-detail-focus="open"]')!.focus();h.renderer.enter();
   expect(h.doc.activeElement.getAttribute("data-detail-focus")).toBe("open");
+});
+test("a state filter keeps an actor's current card even without a matching owner",()=>{
+  const h=harness();
+  const model={...h.model,cards:h.model.cards.map((c:any)=>c.id==="demo:task"?{...c,owner:undefined}:c)};
+  const filtered=h.api.filterSpaceModel(model,"","working");
+  expect(filtered.actors.find((a:any)=>a.id==="demo:one")?.card).toBe("demo:task");
+  expect(filtered.cards.map((c:any)=>c.id)).toContain("demo:task");
 });

@@ -79,6 +79,25 @@ export async function runSpaceTeam({ browser, ticket, report, output }) {
       await page.evaluate(() => { location.hash = "#/local/space?view=team"; });
       await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
 
+      if (width < 1024) {
+        // Compact: .column is the page scroller; a producer round trip must restore it and the actor focus.
+        await page.evaluate(() => { location.hash = "#/local/space?view=team"; });
+        await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
+        const scrolled = await page.evaluate(() => { const c = document.querySelector(".column"); if (!c || c.scrollHeight - c.clientHeight < 40) return null; c.scrollTop = Math.min(160, c.scrollHeight - c.clientHeight); return c.scrollTop; });
+        if (scrolled !== null) {
+          await page.locator(`.space-team [data-space-actor="${actorKey}"]`).first().click();
+          await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
+          await page.locator(".space-agent-detail [data-detail-focus='open']").click();
+          await page.waitForFunction(() => !location.hash.includes("/space"));
+          await page.goBack();
+          await page.locator(".space-agent-detail[role='dialog']:not([hidden])").waitFor();
+          await page.keyboard.press("Escape");
+          await page.locator(".space-agent-detail").waitFor({ state: "hidden" });
+          const after = await page.evaluate(() => ({ top: document.querySelector(".column")?.scrollTop ?? 0, key: document.activeElement?.getAttribute("data-space-actor") }));
+          assert(Math.abs(after.top - scrolled) <= 2, `Compact scroll not restored: ${after.top} vs ${scrolled}`);
+          assert.equal(after.key, actorKey, "Compact producer round trip did not restore actor focus");
+        }
+      }
       if (width >= 1024) {
         // Direct Room route: Room controls are created after the detail and must still be inert.
         await page.evaluate((key) => { location.hash = `#/local/space?view=room&actor=${encodeURIComponent(key)}`; }, actorKey);

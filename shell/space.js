@@ -48,7 +48,9 @@ export function filterSpaceModel(model, group, state) {
   const known = !group || model.groups.some((g) => g.id === group);
   const actors = model.actors.filter((a) => known && includes(a) && (!state || a.state === state));
   const actorIds = new Set(actors.map((a) => a.id));
-  const cards = model.cards.filter((c) => known && includes(c) && (!state || actorIds.has(c.owner)));
+  // A kept actor keeps its current card even when the card has no owner or another owner.
+  const actorCards = new Set(actors.map((a) => a.card).filter(Boolean));
+  const cards = model.cards.filter((c) => known && includes(c) && (!state || actorIds.has(c.owner) || actorCards.has(c.id)));
   const cardIds = new Set(cards.map((c) => c.id));
   const zones = new Set(cards.map((c) => c.zone));
   return { ...model, actors: actors.map((a) => a.card && !cardIds.has(a.card) ? { ...a, card: undefined } : a),
@@ -146,7 +148,7 @@ export function createSpaceRenderer(root, host) {
   const groupSummary = h("button", { class: "btn", type: "button", "aria-label": "Clear project and state filters", onclick: () => choose({ group: "", state: "" }) });
   summary.append(groupSummary);
   function setRoute(params = {}) {
-    if (selection.actor && !params.actor) { restorePoint = returnPoint ?? { pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft }; returnPoint = null; }
+    if (selection.actor && !params.actor) { restorePoint = returnPoint ?? { pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft }; returnPoint = null; }
     selection = { actor: params.actor ?? "", view: ["team", "flow", "board", "room"].includes(params.view) ? params.view : savedView,
       group: params.group ?? "", state: ["working", "waiting", "blocked", "away", "idle"].includes(params.state) ? params.state : "" };
     if (selection.view !== savedView) {
@@ -172,7 +174,7 @@ export function createSpaceRenderer(root, host) {
   };
   const team = createSpaceTeam(teamRoot, { h, sprite, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
   function openActor(id, element) {
-    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
+    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
     choose({ actor: id });
   }
   function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
@@ -234,6 +236,8 @@ export function createSpaceRenderer(root, host) {
     const element = point.element?.isConnected ? point.element : keyed ?? (point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null);
     focusSpaceControl(element, sectionButtons.get(selection.view));
     const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
+    // At compact widths .column, not main, is the page scroller.
+    const column = root.closest(".column"); if (column && column !== main) column.scrollTop = point.columnTop;
     scroll.scrollTop = point.sceneTop; scroll.scrollLeft = point.sceneLeft;
     window.scrollTo(point.pageX, point.pageY);
   }
