@@ -29,7 +29,7 @@ jobs:
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Tag equals the package version, commit is on main, CHANGELOG entry is dated
         run: bun scripts/release-gate.ts check "$GITHUB_REF_NAME" "$GITHUB_SHA"
       - name: Wait for the tag commit's main CI to finish green
@@ -63,7 +63,7 @@ jobs:
         run: node scripts/check-docs.mjs --require-fresh
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version: 1.4.4
       - name: Require matching version, tag and dated changelog entry
         env:
           RELEASE_TAG: ${{ github.ref_name }}
