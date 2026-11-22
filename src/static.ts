@@ -39,7 +39,7 @@ export function staticCsp(config: StaticConfig): string {
 }
 
 const FILES: [string, string][] = [
-  ...["shell.js", "static.js", "snapshot-headers.js", "shell.css", "space.js", "space-team.js", "space-board.js", "space-tracker.js", "space-flow.js", "space-view.js", "space3d.js", "icon.svg", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css"].map((file): [string, string] => [file, file]),
+  ...["shell.js", "panel-worker.js", "static.js", "snapshot-headers.js", "shell.css", "space.js", "space-team.js", "space-board.js", "space-tracker.js", "space-flow.js", "space-view.js", "space3d.js", "icon.svg", "asset-viewer.html", "asset-viewer.js", "asset-viewer.css"].map((file): [string, string] => [file, file]),
   ...["three.module.js", "three.core.js", "GLTFLoader.js", "BufferGeometryUtils.js", "SkeletonUtils.js", "NOTICE", "manifest.json"].map((file): [string, string] => [`vendor/${file}`, `vendor/${file}`]),
   ...["icons.js", "NOTICE", "manifest.json"].map((file): [string, string] => [`vendor/icons/${file}`, `vendor/icons/${file}`]),
   ["visual-frame.html", "visual/frame.html"], ["visual-frame.css", "visual/frame.css"], ["visual-frame.js", "visual/frame.js"],
@@ -63,6 +63,7 @@ export async function buildStatic(raw: string, out = "dist"): Promise<StaticBuil
   const stage = await mkdtemp(join(parent, ".acon-static-"));
   try {
     const csp = staticCsp(config);
+    const workerCsp = `default-src 'none'; script-src 'self' ${[...new Set(config.nodes.map((node) => node.url))].join(" ")}`;
     // frame-ancestors is header-only; browsers report it as ignored in a meta policy.
     const metaCsp = csp.replace("; frame-ancestors 'none'", "");
     const shellRoot = new URL("../shell/", import.meta.url);
@@ -83,13 +84,14 @@ export async function buildStatic(raw: string, out = "dist"): Promise<StaticBuil
     const documents = ["/", "/index.html"];
     const frameDocuments = ["/visual/frame", "/visual/frame.html"];
     const viewerDocuments = ["/asset-viewer", "/asset-viewer.html"];
-    const headers = `/*\n${headerLines(BASE_HEADERS)}\n\n${documents.map((path) => `${path}\n${headerLines({ "Content-Security-Policy": csp, "X-Frame-Options": "DENY" })}`).join("\n\n")}\n\n${frameDocuments.map((path) => `${path}\n${headerLines({ "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN" })}`).join("\n\n")}\n\n${viewerDocuments.map((path) => `${path}\n${headerLines({ "Content-Security-Policy": VIEWER_CSP, "X-Frame-Options": "SAMEORIGIN" })}`).join("\n\n")}\n`;
+    const headers = `/*\n${headerLines(BASE_HEADERS)}\n\n${documents.map((path) => `${path}\n${headerLines({ "Content-Security-Policy": csp, "X-Frame-Options": "DENY" })}`).join("\n\n")}\n\n${frameDocuments.map((path) => `${path}\n${headerLines({ "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN" })}`).join("\n\n")}\n\n${viewerDocuments.map((path) => `${path}\n${headerLines({ "Content-Security-Policy": VIEWER_CSP, "X-Frame-Options": "SAMEORIGIN" })}`).join("\n\n")}\n\n/panel-worker.js\n${headerLines({ "Content-Security-Policy": workerCsp })}\n`;
     await writeFile(join(stage, "_headers"), headers);
     await writeFile(join(stage, "vercel.json"), `${JSON.stringify({ version: 2, cleanUrls: true, headers: [
       { source: "/(.*)", headers: Object.entries(BASE_HEADERS).map(([key, value]) => ({ key, value })) },
       ...documents.map((path) => ({ source: path, headers: [{ key: "Content-Security-Policy", value: csp }, { key: "X-Frame-Options", value: "DENY" }] })),
       ...frameDocuments.map((path) => ({ source: path, headers: [{ key: "Content-Security-Policy", value: FRAME_CSP }, { key: "X-Frame-Options", value: "SAMEORIGIN" }] })),
       ...viewerDocuments.map((path) => ({ source: path, headers: [{ key: "Content-Security-Policy", value: VIEWER_CSP }, { key: "X-Frame-Options", value: "SAMEORIGIN" }] })),
+      { source: "/panel-worker.js", headers: [{ key: "Content-Security-Policy", value: workerCsp }] },
     ] }, null, 2)}\n`);
     await writeFile(join(stage, "wrangler.jsonc"), `${JSON.stringify({ name: "acon-static-shell", compatibility_date: "2026-10-01", assets: { directory: ".", html_handling: "auto-trailing-slash", not_found_handling: "none" } }, null, 2)}\n`);
     await writeFile(join(stage, ".assetsignore"), "vercel.json\n.vercelignore\nwrangler.jsonc\n.assetsignore\n");

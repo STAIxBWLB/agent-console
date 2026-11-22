@@ -290,6 +290,9 @@ export type PanelNode = DomOr<"Node", ConsoleNode>;
 export type PanelElement = DomOr<"HTMLElement", ConsoleElement>;
 export type PanelButton = DomOr<"HTMLButtonElement", ConsoleElement>;
 export type PanelForm = DomOr<"HTMLFormElement", ConsoleElement>;
+/** DOM-free fallback; panel builds with DOM types receive the native Worker type. */
+export interface ConsoleWorker { postMessage(message: unknown): void; terminate(): void }
+export type PanelWorker = DomOr<"Worker", ConsoleWorker>;
 
 /** Text-only DOM kit supplied by the shell. Classes and tokens are documented in README. */
 export interface ConsoleUi {
@@ -340,6 +343,8 @@ export interface ConsoleHost {
   snapshot(extra?: Record<string, unknown>): Promise<Record<string, unknown>>;
   action(input: { action: string } & Record<string, unknown>): Promise<ActionResult | ({ ok: true } & Record<string, unknown>)>;
   navigate(tool: string, panel: string, params?: Record<string, string>): void;
+  /** Optional on older consoles; start the panel module worker or reject with a recorded error. */
+  worker?: () => Promise<PanelWorker>;
   onSnapshot(cb: (snapshot: Record<string, unknown>) => void): void;
   onTheme(cb: (theme: ConsoleHost["theme"]) => void): void;
   toast(text: string, options?: { undo?: () => void }): void;

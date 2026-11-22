@@ -74,6 +74,7 @@ const fileName = (name: string) => codePoints(name.replace(/[^A-Za-z0-9._ -]/gu,
  * are blocked, so text is measured in the wrong font and labels are laid out too narrow (checked in Chromium:
  * 901 vs 918 px for the demo flowchart). The frame's own code sets no inline styles (test/shell.test.ts asserts it).
  */
+export const PANEL_WORKER_CSP = "default-src 'none'; script-src 'self'";
 export const FRAME_CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 // #65: the sign-in form posts to itself and loads nothing. Under no-referrer, Chromium posts the form with
 // `Origin: null`, which the origin check refuses, so this page alone uses same-origin.
@@ -105,7 +106,8 @@ export function startServer(options: ServerOptions) {
   const startedAt = new Date(now()).toISOString();
   const serve = options.serve;
   const shell = { "/": ["index.html", "text/html; charset=utf-8"], "/shell.js": ["shell.js", "text/javascript; charset=utf-8"], "/snapshot-headers.js": ["snapshot-headers.js", "text/javascript; charset=utf-8"], "/space.js": ["space.js", "text/javascript; charset=utf-8"], "/space-team.js": ["space-team.js", "text/javascript; charset=utf-8"], "/space-board.js": ["space-board.js", "text/javascript; charset=utf-8"], "/space-tracker.js": ["space-tracker.js", "text/javascript; charset=utf-8"], "/space-flow.js": ["space-flow.js", "text/javascript; charset=utf-8"], "/space-view.js": ["space-view.js", "text/javascript; charset=utf-8"], "/space3d.js": ["space3d.js", "text/javascript; charset=utf-8"], "/shell.css": ["shell.css", "text/css; charset=utf-8"], "/icon.svg": ["icon.svg", "image/svg+xml"] } as const;
-  const files: Record<string, { body: string; type: string; frame?: true }> = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
+  const files: Record<string, { body: string; type: string; frame?: true; worker?: true }> = Object.fromEntries(Object.entries(shell).map(([path, [name, type]]) => [path, { body: asset(name), type }]));
+  files["/panel-worker.js"] = { body: asset("panel-worker.js"), type: "text/javascript; charset=utf-8", worker: true };
   // Sandboxed visual frame: fixed files only, served with FRAME_CSP and framable by the console itself.
   files["/visual/frame"] = { body: asset("visual-frame.html"), type: "text/html; charset=utf-8", frame: true };
   files["/visual/frame.css"] = { body: asset("visual-frame.css"), type: "text/css; charset=utf-8", frame: true };
@@ -392,7 +394,7 @@ export function startServer(options: ServerOptions) {
           return new Response(asset(path === "/push-worker.js" ? "push-worker.js" : "manifest.webmanifest"), { headers: { ...HEADERS, "Content-Type": path.endsWith(".js") ? "text/javascript; charset=utf-8" : "application/manifest+json; charset=utf-8" } });
         }
         const file = files[path];
-        if (file) return new Response(file.body, { headers: { ...HEADERS, ...(file.frame ? { "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "private, max-age=3600" } : {}), "Content-Type": file.type } });
+        if (file) return new Response(file.body, { headers: { ...HEADERS, ...(file.frame ? { "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "private, max-age=3600" } : {}), ...(file.worker ? { "Content-Security-Policy": PANEL_WORKER_CSP } : {}), "Content-Type": file.type } });
         if (plugin && (plugin[2] === "panel.js" || plugin[2] === "panel.css")) {
           if (!live) return reject(401, "session expired or missing; run acon ui");
           const entry = pluginEntry();
