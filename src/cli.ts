@@ -139,11 +139,16 @@ async function install(home: string, source: string | undefined, flags: Set<stri
     }
     return 0;
   } catch (error) {
-    output.error(error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`);
+    const message = error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`;
+    if (message.endsWith("; see acon install --list")) output.error(message.slice(0, -"; see acon install --list".length), "acon install --list");
+    else if (source && message.endsWith("; use --force to replace it")) output.error(message.slice(0, -"; use --force to replace it".length), `acon install ${shellQuote(source)} --force`);
+    else output.error(message);
     return 1;
   }
 }
 
+// Quote a path or source as one POSIX shell argument for a copyable next step.
+const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 const serveArgs = (values: Record<string, string[]>, flags: Set<string>): ServeArgs => ({ host: values["--host"]?.[0], port: values["--port"]?.[0], origins: values["--origin"] ?? [], readOnly: flags.has("--read-only") });
 
 function token(home: string, file: string | undefined, force: boolean): number {
@@ -151,7 +156,8 @@ function token(home: string, file: string | undefined, force: boolean): number {
   try { newTokenFile(path, force); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    output.error(code === "EEXIST" ? `${path} already exists; it was not changed (use --force to replace it)` : `could not write ${path} (${code ?? (error as Error).message})`);
+    if (code === "EEXIST") output.error(`${path} already exists; it was not changed`, `acon token new --file ${shellQuote(path)} --force`);
+    else output.error(`could not write ${path} (${code ?? (error as Error).message})`);
     return 1;
   }
   output.raw(`${path}\n`);
@@ -223,7 +229,9 @@ function principalCommand(home: string, args: string[], flags: Set<string>): num
     return 0;
   } catch (error) {
     const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
-    output.error(`${cause}; check $AGENTHUB_HOME/console/principals.json ownership/mode 0600 and run acon principal list to choose a registered id before retrying`);
+    const brief = cause.split("; ")[0]!;
+    const next = cause.includes("not registered") ? "acon principal list" : `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
+    output.error(cause.includes("not registered") ? brief : `${brief}; expected an owned console directory and a mode 0600 registry`, next);
     return 1;
   }
 }
@@ -250,7 +258,14 @@ export async function main(argv: string[]): Promise<number> {
   }
   output = createOutput({ color, ascii, json: jsonFlag || filtered.includes("--json") });
   const parsed = parse(filtered);
-  if (typeof parsed === "string") { output.error(parsed); output.diagnostic("Usage: acon <command> [options]"); output.diagnostic("Run 'acon help' for details."); return 2; }
+  if (typeof parsed === "string") {
+    output.error(parsed);
+    const name = filtered[0] ?? "";
+    const help = DETAILS[name];
+    output.diagnostic(`Usage: ${help?.usage ?? "acon <command> [options]"}`);
+    output.diagnostic(`Run 'acon help${help ? ` ${name}` : ""}' for details.`);
+    return 2;
+  }
   const { command, flags, args, values } = parsed;
   if (["--version", "-v", "version"].includes(command)) { if (jsonFlag) output.json({ version: pkg.version }); else output.raw(`${pkg.version}\n`); return 0; }
   if (["help", "--help", "-h"].includes(command)) {
@@ -283,7 +298,7 @@ export async function main(argv: string[]): Promise<number> {
       output.bullet("ok", `static shell written to ${result.out}; serve that directory over https and allow its origin on each acon serve node`);
       return 0;
     } catch (error) {
-      output.error(`static build failed: ${(error as Error).message}; check --nodes and choose an unused --out directory`);
+      output.error(`static build failed: ${(error as Error).message}`, "acon help build");
       return 1;
     }
   }
@@ -310,7 +325,7 @@ export async function main(argv: string[]): Promise<number> {
     }
     return scan.error ? 1 : 0;
   }
-  const log = (line: string) => output.error(line);
+  const log = (line: string) => output.diagnostic(`acon: ${line}`);
   const plugins = await loadPlugins(scan, { home, log });
   const { pets, problems: petProblems } = loadPets(petDirs(home));
   const { packs: assetPacks, problems: assetProblems } = loadAssetPacks([join(home, "console", "assets")]);

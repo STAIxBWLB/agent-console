@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { MARKERS, ROLE_SGR, asciiMarkers, createOutput, resolveColor } from "../src/cli-output.ts";
 
 const bin = join(import.meta.dir, "..", "bin", "acon.js");
 async function run(args: string[], extra: Record<string, string> = {}) {
-  const home = mkdtempSync(join(tmpdir(), "acon-output-"));
+  const home = mkdtempSync("/tmp/acon-o-");
   const proc = Bun.spawn([process.execPath, bin, ...args], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, AGENTHUB_HOME: home, LANG: "en_US.UTF-8", COLUMNS: "80", ...extra }, stdout: "pipe", stderr: "pipe" });
   const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   return { code, out, err };
@@ -42,6 +41,17 @@ test("human output fits 80 cells and usage and operation failures use stderr", a
   }
   const bad = await run(["unknown"]); expect(bad.code).toBe(2); expect(bad.out).toBe(""); expect(bad.err).toContain("acon: ");
   const failure = await run(["principal", "list"]); expect(failure.code).toBe(1); expect(failure.err).toContain("acon: ");
+  expect(failure.err).toContain("  → ls -ld ");
+  const usage = await run(["plugins", "--bad"]);
+  expect(usage.err).toContain("Usage: acon plugins [--json]");
+  expect(usage.err).toContain("Run 'acon help plugins' for details.");
+});
+test("token refusal puts the complete corrective command on a separate line", async () => {
+  const home = mkdtempSync("/tmp/acon-o-");
+  expect((await run(["token", "new"], { AGENTHUB_HOME: home })).code).toBe(0);
+  const denied = await run(["token", "new"], { AGENTHUB_HOME: home });
+  expect(denied.code).toBe(1);
+  expect(denied.err).toContain(`  → acon token new --file '${home}/console/token' --force\n`);
 });
 test("table caps id and state columns and wraps detail within 80 cells", () => {
   let text = "";
