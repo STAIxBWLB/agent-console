@@ -1,0 +1,8 @@
+{
+  "name": "acon",
+  "short_name": "acon",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

@@ -68,6 +68,7 @@ export function inboxItemProblems(item: unknown): string[] {
   if (!i || typeof i !== "object") return ["item must be an object"];
   const out: string[] = [];
   for (const key of ["id", "kind", "title", "at"]) if (!isText(i[key])) out.push(`item.${key} must be a non-empty string`);
+  if (i.push !== undefined && typeof i.push !== "boolean") out.push("item.push must be a boolean when present");
   if (!GROUPS.includes(i.group as string)) out.push("item.group must be decision, review, result, candidate or alert");
   if (typeof i.at === "string" && Number.isNaN(Date.parse(i.at))) out.push("item.at must be an ISO time");
   if (!Array.isArray(i.verbs) || i.verbs.some((v) => !v || !isText(v.id) || !isText(v.label))) out.push("item.verbs must be {id, label}[]");

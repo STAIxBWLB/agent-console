@@ -896,7 +896,7 @@ function route() {
   renderCrumbs();
   renderTabs();
   if (r.area === "inbox") { renderInbox(true); if (r.params.id) selectKey(r.params.id, true); }
-  if (r.area === "system") renderSystem();
+  if (r.area === "system") { renderSystem(); if (!pushState.checked) void refreshPushState(); }
   if (r.area === "audit") showAudit();
   if (r.area === "mini") renderMini(true);
   if (r.area === "space") showSpace(prev.area === "space");
@@ -2189,8 +2189,73 @@ function renderAudit() {
       h("button", { type: "button", class: "btn", disabled: !result || Boolean(auditState.error), onclick: () => void fetchAudit(true), text: "Export JSONL" })));
 }
 
+// Push is explicitly enabled per device and only on the same-origin serve shell.
+const pushState = { status: "off", busy: false, checked: false, message: "", sequence: 0 };
+const pushSupported = () => globalThis.isSecureContext && "serviceWorker" in navigator && "PushManager" in globalThis && "Notification" in globalThis;
+async function refreshPushState() {
+  if (!state.serve || staticTransport || !pushSupported()) return;
+  const sequence = ++pushState.sequence;
+  try {
+    const registration = await navigator.serviceWorker.getRegistration("/push-worker.js");
+    const subscription = await registration?.pushManager.getSubscription();
+    if (sequence !== pushState.sequence) return;
+    if (!subscription) pushState.status = "off";
+    else {
+      const result = await post("/push/status", { endpoint: subscription.endpoint });
+      if (sequence !== pushState.sequence) return;
+      pushState.status = result.status === 200 && result.data.enabled === true ? "on" : "off";
+      if (result.status !== 200) pushState.message = "Could not check this device; try again in System.";
+    }
+  } catch { if (sequence !== pushState.sequence) return; pushState.status = "off"; pushState.message = "Could not check this device; try again in System."; }
+  pushState.checked = true;
+  if (state.route.area === "system") renderSystem(true);
+}
+async function enablePush() {
+  if (!pushSupported() || pushState.busy) return;
+  pushState.sequence++; pushState.busy = true; pushState.message = "";
+  try {
+    // Permission is requested directly from the button gesture (required by iOS).
+    if (await Notification.requestPermission() !== "granted") throw new Error("permission");
+    const key = await post("/push/key", {});
+    if (key.status !== 200 || typeof key.data?.publicKey !== "string") throw new Error("key");
+    const text = key.data.publicKey.replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(text + "=".repeat((4 - text.length % 4) % 4)), (ch) => ch.charCodeAt(0));
+    await navigator.serviceWorker.register("/push-worker.js");
+    const registration = await navigator.serviceWorker.ready;
+    const existing = await registration.pushManager.getSubscription();
+    const subscription = existing ?? await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: bytes });
+    const result = await post("/push/subscribe", { subscription: subscription.toJSON() });
+    if (result.status !== 200) { pushState.message = str(result.data?.error) || "Could not enable notifications; check this node and retry."; return; }
+    pushState.status = "on"; pushState.message = "Notifications enabled for this device.";
+  } catch { pushState.message = "Could not enable notifications. Check permission and this node's push setup, then retry."; }
+  finally { pushState.busy = false; pushState.checked = true; if (state.route.area === "system") renderSystem(true); }
+}
+async function disablePush() {
+  if (!pushSupported() || pushState.busy) return;
+  pushState.sequence++; pushState.busy = true; pushState.message = "";
+  try {
+    const registration = await navigator.serviceWorker.getRegistration("/push-worker.js");
+    const subscription = await registration?.pushManager.getSubscription();
+    if (subscription) {
+      const result = await post("/push/unsubscribe", { endpoint: subscription.endpoint });
+      if (result.status !== 200) throw new Error("unsubscribe");
+      await subscription.unsubscribe();
+    }
+    pushState.status = "off"; pushState.message = "Notifications disabled for this device.";
+  } catch { pushState.message = "Could not disable notifications; check this node and retry."; }
+  finally { pushState.busy = false; if (state.route.area === "system") renderSystem(true); }
+}
+function pushCard() {
+  if (!state.serve || staticTransport) return null;
+  if (!pushSupported()) return h("section", { class: "card" }, h("h2", { text: "Notifications" }), h("p", { class: "sub", text: "This device needs a secure connection and a supported browser for notifications." }));
+  return h("section", { class: "card" }, h("h2", { text: "Notifications" }),
+    h("p", { class: "sub", text: `This device: ${pushState.status === "on" ? "on" : "off"}. Alerts contain a generic count and open Inbox.` }),
+    h("button", { type: "button", class: "btn", "aria-pressed": String(pushState.status === "on"), disabled: pushState.busy, onclick: pushState.status === "on" ? disablePush : enablePush, text: pushState.status === "on" ? "Disable notifications" : "Enable notifications" }),
+    pushState.message ? h("p", { class: "sub", role: "status", text: pushState.message }) : null);
+}
+
 function renderSystem(force = false) {
-  const sig = JSON.stringify([state.node, state.tools, state.snapshotCache, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off", staticTransport?.nodes.map((n) => [n.id, n.status, n.detail, n.data?.snapshotCache])]);
+  const sig = JSON.stringify([state.node, state.tools, state.snapshotCache, state.serverErrors, state.clientErrors, themeChoice(), state.offline, state.pets, petChoice()?.id ?? "off", pushState.status, pushState.message, pushState.busy, staticTransport?.nodes.map((n) => [n.id, n.status, n.detail, n.data?.snapshotCache])]);
   if (!force && sig === systemSig && $("view-system").childElementCount) return;
   systemSig = sig;
   // Keep keyboard focus on the same control across re-renders.
@@ -2221,6 +2286,7 @@ function renderSystem(force = false) {
         state.tools.length ? h("ul", { class: "list" }, state.tools.map((t) => h("li", {}, h("strong", { text: t.title ?? t.tool }), h("span", { class: "meta mono", text: t.tool }), statusChip(t.status),
           h("span", { class: "meta", text: t.status === "ready" ? `${t.version} · ${plural(t.panels.length, "panel")}${t.capabilities?.inbox ? " · inbox" : ""}${t.capabilities?.search ? " · search" : ""}${t.update ? ` · ${t.update} is registered; reload the page to use it` : ""}` : str(t.reason) }))))
           : h("p", { class: "sub", text: "No plugin manifests were found. A tool registers itself with its setup command." })),
+      pushCard(),
       snapshotCacheCard(),
       h("section", { class: "card wide" }, h("h2", { text: `Errors (${errors.length})` }),
         errors.length ? h("ul", { class: "list" }, errors.map((e) => h("li", {}, h("span", { class: "meta mono", text: new Date(e.at).toLocaleTimeString() }), h("strong", { text: e.tool }), h("span", { class: "meta", text: e.where }), h("span", { text: e.message }))))
@@ -2390,6 +2456,7 @@ async function boot() {
     // acon serve has no ticket: the verified identity is the session, and /session says so.
     const r = await post("/session", {});
     state.serve = r.status === 200 && r.data?.mode === "serve";
+    if (state.serve) document.head.append(h("link", { rel: "manifest", href: "/manifest.webmanifest" }));
   }
   if (!(await loadTools())) { if (!state.ended) endSession("The console could not start."); return; }
   state.nextTools = Date.now() + TOOLS_MS;

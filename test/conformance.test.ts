@@ -110,6 +110,8 @@ test("inbox items with forms and seen receipts pass; out-of-bounds forms and a b
   expect(inboxItemProblems({ ...item, verbs: [{ id: "answer", label: "Answer", form }] })).toEqual([]);
   expect(inboxItemProblems({ ...item, group: "result", verbs: [], seen: { action: "seen" } })).toEqual([]);
   expect(inboxItemProblems({ ...item, group: "result", verbs: [], seen: {} })).toEqual(["item.seen.action must be a non-empty string"]);
+  expect(inboxItemProblems({ ...item, verbs: [], push: true })).toEqual([]);
+  expect(inboxItemProblems({ ...item, verbs: [], push: "true" })).toContain("item.push must be a boolean when present");
   expect(verbFormProblems({ questions: [{ ...form.questions[0], options: [{ id: "x", label: "X" }] }] })).toEqual(["form.questions[0].options needs 2-8 options"]);
   expect(verbFormProblems({ questions: [] })).toEqual(["form needs 1-4 questions"]);
   expect(verbFormProblems({ questions: [{ ...form.questions[0], other: { maxLength: 2000 } }] })).toEqual(["form.questions[0].other.maxLength must be 1-1000"]);
