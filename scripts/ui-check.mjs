@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 // Agent-run browser probe. Playwright is discovered at runtime, never a package dependency.
+import { workerEntry, installWorkerProbe } from "./ui-check-worker.mjs";
 import { fetchFullSnapshot, fulfillSnapshotFixture } from "./ui-check-snapshot-fixture.mjs";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -74,6 +75,7 @@ function fixturePanel(host) {
   const { ui } = host;
   const mount = ui.h("div", { "data-ui-check": "fixture" });
   host.mount.append(mount);
+  installWorkerProbe(host, mount);
   host.snapshot({ panel: "fixture-read" }).then((result) => { mount.dataset.readOk = String(result.fixtureRead === true); }, () => { mount.dataset.readOk = "false"; });
   let panel = "notes";
   let selected;
@@ -166,7 +168,7 @@ plugin.manifest.panels = [
   {id:"review",title:"Items awaiting a personal review"}, {id:"archive",title:"Archived decisions and reference notes"}
 ];
 const provider = await plugin.open({home,log:()=>{}});
-provider.assets = {js:${JSON.stringify(`export default ${fixturePanel.toString()};`)}};
+provider.assets = {js:${JSON.stringify(`const installWorkerProbe = ${installWorkerProbe.toString()}; export const worker = ${workerEntry.toString()}; export default ${fixturePanel.toString()};`)}};
 const snapshot = provider.snapshot.bind(provider);
 provider.snapshot = async (input) => {
   if (input.panel === "fixture-read") return {fixtureRead:true};
@@ -214,7 +216,7 @@ const report = {
   schema: 1, mode: options.staticOnly ? "static-only" : options.loginOnly ? "login-only" : options.spaceMotionOnly ? "space-motion-only" : "full", startedAt: new Date().toISOString(), matrix: { widths: [375, 768, 1024, 1440], themes: ["light", "dark"], textPercent: [100, 200] },
   supplementalMatrix: { widths: [320], themes: ["light", "dark"], textPercent: [100], view: "space-fallback" },
   miniPopout: { width: 320, height: 440, themes: ["light", "dark"], textPercent: [100, 200] }, miniFallback: { width: 375, theme: "light", textPercent: 100, pet: "off", pack: false },
-  forceOverflow: options.forceOverflow, baseline: options.baseline, captures: [], findings: [], spaceChecks: [],
+  forceOverflow: options.forceOverflow, baseline: options.baseline, captures: [], findings: [], spaceChecks: [], workerChecks: [],
   screenReader: { status: "not_run", reason: "This browser probe does not run VoiceOver or establish screen-reader announcements. Record the separate macOS Safari pass in the PR." },
 };
 
@@ -820,6 +822,23 @@ async function runCoarse(ticket, theme, width) {
   } catch (error) {
     report.findings.push({ capture: label, kind: "probe-error", detail: error.message.slice(0, 1000) });
   } finally { await context.close(); }
+}
+
+async function runPanelWorker(ticket) {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, reducedMotion: "reduce" });
+  const page = await context.newPage(); page.setDefaultTimeout(15000);
+  try {
+    await page.goto((await ticket(false)).url, { waitUntil: "networkidle" });
+    await page.evaluate(() => { location.hash = "#/local/demo/notes"; });
+    const fixture = page.locator(".panel-mount:not([hidden]) [data-ui-check='fixture']");
+    await fixture.waitFor();
+    await fixture.dispatchEvent("ui-worker-probe");
+    await page.locator(".panel-mount:not([hidden]) [data-worker-probe]").waitFor();
+    const result = await fixture.evaluate((el) => ({ status: el.dataset.workerProbe, error: el.dataset.workerError }));
+    if (result.status !== "pass") report.findings.push({ capture: "panel-worker", kind: "panel-worker", detail: result.error || "Worker probe failed; inspect the module and CSP." });
+    else report.workerChecks.push({ host: "local", transferred: "Float32Array", blobBlocked: true });
+  } catch (error) { report.findings.push({ capture: "panel-worker", kind: "panel-worker", detail: error.message.slice(0, 500) }); }
+  finally { await context.close(); }
 }
 
 async function runScenario(ticket, scenario, fallback = false) {
@@ -1532,6 +1551,7 @@ try {
   report.browserVersion = browser.version();
   const focused = options.staticOnly || options.spaceMotionOnly || options.spaceViewsOnly || options.spaceTrackerOnly || options.loginOnly || options.visualOnly;
   if (!focused) {
+    await runPanelWorker(ticket);
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
     for (const width of [768, 1024]) for (const theme of report.matrix.themes) await runCoarse(ticket, theme, width);

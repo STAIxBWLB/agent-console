@@ -1,4 +1,5 @@
 // Isolated H2 browser probe, called by ui-check after the normal shell matrix.
+import { workerEntry, installWorkerProbe } from "./ui-check-worker.mjs";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +10,7 @@ import { createInterface } from "node:readline";
 const TOKENS = { a: "acon-static-fixture-a-" + "a".repeat(40), b: "acon-static-fixture-b-" + "b".repeat(40) };
 
 function staticPanel(host) {
+  installWorkerProbe(host, host.mount);
   const status = host.ui.h("p", { "data-static-host": host.node, text: `Host ${host.node}/${host.tool}` });
   const result = host.ui.h("p", { "data-static-result": host.node, role: "status", text: "No probe action yet" });
   const action = host.ui.button("Probe owner node", async () => {
@@ -28,22 +30,22 @@ import {createDemoPlugin} from ${from("test/fixtures/demo-plugin.ts")};
 import {join} from "node:path";
 import {readFileSync,readdirSync} from "node:fs";
 const scratch=${JSON.stringify(scratch)}, tokens=${JSON.stringify(TOKENS)};
-const calls={a:[],b:[]}; let shellSecrets=0; let policy=""; const out=join(scratch,"dist");
+const calls={a:[],b:[]}; let shellSecrets=0; let policy="", workerPolicy=""; const out=join(scratch,"dist");
 const publicFiles=new Set();
 const shell=Bun.serve({hostname:"127.0.0.1",port:0,async fetch(req){
   if(req.headers.has("authorization")||Object.values(tokens).some(token=>req.url.includes(token)))shellSecrets++;
-  const url=new URL(req.url);const path=url.pathname==="/"?"index.html":url.pathname==="/visual/frame"?"visual/frame.html":url.pathname.slice(1);
+  const url=new URL(req.url);if(url.pathname==="/panel-worker.js"&&url.search)shellSecrets++;const path=url.pathname==="/"?"index.html":url.pathname==="/visual/frame"?"visual/frame.html":url.pathname.slice(1);
   if(!publicFiles.has(path))return new Response("not found",{status:404});
   const frame=path==="visual/frame.html";
   const mime=path.endsWith(".js")?"text/javascript":path.endsWith(".css")?"text/css":path.endsWith(".html")?"text/html":path.endsWith(".json")?"application/json":path.endsWith(".svg")?"image/svg+xml":"text/plain";
-  return new Response(Bun.file(join(out,path)),{headers:{"Content-Type":mime,"Content-Security-Policy":frame?FRAME_CSP:path==="asset-viewer.html"?VIEWER_CSP:policy,"Referrer-Policy":"no-referrer","X-Content-Type-Options":"nosniff","Cache-Control":"no-store"}});
+  return new Response(Bun.file(join(out,path)),{headers:{"Content-Type":mime,"Content-Security-Policy":frame?FRAME_CSP:path==="asset-viewer.html"?VIEWER_CSP:path==="panel-worker.js"?workerPolicy:policy,"Referrer-Policy":"no-referrer","X-Content-Type-Options":"nosniff","Cache-Control":"no-store"}});
 }});
 const origin="http://127.0.0.1:"+shell.port;
 const configs={}; const nodes={};
 for(const id of ["a","b"]){
   const plugin=createDemoPlugin("demo");plugin.manifest.title="Demo "+id.toUpperCase();plugin.manifest.capabilities.actions.push("probe");
   const provider=await plugin.open({home:join(scratch,"home"),log:()=>{}});
-  provider.assets={js:${JSON.stringify(`export default ${staticPanel.toString()};`)},css:".static-style-probe { border-top-width: 3px; }"};
+  provider.assets={js:${JSON.stringify(`const installWorkerProbe = ${installWorkerProbe.toString()}; export const worker = ${workerEntry.toString()}; export default ${staticPanel.toString()};`)},css:".static-style-probe { border-top-width: 3px; }"};
   const originalAsset=provider.asset.bind(provider);
   provider.asset=async({id})=>id==="fixture.txt"?{mime:"text/plain",bytes:new TextEncoder().encode("Plain fixture <script> is text."),name:"fixture.txt"}:originalAsset({id});
   const original=provider.action.bind(provider);
@@ -52,7 +54,7 @@ for(const id of ["a","b"]){
   configs[id]=serve;
   nodes[id]=startServer({plugins:[{tool:"demo",file:"fixture",status:"ready",manifest:plugin.manifest,provider}],version:"static-fixture",pluginsDir:join(scratch,"home"),serve,log:()=>{}});
 }
-const built=await buildStatic("a="+nodes.a.origin+",b="+nodes.b.origin,out);policy=staticCsp(built.config);
+const built=await buildStatic("a="+nodes.a.origin+",b="+nodes.b.origin,out);policy=staticCsp(built.config);workerPolicy="default-src 'none'; script-src 'self' "+built.config.nodes.map((node)=>node.url).join(" ");
 function scan(dir,prefix=""){for(const entry of readdirSync(dir,{withFileTypes:true})){const relative=prefix+entry.name;if(entry.isDirectory())scan(join(dir,entry.name),relative+"/");else publicFiles.add(relative);}}scan(out);
 const emit=(data)=>console.log(JSON.stringify(data));
 emit({origin,nodes:{a:nodes.a.origin,b:nodes.b.origin}});
@@ -147,6 +149,24 @@ export async function runStaticCheck({ browser, root, capture, report, output, f
       } catch (error) { add("static-probe-error", `${error.message.slice(0, 800)}; inspect the static fixture and node status in System.`, label); }
       finally { report.findings.push(...errors.map((error) => ({ capture: label, ...error }))); await context.close(); }
     }
+    // A separate page keeps the expected blob CSP refusal out of normal console-error reporting.
+    const workerContext = await browser.newContext({ viewport: { width: 1024, height: 768 }, reducedMotion: "reduce" });
+    try {
+      await seed(workerContext);
+      const workerPage = await workerContext.newPage(); workerPage.setDefaultTimeout(15000);
+      await workerPage.goto(`${fixture.origin}/#/local/inbox`, { waitUntil: "networkidle" });
+      for (const id of ["a", "b"]) {
+        await setView(workerPage, `${id}:demo/notes`);
+        await workerPage.locator(`.panel-mount:not([hidden]) [data-static-host='${id}']`).waitFor();
+        const mount = workerPage.locator(".panel-mount:not([hidden]) .panel-body");
+        await mount.dispatchEvent("ui-worker-probe");
+        await workerPage.locator(".panel-mount:not([hidden]) .panel-body[data-worker-probe]").waitFor();
+        const result = await mount.evaluate((el) => ({ status: el.dataset.workerProbe, error: el.dataset.workerError }));
+        if (result.status !== "pass") add("static-panel-worker", `${id}: ${result.error || "worker probe failed"}`);
+        else report.workerChecks.push({ host: "static", node: id, transferred: "Float32Array", blobBlocked: true });
+      }
+    } catch (error) { add("static-panel-worker", error.message.slice(0, 500)); }
+    finally { await workerContext.close(); }
     // Failure controls use real stopped/refusing servers. CORS browser diagnostics here are intentional.
     const context = await browser.newContext({ viewport: { width: 375, height: 1000 }, reducedMotion: "reduce" });
     try {

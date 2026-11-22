@@ -1722,6 +1722,44 @@ function staticAssetFrame(url, title) {
   return wrapper;
 }
 
+function startPanelWorker(tool) {
+  return new Promise((resolve, reject) => {
+    let worker, timer, settled = false, ready = false;
+    const failure = (message) => {
+      const error = new Error(message);
+      clientError(tool.tool, "worker", error);
+      worker?.terminate();
+      if (!settled) { settled = true; clearTimeout(timer); reject(error); }
+    };
+    try {
+      const url = pluginPath(`/p/${tool.tool}/panel.js`);
+      worker = new Worker("/panel-worker.js", { type: "module" });
+      worker.addEventListener("error", (event) => {
+        const message = "panel worker failed; reload the page and check the worker module";
+        if (ready) clientError(tool.tool, "worker", new Error(message));
+        else if (!settled) { event.preventDefault?.(); failure(message); }
+      });
+      const onMessage = (event) => {
+        if (event.data?.acon === "ready" && !settled) {
+          ready = true; settled = true; clearTimeout(timer); worker.removeEventListener("message", onMessage); resolve(worker);
+        } else if (event.data?.acon === "error" && !settled) {
+          const allowed = new Set([
+            "invalid panel module path; reload the page and use host.worker()",
+            "panel worker module could not load; reload the page and check the node connection",
+            "panel module has no worker export; add worker(scope) or use the main-thread fallback",
+            "panel worker initialization failed; check the worker export and reload the page",
+            "panel worker already loaded; create a new worker instead",
+          ]);
+          failure(allowed.has(event.data.error) ? event.data.error : "panel worker could not load; reload the page and retry");
+        }
+      };
+      worker.addEventListener("message", onMessage);
+      timer = setTimeout(() => failure("panel worker did not become ready within 10 seconds; reload the page and retry"), 10000);
+      worker.postMessage({ acon: "load", url });
+    } catch { failure("panel worker could not start; check browser module-worker support and reload the page"); }
+  });
+}
+
 function hostFor(tool, p) {
   return {
     tool: tool.rawTool ?? tool.tool,
@@ -1732,6 +1770,7 @@ function hostFor(tool, p) {
     snapshot: async (extra = {}) => (await post(`/p/${tool.tool}/snapshot`, { after: 0, panel: p.panel ?? panelsOf(tool)[0].id, ...extra })).data,
     action: (input) => runAction(tool.tool, input, {}),
     navigate: (t, panel, params) => navigate(tool.node && !t.includes(":") ? `${tool.node}:${t}` : t, panel, params),
+    worker: () => startPanelWorker(tool),
     onSnapshot: (cb) => { p.snapListeners.push(cb); },
     onTheme: (cb) => { p.themeListeners.push(cb); },
     toast: (text, options = {}) => toast(String(text), options),
