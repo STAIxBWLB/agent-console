@@ -31,8 +31,10 @@ export function createStaticTransport(config, onStatus = () => {}) {
   const request = async (node, path, body, extraHeaders = {}) => {
     const headers = headersFor(node, body !== undefined);
     const known = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "x-acon-known")?.[1];
-    // A node (or its Access CORS policy) may refuse the custom header in preflight; after one such failure send plain requests.
+    // A node or its Access CORS policy may refuse either custom header; retry once without both.
     if (known !== undefined && !node.knownOff) headers["X-Acon-Known"] = known;
+    const fresh = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "x-acon-fresh")?.[1];
+    if (fresh !== undefined && !node.freshOff) headers["X-Acon-Fresh"] = fresh;
     const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
     const deadline = action ? 35000 : 8000;
     const signal = AbortSignal.timeout(deadline);
@@ -50,7 +52,7 @@ export function createStaticTransport(config, onStatus = () => {}) {
         notify(node, 'slow', `${path} took over ${deadline / 1000} s; the node is reachable but busy. Its tools retry on their next poll.`);
         return { status: 0, headers: {}, data: { ok: false, error: node.detail } };
       }
-      if (headers["X-Acon-Known"] !== undefined) { node.knownOff = true; return request(node, path, body, {}); }
+      if (headers["X-Acon-Known"] !== undefined || headers["X-Acon-Fresh"] !== undefined) { node.knownOff = true; node.freshOff = true; return request(node, path, body, {}); }
       return failed(node);
     }
     if (response.status === 401 || (response.status === 403 && data?.readOnly !== true)) {

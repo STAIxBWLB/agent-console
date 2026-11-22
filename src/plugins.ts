@@ -251,6 +251,7 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
   }
   const actions = m.capabilities?.actions;
   if (actions !== undefined && (!Array.isArray(actions) || actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
+  if (m.capabilities?.revision !== undefined && typeof m.capabilities.revision !== "boolean") out.push("capabilities.revision must be a boolean; set true to enable revisions or omit it");
   if (m.capabilities?.space !== undefined && typeof m.capabilities.space !== "boolean") out.push("capabilities.space must be a boolean");
   if (m.capabilities?.principal !== undefined) {
     if (!isPlainObject(m.capabilities.principal)) out.push("capabilities.principal must be an object; declare {tools: [...]} or omit it");
@@ -284,6 +285,7 @@ export function providerProblems(provider: unknown, manifest?: ConsolePanelManif
   if (!p.assets || typeof p.assets.js !== "string") out.push("provider.assets.js must be a string");
   if (p.assets?.css !== undefined && typeof p.assets.css !== "string") out.push("provider.assets.css must be a string");
   if (typeof p.snapshot !== "function") out.push("provider.snapshot must be a function");
+  if ((manifest?.capabilities?.revision === true || p.revision !== undefined) && typeof p.revision !== "function") out.push("provider.revision must be a function; implement revision(scopes) when opting in");
   if (typeof p.action !== "function") out.push("provider.action must be a function");
   if (p.asset !== undefined && typeof p.asset !== "function") out.push("provider.asset must be a function when present");
   for (const port of ["principalSnapshot", "principalAction"] as const) {

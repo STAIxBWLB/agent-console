@@ -30,6 +30,8 @@ export interface ConsolePanelManifest {
   capabilities?: {
     /** Additional console snapshot ids that are not navigation panels. */
     reads?: string[];
+    /** Opt into opaque per-panel revision checks for console polling. */
+    revision?: boolean;
     actions?: string[];
     confirm?: boolean;
     multiProject?: boolean;
@@ -99,6 +101,8 @@ export interface ConsoleProvider {
   /** panel.js is an ES module: `export default (host) => ({ show(panelId, params), hide(), destroy() })`. */
   assets: { js: string; css?: string };
   snapshot(input: { after: number; panel: string } & Record<string, unknown>): Promise<Record<string, unknown>>;
+  /** Up to 20 panel scopes; unknown or unreadable scopes return "0". Values are compared only for equality. */
+  revision?(scopes: string[]): Promise<Record<string, string>>;
   /** `meta` is present when the console advertises "action.meta"; tools use it as evidence of who acted, under their own rules. */
   action(input: { action: string; confirmed?: true; fingerprint?: string } & Record<string, unknown>, meta?: ActionMeta): Promise<ActionResult>;
   /**

@@ -244,6 +244,15 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
         expect(result && typeof result === "object" && !Array.isArray(result)).toBe(true);
       }
     });
+    if (plugin.manifest.capabilities?.revision === true) test("revision returns opaque strings for panel and unknown scopes", async () => {
+      expect(typeof provider.revision).toBe("function");
+      const panel = plugin.manifest.panels[0]!.id;
+      const scopes = [panel, ...Array.from({ length: 19 }, (_, i) => `acon-conformance-unknown-${i}`)];
+      const result = await withTimeout(provider.revision!(scopes), 5_000, "revision");
+      expect(isPlainObject(result)).toBe(true);
+      for (const scope of scopes) expect(typeof result[scope] === "string" && result[scope]!.length <= 200).toBe(true);
+      for (const scope of scopes.slice(1)) expect(result[scope]).toBe("0");
+    });
     if (plugin.manifest.capabilities?.reads?.length) test("every declared read answers a snapshot within 5 s", async () => {
       for (const panel of plugin.manifest.capabilities!.reads!) {
         const result = await withTimeout(provider.snapshot({ after: 0, panel }), 5_000, `snapshot ${panel}`);
