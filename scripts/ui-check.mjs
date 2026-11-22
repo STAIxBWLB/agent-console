@@ -575,6 +575,10 @@ async function checkRoomPopover(page) {
   const popup = page.locator(".space-actor-popover:not([hidden])");
   const actor = page.locator(".space-actor[data-key='demo:claude']");
   try {
+    // Start from no popover (#131): earlier steps can leave the pointer resting on another avatar, whose hover
+    // popover (hoverable by design) then covers this one at narrow widths with large text.
+    await page.mouse.move(0, 0);
+    await page.locator(".space-actor-popover").waitFor({ state: "hidden" });
     await actor.hover(); await popup.waitFor();
     const hover = await popup.evaluate((node) => { const box = node.getBoundingClientRect(); return { text: node.textContent, id: node.id, role: node.getAttribute("role"), fits: box.left >= 0 && box.top >= 0 && box.right <= innerWidth + 1 && box.bottom <= innerHeight + 1 }; });
     if (!hover.fits || hover.role !== "tooltip" || !hover.text.includes("claude") || !hover.text.includes("planner") || !hover.text.includes("reviewer")) findings.push({ kind: "space-actor-popover", detail: JSON.stringify(hover) });
