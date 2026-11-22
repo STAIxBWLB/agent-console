@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { BodyError, createPrincipalEndpoint, readBoundedJson, readBoundedText, PRINCIPAL_INPUT_MAX } from "./principal.ts";
+import { BodyError, createPrincipalEndpoint, readBoundedJson, readBoundedText, readPrincipalAudit, PrincipalError, PRINCIPAL_INPUT_MAX } from "./principal.ts";
 import { SnapshotCache, snapshotMaxAge } from "./snapshot-cache.ts";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionMeta, type ActionResult } from "./contract.ts";
@@ -336,6 +336,7 @@ export function startServer(options: ServerOptions) {
       lastSeen = now();
       if (!serve) armIdle();
       if (serve ? !serve.hosts.includes(req.headers.get("host") ?? "") : req.headers.get("host") !== host) return reject(403, "forbidden host");
+      if (path === "/audit" && serve) return reject(403, "audit is available only in local acon ui; open the local console to view it");
       if (path === "/principal" || path.startsWith("/principal/")) {
         if (!principalEndpoint) return reject(404, "principal routes require authenticated serve mode; configure Access or bearer authentication");
         return principalEndpoint(req);
@@ -429,7 +430,7 @@ export function startServer(options: ServerOptions) {
       if (req.method !== "POST") return reject(405, "POST required");
       if (!originOk) return reject(403, "origin required");
       if (req.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return reject(415, "JSON required");
-      const known = path === "/session" || path === "/tools" || path === "/ping" || (plugin && (plugin[2] === "snapshot" || plugin[2] === "revision" || plugin[2] === "action"));
+      const known = path === "/session" || path === "/tools" || path === "/ping" || path === "/audit" || (plugin && (plugin[2] === "snapshot" || plugin[2] === "revision" || plugin[2] === "action"));
       if (!known) return reject(404, "not found");
       if (path !== "/session" && !live) return reject(401, "session expired or missing; run acon ui");
       let input: Record<string, unknown>;
@@ -460,6 +461,17 @@ export function startServer(options: ServerOptions) {
         const session = secret();
         sessions.set(session, { expires: now() + SESSION_MS });
         return json({ ok: true }, 200, { "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}` });
+      }
+      if (path === "/audit") {
+        const validText = (value: unknown) => value === undefined || (typeof value === "string" && value.length <= 200 && !/[\r\n]/.test(value));
+        const validDate = (value: unknown) => value === undefined || (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value);
+        const { principal, operation, outcome, from, to, offset = 0, limit = 50 } = input;
+        if (![principal, operation, outcome].every(validText) || !validDate(from) || !validDate(to) || (typeof from === "string" && typeof to === "string" && from > to) || !Number.isSafeInteger(offset) || (offset as number) < 0 || !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 100 || (input.export !== undefined && typeof input.export !== "boolean")) return reject(400, "invalid audit filters or page; use dates YYYY-MM-DD, a nonnegative offset and limit 1-100");
+        try {
+          return json(readPrincipalAudit(options.home ?? dirname(dirname(options.pluginsDir)), { principal: principal as string | undefined, operation: operation as string | undefined, outcome: outcome as string | undefined, from: from as string | undefined, to: to as string | undefined, offset: offset as number, limit: limit as number, export: input.export === true }));
+        } catch (error) {
+          return reject(503, error instanceof PrincipalError ? error.message : "principal audit is unavailable; check console/logs ownership and principal.jsonl mode 0600 before retrying");
+        }
       }
       if (path === "/ping") return json({ ok: true });
       if (path === "/tools") {
