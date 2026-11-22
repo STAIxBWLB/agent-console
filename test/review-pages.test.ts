@@ -117,6 +117,16 @@ describe("ui.review pages (#115)", () => {
     expect(byClass(root, "ui-review-mark")[0]!.textContent).toBe("2 comments");
   });
 
+  test("a thread made on another render (contentHash differs) goes to the strip; same or missing hash places", () => {
+    let results: any[] = [];
+    const h = (c: string) => c.repeat(64);
+    const withHash = (t: ReturnType<typeof thread>, hash?: string) => ({ ...t, anchor: { ...t.anchor, ...(hash ? { contentHash: hash } : {}) } });
+    kit().review({ doc: { ...doc(), contentHash: h("a") }, threads: [withHash(thread("old", 1), h("b")), withHash(thread("same", 1), h("a")), thread("none", 1)] as never, onComment() {}, onPlacement: (r) => { results = r; } });
+    expect(results.map((r) => [r.threadId, r.placed])).toEqual([["old", false], ["same", true], ["none", true]]);
+    kit().review({ doc: doc(), threads: [withHash(thread("docless", 1), h("b"))] as never, onComment() {}, onPlacement: (r) => { results = r; } });
+    expect(results[0].placed).toBe(true);
+  });
+
   test("AC4: documents over the page cap render the first pages with a notice", () => {
     const root = kit().review({ doc: doc(REVIEW_BOUNDS.pages + 5), threads: [thread("late", REVIEW_BOUNDS.pages + 2)], onComment() {} }) as unknown as N;
     expect(byClass(root, "ui-review-page")).toHaveLength(REVIEW_BOUNDS.pages);

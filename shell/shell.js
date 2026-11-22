@@ -578,7 +578,9 @@ function reviewPagesView(o, openSheet, onError, markIcon, assetUrl) {
   if (allThreads.length > threads.length) notes.push(`Showing the first ${threads.length} of ${allThreads.length} comment threads.`);
   const byPage = new Map(), unplaced = [], placed = [];
   const results = threads.map((t) => {
-    const sel = t?.anchor?.path === doc.path ? reviewPageSelector(t.anchor) : null;
+    // A thread made on another render (both hashes known and different) may point at other content: unplaced.
+    const stale = typeof t?.anchor?.contentHash === "string" && typeof doc.contentHash === "string" && t.anchor.contentHash !== doc.contentHash;
+    const sel = t?.anchor?.path === doc.path && !stale ? reviewPageSelector(t.anchor) : null;
     const shown = Boolean(sel) && sel.page <= pages.length;
     if (shown) { placed.push(t); (byPage.get(sel.page) ?? byPage.set(sel.page, []).get(sel.page)).push({ thread: t, rect: sel.rect }); } else unplaced.push(t);
     return { threadId: String(t?.id ?? ""), placed: shown, via: shown ? "page" : null };
