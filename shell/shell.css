@@ -770,3 +770,7 @@ main:has(> #view-space[data-space-section="room"]:not([hidden])) { display: flex
 #view-space[data-space-section="room"] .space-selection { position: absolute; z-index: var(--shell-z-raised); left: 0; right: 0; bottom: var(--acon-space-2); padding: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface); pointer-events: none; }
 
 [data-stale="true"] .space-activity-dot { display: none; animation: none; }
+
+.audit-filters, .audit-actions { display: flex; flex-wrap: wrap; align-items: end; gap: var(--acon-space-3); margin: var(--acon-space-4) 0; }
+.audit-filters label { display: flex; flex-direction: column; gap: var(--acon-space-1); }
+.audit-filters input { min-height: 44px; max-width: 100%; padding: 0 var(--acon-space-2); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-2); background: var(--acon-surface); color: var(--acon-text); font: inherit; }

@@ -870,6 +870,7 @@ function parseRoute() {
   const params = Object.fromEntries(new URLSearchParams(m[4] ?? ""));
   if (m[1] !== NODE) return { area: "inbox", params: {} };
   if ((m[2] === "~space" || (m[2] === "space" && !toolById("space"))) && spaceTools().length) return { area: "space", params };
+  if (m[2] === "~audit" && !state.serve && !staticTransport) return { area: "audit", params };
   if (m[2] === "inbox" || m[2] === "system" || m[2] === "mini") return { area: m[2], params };
   const tool = toolById(m[2]);
   if (!tool) return { area: "inbox", params: {} };
@@ -885,6 +886,7 @@ function route() {
   if (prev.tool && prev.tool !== r.tool) { const p = state.panels.get(prev.tool); if (p?.instance) safe(prev.tool, "hide", () => p.instance.hide?.()); }
   $("view-inbox").hidden = r.area !== "inbox";
   $("view-system").hidden = r.area !== "system";
+  $("view-audit").hidden = r.area !== "audit";
   $("view-space").hidden = r.area !== "space";
   if (prev.area === "space" && r.area !== "space") spaceRenderer?.hide();
   if (!pip) miniView.hidden = r.area !== "mini";
@@ -895,6 +897,7 @@ function route() {
   renderTabs();
   if (r.area === "inbox") { renderInbox(true); if (r.params.id) selectKey(r.params.id, true); }
   if (r.area === "system") renderSystem();
+  if (r.area === "audit") showAudit();
   if (r.area === "mini") renderMini(true);
   if (r.area === "space") showSpace(prev.area === "space");
   if (r.area === "tool") showTool(r);
@@ -920,13 +923,14 @@ function renderRail() {
     item(hashFor("inbox"), "inbox", "Inbox", r.area === "inbox", count ? h("span", { class: "badge", "aria-label": `${count} waiting`, text: String(count) }) : null),
     ...readyTools().map((t) => item(hashFor(t.tool), toolIcon(t), t.title, r.area === "tool" && r.tool === t.tool)),
     ...(spaceTools().length ? [item(spaceHash(), "agents", "Space", r.area === "space")] : []),
+    ...(!state.serve && !staticTransport ? [item(hashFor("~audit"), "system", "Audit", r.area === "audit")] : []),
     item(hashFor("system"), "system", "System", r.area === "system", issues ? h("span", { class: "badge warn", "aria-label": `${issues} issues`, text: "!" }) : null),
   );
   if (focused) $("areas").querySelector(`a[href="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
 }
 function renderCrumbs() {
   const r = state.route;
-  const names = { system: "System", mini: "Mini", space: "Space" };
+  const names = { system: "System", audit: "Audit", mini: "Mini", space: "Space" };
   const parts = r.area === "tool" ? [toolById(r.tool)?.title ?? r.tool, panelsOf(toolById(r.tool)).find((p) => p.id === r.panel)?.title] : [names[r.area] ?? "Inbox"];
   $("crumbs").replaceChildren(...parts.flatMap((p, i) => (i ? [h("span", { class: "sep", "aria-hidden": "true", text: "/" }), h("span", { class: "sub", text: p })] : [h("span", { text: p })])));
 }
@@ -2138,6 +2142,51 @@ function snapshotCacheCard() {
     h("h2", { text: "Snapshot cache" }),
     h("p", { class: "sub", text: "Counts are per tool and panel. Provider timings use the latest 128 calls; cache hits do not add timing samples." }),
     ...(sections.length ? sections : [h("p", { class: "sub", text: "This node does not report snapshot cache diagnostics." })]));
+}
+
+// Audit is local-only; every query and export is bounded and filtered by the server.
+const auditState = { filters: {}, offset: 0, sequence: 0, result: null, error: "" };
+async function fetchAudit(exportRows = false) {
+  const sequence = ++auditState.sequence;
+  const result = await post("/audit", { ...auditState.filters, offset: auditState.offset, limit: 50, export: exportRows });
+  if (sequence !== auditState.sequence || state.route.area !== "audit") return;
+  if (result.status !== 200) { auditState.result = null; auditState.error = str(result.data?.error) || "Audit could not load; check the local console."; renderAudit(); return; }
+  auditState.error = "";
+  if (exportRows) {
+    const url = URL.createObjectURL(new Blob([result.data.jsonl], { type: "application/x-ndjson" }));
+    const link = h("a", { href: url, download: "principal-audit.jsonl" });
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return;
+  }
+  auditState.result = result.data;
+  renderAudit();
+}
+function showAudit() { renderAudit(); void fetchAudit(); }
+function renderAudit() {
+  const root = $("view-audit");
+  const fields = [["principal", "Principal", "text"], ["operation", "Operation", "text"], ["outcome", "Outcome", "text"], ["from", "From (UTC)", "date"], ["to", "To (UTC)", "date"]];
+  const form = h("form", { class: "audit-filters", onsubmit: (event) => {
+    event.preventDefault();
+    auditState.filters = Object.fromEntries(fields.map(([key]) => [key, form.elements.namedItem(key).value.trim()]).filter(([, value]) => value));
+    auditState.offset = 0; void fetchAudit();
+  } }, fields.map(([key, label, type]) => h("label", {}, h("span", { text: label }), h("input", { name: key, type, value: auditState.filters[key] ?? "", maxlength: type === "text" ? "200" : undefined }))), h("button", { type: "submit", class: "btn", text: "Apply filters" }));
+  const result = auditState.result;
+  const entries = result?.rows ?? [];
+  const columns = [["time", "Time (UTC)"], ["principal", "Principal"], ["tool", "Operation"], ["plugin", "Target plugin"], ["outcome", "Outcome"], ["latencyMs", "Latency (ms)"],
+    ...(entries.some((row) => row.panel != null) ? [["panel", "Panel"]] : []),
+    ...(entries.some((row) => row.reason != null) ? [["reason", "Reason"]] : [])].map(([key, label]) => ({ key, label }));
+  const rows = (result?.rows ?? []).map((row) => Object.fromEntries(columns.map(({ key }) => [key, row[key] ?? "Not recorded"])));
+  root.replaceChildren(h("h1", { class: "lead", id: "audit-title", text: "Principal audit" }),
+    h("p", { class: "sub", text: "Newest first. Operation is the recorded tool; panel and reason appear when recorded." }), form,
+    ...(auditState.error ? [h("p", { class: "notice", role: "alert", text: auditState.error })] : []),
+    ...(result ? [consoleUi.table({ caption: "Principal audit records", columns, rows, sortable: false })] : []),
+    ...(result && !rows.length ? [h("p", { class: "sub", text: "No records match these filters." })] : []),
+    h("div", { class: "audit-actions" },
+      h("button", { type: "button", class: "btn", disabled: auditState.offset === 0, onclick: () => { auditState.offset = Math.max(0, auditState.offset - 50); void fetchAudit(); }, text: "Previous" }),
+      h("span", { text: `Offset ${auditState.offset}` }),
+      h("button", { type: "button", class: "btn", disabled: !result?.hasMore, onclick: () => { auditState.offset += 50; void fetchAudit(); }, text: "Next" }),
+      h("button", { type: "button", class: "btn", disabled: !result || Boolean(auditState.error), onclick: () => void fetchAudit(true), text: "Export JSONL" })));
 }
 
 function renderSystem(force = false) {

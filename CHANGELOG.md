@@ -8,6 +8,8 @@
 
 ### Added
 
+- Add a local-only principal Audit view with server-side filters, bounded pagination and filtered JSONL export; preserve file safety checks and surface missing or unsafe audit files (#116).
+
 - Let opted-in plugins expose opaque per-panel revisions so the visible panel skips unchanged snapshot reads and forces a safety refresh on the first poll at or after 60 seconds (#118).
 
 - Allow plugins to declare non-navigation console snapshot ids in `capabilities.reads`, validated by conformance, without granting principal access or adding tabs (#97).

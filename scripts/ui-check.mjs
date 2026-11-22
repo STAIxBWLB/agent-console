@@ -139,6 +139,8 @@ mkdirSync(petDir,{recursive:true});
 writeFileSync(join(petDir,"pet.json"),JSON.stringify({id:"fixture-pet",displayName:"Fixture pet",spriteVersionNumber:2,spritesheetPath:"spritesheet.png"}));
 writeFileSync(join(petDir,"spritesheet.png"),pngImage(8,11));
 }
+mkdirSync(join(home,"console","logs"), {recursive:true,mode:0o700});
+writeFileSync(join(home,"console","logs","principal.jsonl"), JSON.stringify({time:"2026-11-01T00:00:00.000Z",principal:"fixture-audit",tool:"demo.read",plugin:"demo",outcome:"ok",latencyMs:1})+"\\n", {mode:0o600});
 const {pets,problems:petProblems} = loadPets([petsDir]);
 const {packs:assetPacks,problems:assetProblems} = loadAssetPacks([assetsDir]);
 if(petProblems.length || assetProblems.length || (!artRoot && pets.length!==1) || assetPacks.length!==1) throw new Error("Synthetic fixture packages failed validation: "+[...petProblems,...assetProblems].join("; "));
@@ -164,7 +166,7 @@ provider.snapshot = async (input) => {
 };
 return {tool,file:"ui-check-fixture.json",status:"ready",manifest:plugin.manifest,provider};
 }
-async function makeServer(packed) {return startServer({plugins:[await entry("demo"),await entry("echo")],pets,petProblems,assetPacks:packed?assetPacks:[],assetProblems,version:"ui-check",pluginsDir:home,log:()=>{},idleMs:15*60*1000});}
+async function makeServer(packed) {return startServer({plugins:[await entry("demo"),await entry("echo")],pets,petProblems,assetPacks:packed?assetPacks:[],assetProblems,version:"ui-check",home,pluginsDir:home,log:()=>{},idleMs:15*60*1000});}
 const server = await makeServer(true);
 const fallback = await makeServer(false);
 const emit = (source=server) => console.log(JSON.stringify({url:source.issue(),origin:source.origin}));
@@ -829,6 +831,13 @@ async function runScenario(ticket, scenario, fallback = false) {
     }, { ...scenario, force: options.forceOverflow });
     if (fallback) { await checkSpace(page, scenario, resources, false); return; }
     await capture(page, scenario, "inbox", await checkSkipKeyboard(page));
+    await page.evaluate(() => { location.hash = "#/local/~audit"; });
+    await page.locator("#view-audit .ui-table tbody tr").first().waitFor();
+    const auditText = await page.locator("#view-audit").innerText();
+    const auditFindings = auditText.includes("fixture-audit") && auditText.includes("demo.read") ? [] : [{ kind: "audit-fixture", detail: "Audit view did not show the fixture and recorded operation" }];
+    await capture(page, scenario, "audit", auditFindings);
+    await page.evaluate(() => { location.hash = "#/local/inbox"; });
+    await page.locator("#view-inbox:not([hidden]) .row-main").first().waitFor();
     await page.locator("#view-inbox .row-main").first().focus();
     await page.keyboard.press("Space");
     await page.locator("#sheet:not([hidden])").waitFor();

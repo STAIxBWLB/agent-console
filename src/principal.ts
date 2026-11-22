@@ -1,5 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { ACTION_ID, TOOL_ID } from "./contract.ts";
 import { dispatchPrincipalAction, TimeoutError, withTimeout, type PluginEntry } from "./plugins.ts";
@@ -182,6 +182,56 @@ function auditFile(home: string): number {
   return fd;
 }
 
+export const AUDIT_UNAVAILABLE = "principal audit is unavailable; check console/logs ownership and principal.jsonl mode 0600 before retrying";
+const AUDIT_MAX_BYTES = 8 * 1024 * 1024;
+const AUDIT_EXPORT_MAX = 1000;
+export interface AuditQuery { principal?: string; operation?: string; outcome?: string; from?: string; to?: string; offset: number; limit: number; export: boolean }
+export type AuditRow = { time: string; principal: string; tool: string | null; plugin: string | null; outcome: string; latencyMs?: number; panel?: string; reason?: string };
+
+/** The writer's owned, non-writable directory and 0600/no-symlink/single-link file checks also apply to reads. */
+export function readPrincipalAudit(home: string, query: AuditQuery): { rows: AuditRow[]; hasMore: boolean; jsonl?: string } {
+  let fd: number | undefined;
+  try {
+    const dir = join(home, "console", "logs");
+    privateDirectory(dir);
+    fd = openSync(join(dir, "principal.jsonl"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const stat = fstatSync(fd);
+    if (!privateMode(stat)) throw new Error("unsafe audit file");
+    if (stat.size > AUDIT_MAX_BYTES) throw new PrincipalError("principal audit exceeds 8 MiB; archive older records before retrying");
+    const buffer = Buffer.alloc(AUDIT_MAX_BYTES + 1);
+    let size = 0;
+    while (size < buffer.length) {
+      const count = readSync(fd, buffer, size, buffer.length - size, null);
+      if (!count) break;
+      size += count;
+    }
+    if (size > AUDIT_MAX_BYTES) throw new PrincipalError("principal audit exceeds 8 MiB; archive older records before retrying");
+    const lines = buffer.subarray(0, size).toString("utf8").split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    const matches: AuditRow[] = [];
+    const exported: string[] = [];
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let raw: unknown;
+      try { raw = JSON.parse(lines[i]!); } catch { throw new PrincipalError("principal audit contains invalid records; inspect principal.jsonl before retrying"); }
+      if (!isPlainObject(raw) || typeof raw.time !== "string" || !Number.isFinite(Date.parse(raw.time)) || typeof raw.principal !== "string" || typeof raw.outcome !== "string") throw new PrincipalError("principal audit contains invalid records; inspect principal.jsonl before retrying");
+      const text = (value: unknown) => typeof value === "string" ? value.slice(0, 200) : null;
+      const row: AuditRow = { time: raw.time.slice(0, 200), principal: raw.principal.slice(0, 200), tool: text(raw.tool), plugin: text(raw.plugin), outcome: raw.outcome.slice(0, 200) };
+      for (const key of ["panel", "reason"] as const) if (typeof raw[key] === "string") row[key] = raw[key].slice(0, 200);
+      if (typeof raw.latencyMs === "number" && Number.isFinite(raw.latencyMs)) row.latencyMs = raw.latencyMs;
+      const day = new Date(row.time).toISOString().slice(0, 10);
+      if ((query.principal && row.principal !== query.principal) || (query.operation && row.tool !== query.operation) || (query.outcome && row.outcome !== query.outcome) || (query.from && day < query.from) || (query.to && day > query.to)) continue;
+      matches.push(row);
+      if (query.export) exported.push(lines[i]!);
+      if (query.export && matches.length > AUDIT_EXPORT_MAX) throw new PrincipalError("filtered audit export exceeds 1000 rows; narrow the filters before exporting");
+    }
+    if (query.export) return { rows: [], hasMore: false, jsonl: exported.join("\n") + (exported.length ? "\n" : "") };
+    return { rows: matches.slice(query.offset, query.offset + query.limit), hasMore: matches.length > query.offset + query.limit };
+  } catch (error) {
+    if (error instanceof PrincipalError && error.message !== "principal directory is unsafe; use an owned directory that others cannot write") throw error;
+    throw new PrincipalError(AUDIT_UNAVAILABLE);
+  } finally { if (fd !== undefined) closeSync(fd); }
+}
+
 export interface PrincipalEndpointOptions {
   home: string; serve: ServeOptions; getPlugins: () => Promise<PluginEntry[]>; version: string; callMs: number; log: (message: string) => void; now?: () => number;
 }
@@ -294,7 +344,7 @@ export function createPrincipalEndpoint(options: PrincipalEndpointOptions): (req
     let fd: number | undefined;
     if (path === "/principal/mcp" && req.method === "POST") {
       try { fd = auditFile(options.home); }
-      catch { return error(null, -32000, "principal audit is unavailable; check console/logs ownership and principal.jsonl mode 0600 before retrying", 503); }
+      catch { return error(null, -32000, AUDIT_UNAVAILABLE, 503); }
     }
     let response: Response;
     try { response = await authorized(req, principal, registry, attempt); }
