@@ -1,4 +1,4 @@
-import type { SpaceScene } from "./contract.ts";
+import type { SpaceCardRef, SpaceScene } from "./contract.ts";
 
 import { PUBLIC_CAPS, SPACE_CAPS } from "./public.ts";
 export { SPACE_CAPS } from "./public.ts";
@@ -11,6 +11,11 @@ const ISO_TIME = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/
 const GROUP_CAP = PUBLIC_CAPS.items;
 const ROLE_COUNT_CAP = 4;
 const ROLE_TEXT_CAP = 32;
+const REF_CAP = 4;
+const REF_KINDS = ["issue", "pr"];
+const REPO = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}$/;
+const validRef = (v: unknown): v is SpaceCardRef => object(v) && REF_KINDS.includes(v.kind as string) && typeof v.repo === "string" && REPO.test(v.repo)
+  && Number.isSafeInteger(v.number) && (v.number as number) > 0;
 const object = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0 && v.length <= PUBLIC_CAPS.text;
 
@@ -81,7 +86,20 @@ export function spaceSceneProblems(value: unknown): string[] {
         if (v.group !== undefined && !declaredGroups.has(v.group as string)) out.push(`${path}.group must reference a declared group`);
         if (!Number.isSafeInteger(v.count) || (v.count as number) < 0) out.push(`${path}.count must be a non-negative integer`);
       } else if (key === "cards") {
-        fields(v, ["id", "title", "zone", "owner", "tone", "group", "link"], path); required(v, "title", path); required(v, "zone", path); optional(v, "group", path);
+        fields(v, ["id", "title", "zone", "owner", "tone", "group", "refs", "link"], path);
+        if (v.refs !== undefined) {
+          if (!Array.isArray(v.refs)) out.push(`${path}.refs must be an array`);
+          else {
+            if (v.refs.length > REF_CAP) out.push(`${path}.refs exceeds ${REF_CAP}`);
+            v.refs.forEach((r: unknown, j: number) => {
+              const at = `${path}.refs[${j}]`;
+              if (!object(r)) { out.push(`${at} must be an object`); return; }
+              fields(r, ["kind", "repo", "number"], at); choice(r, "kind", REF_KINDS, at);
+              if (typeof r.repo !== "string" || !REPO.test(r.repo)) out.push(`${at}.repo must be owner/name`);
+              if (!Number.isSafeInteger(r.number) || (r.number as number) <= 0) out.push(`${at}.number must be a positive integer`);
+            });
+          }
+        } required(v, "title", path); required(v, "zone", path); optional(v, "group", path);
         if (v.group !== undefined && !declaredGroups.has(v.group as string)) out.push(`${path}.group must reference a declared group`);
         optional(v, "owner", path); choice(v, "tone", TONES, path, true); link(v.link, `${path}.link`);
       } else {
@@ -95,9 +113,18 @@ export function spaceSceneProblems(value: unknown): string[] {
 }
 
 /** Transport allowlist. Unknown fields are removed; excess records are counted, never rendered. */
-export function sanitizeSpaceScene(value: unknown): { scene: SpaceScene; dropped: { actors: number; cards: number; links: number } } {
+export function sanitizeSpaceScene(value: unknown): { scene: SpaceScene; dropped: { actors: number; cards: number; links: number; refs?: number } } {
   const src = object(value) ? value : {};
-  const dropped = { actors: 0, cards: 0, links: 0 };
+  const dropped: { actors: number; cards: number; links: number; refs?: number } = { actors: 0, cards: 0, links: 0 };
+  let droppedRefs = 0;
+  // Only kind, repo and number are copied; invalid or excess entries are counted, never forwarded.
+  const refs = (v: unknown): SpaceCardRef[] | undefined => {
+    if (v === undefined) return undefined;
+    const list = Array.isArray(v) ? v : [v];
+    const kept = list.filter(validRef).slice(0, REF_CAP).map((r) => ({ kind: r.kind, repo: r.repo, number: r.number }));
+    droppedRefs += list.length - kept.length;
+    return kept.length ? kept : undefined;
+  };
   const s = (v: unknown) => typeof v === "string" ? v.slice(0, PUBLIC_CAPS.text) : "";
   const route = (v: unknown): { panel: string; params?: Record<string, string> } => {
     const l = object(v) ? v : {};
@@ -138,8 +165,9 @@ export function sanitizeSpaceScene(value: unknown): { scene: SpaceScene; dropped
       ...(typeof a.since === "string" && ISO_TIME.test(a.since) && !Number.isNaN(Date.parse(a.since)) ? { since: a.since } : {}),
       ...(Array.isArray(a.marks) ? { marks: a.marks.filter(object).filter((m) => MARKS.includes(m.kind as string) && typeof m.text === "string").map((m) => ({ kind: m.kind as "approval" | "inbox" | "paused" | "mode", text: s(m.text) })) } : {}), link: route(a.link) })),
     zones: zones.map((z) => ({ id: s(z.id), title: s(z.title), ...(group(z.group) ? { group: group(z.group) } : {}), ...(KINDS.includes(z.kind as string) ? { kind: z.kind as "queue" | "work" | "review" | "done" } : {}), count: z.count as number })),
-    cards: keptCards.map((c) => ({ id: s(c.id), title: s(c.title), zone: s(c.zone), ...(group(c.group) ? { group: group(c.group) } : {}), ...(text(c.owner) && actorIds.has(c.owner) ? { owner: c.owner } : {}), ...(TONES.includes(c.tone as string) ? { tone: c.tone as "ok" | "warn" | "err" | "neutral" } : {}), link: route(c.link) })),
+    cards: keptCards.map((c) => ({ id: s(c.id), title: s(c.title), zone: s(c.zone), ...(group(c.group) ? { group: group(c.group) } : {}), ...(text(c.owner) && actorIds.has(c.owner) ? { owner: c.owner } : {}), ...(TONES.includes(c.tone as string) ? { tone: c.tone as "ok" | "warn" | "err" | "neutral" } : {}), ...((r) => r ? { refs: r } : {})(refs(c.refs)), link: route(c.link) })),
     links: links.slice(0, SPACE_CAPS.links).map((l) => ({ kind: l.kind as "message" | "overlap" | "conflict" | "cohort", from: s(l.from), to: s(l.to), ...(typeof l.label === "string" ? { label: s(l.label) } : {}), ...(typeof l.at === "string" && !Number.isNaN(Date.parse(l.at)) ? { at: s(l.at) } : {}) })),
   };
+  if (droppedRefs) dropped.refs = droppedRefs;
   return { scene, dropped };
 }
