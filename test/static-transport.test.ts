@@ -282,9 +282,10 @@ test("static snapshots retain response headers and send X-Acon-Known without res
   const client = make({ api: 1, nodes: [config.nodes[0]] });
   await client.tools();
   const body = { panel: "space", after: 3, known: { producerOwned: "not a hash" } };
-  const result = await client.post("/p/a:demo/snapshot", body, undefined, { "X-Acon-Known": known, "Content-Type": "unsafe", Authorization: "unsafe" });
+  const result = await client.post("/p/a:demo/snapshot", body, undefined, { "X-Acon-Known": known, "X-Acon-Fresh": "1", "Content-Type": "unsafe", Authorization: "unsafe" });
   expect(sent).toEqual([body]);
   expect(requestHeaders[0]!.get("X-Acon-Known")).toBe(known);
+  expect(requestHeaders[0]!.get("X-Acon-Fresh")).toBe("1");
   expect(requestHeaders[0]!.get("Content-Type")).toBe("application/json");
   expect(requestHeaders[0]!.get("Authorization")).toBeNull();
   expect(result.data).toEqual({ changed: false });

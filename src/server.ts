@@ -182,9 +182,24 @@ export function startServer(options: ServerOptions) {
     ? { tool: p.tool, ref: p.ref ?? p.tool, status: p.status, title: p.manifest.title, version: p.manifest.version, icon: p.manifest.icon, panels: p.manifest.panels, pollMs: p.manifest.pollMs, commands: p.manifest.commands ?? [], capabilities: p.manifest.capabilities ?? {} }
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
-  async function snapshot(entry: PluginEntry, input: Record<string, unknown>, known: string | null) {
+  async function revision(entry: PluginEntry, input: Record<string, unknown>) {
+    if (entry.manifest!.capabilities?.revision !== true || typeof entry.provider!.revision !== "function") return reject(404, "revision checks are not enabled for this plugin");
+    const scopes = input.scopes;
+    if (!Array.isArray(scopes) || scopes.length > 20 || scopes.some((scope) => typeof scope !== "string" || scope.length === 0 || scope.length > 200) || new Set(scopes).size !== scopes.length) return reject(400, "scopes must be up to 20 unique nonempty strings of at most 200 characters");
+    try {
+      const result = await call(entry.tool, "revision", () => entry.provider!.revision!(scopes));
+      if (!result || typeof result !== "object" || Array.isArray(result) || scopes.some((scope) => !Object.hasOwn(result, scope) || typeof result[scope] !== "string" || result[scope].length > 200)) throw new Error("revision must return a string of at most 200 characters for every requested scope");
+      return json(Object.fromEntries(scopes.map((scope) => [scope, result[scope]])));
+    } catch (error) {
+      record(entry.tool, "revision", error);
+      return reject(502, "plugin revision check failed; check System and retry");
+    }
+  }
+
+  async function snapshot(entry: PluginEntry, input: Record<string, unknown>, known: string | null, fresh: string | null) {
     // Conditional transport is header-only; every body field remains plugin input.
     if (known !== null && !/^[0-9a-f]{64}$/.test(known)) return reject(400, "X-Acon-Known must be a SHA-256 version from X-Acon-Version");
+    if (fresh !== null && fresh !== "1") return reject(400, "X-Acon-Fresh must be 1 when requesting a fresh snapshot");
     const caps = entry.manifest!.capabilities ?? {};
     const panel = input.panel;
     const allowed = declaresPanel(entry.manifest!, panel);
@@ -197,6 +212,7 @@ export function startServer(options: ServerOptions) {
       if (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1 || limit > 10) return reject(400, "limit must be 1-10");
     }
     try {
+      if (fresh === "1") snapshots.invalidateTool(entry.tool);
       const request = { ...input, after, panel };
       const reply = await snapshots.read({ provider: entry.provider!, tool: entry.tool, panel, namespace: "console", input: request,
         ttlMs: snapshotMaxAge(entry.manifest!, panel), load: async () => {
@@ -330,8 +346,8 @@ export function startServer(options: ServerOptions) {
       if (serve && req.method === "OPTIONS") {
         const method = req.headers.get("access-control-request-method");
         const headers = (req.headers.get("access-control-request-headers") ?? "").toLowerCase().split(",").map((h) => h.trim()).filter(Boolean);
-        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type", "x-acon-known"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization, content-type or x-acon-known");
-        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Acon-Known", "Access-Control-Max-Age": "300" } });
+        if (!originOk || !["GET", "POST"].includes(method ?? "") || headers.some((h) => !["authorization", "content-type", "x-acon-known", "x-acon-fresh"].includes(h))) return reject(403, "CORS preflight refused; use a configured --origin and GET or POST with authorization, content-type, x-acon-known or x-acon-fresh");
+        return new Response(null, { status: 204, headers: { ...HEADERS, "Access-Control-Allow-Methods": "GET, POST", "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Acon-Known, X-Acon-Fresh", "Access-Control-Max-Age": "300" } });
       }
       prune(resources);
       const grant = resources.get(url.searchParams.get("acon_resource") ?? "");
@@ -356,7 +372,7 @@ export function startServer(options: ServerOptions) {
       const pet = /^\/pets\/([a-z0-9][a-z0-9-]{0,31})\/sheet$/.exec(path);
       const packedImage = /^\/assets\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
       const packedModel = /^\/models\/([a-z0-9][a-z0-9-]{0,31})\/([a-z0-9][a-z0-9-]{0,31})$/.exec(path);
-      const plugin = /^\/p\/([a-z][a-z0-9-]{1,15}(?:@[0-9a-f]{12})?)\/(panel\.js|panel\.css|snapshot|action|asset)$/.exec(path);
+      const plugin = /^\/p\/([a-z][a-z0-9-]{1,15}(?:@[0-9a-f]{12})?)\/(panel\.js|panel\.css|snapshot|revision|action|asset)$/.exec(path);
       // `<tool>` means the current load; `<tool>@<hash>` the load a page started with, kept until restart.
       const pluginEntry = () => plugin![1]!.includes("@") ? refs.get(plugin![1]!) : tools.get(plugin![1]!);
       const unknownTool = () => plugin![1]!.includes("@") && tools.has(plugin![1]!.split("@")[0]!)
@@ -413,7 +429,7 @@ export function startServer(options: ServerOptions) {
       if (req.method !== "POST") return reject(405, "POST required");
       if (!originOk) return reject(403, "origin required");
       if (req.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return reject(415, "JSON required");
-      const known = path === "/session" || path === "/tools" || path === "/ping" || (plugin && (plugin[2] === "snapshot" || plugin[2] === "action"));
+      const known = path === "/session" || path === "/tools" || path === "/ping" || (plugin && (plugin[2] === "snapshot" || plugin[2] === "revision" || plugin[2] === "action"));
       if (!known) return reject(404, "not found");
       if (path !== "/session" && !live) return reject(401, "session expired or missing; run acon ui");
       let input: Record<string, unknown>;
@@ -452,7 +468,7 @@ export function startServer(options: ServerOptions) {
       }
       const entry = pluginEntry();
       if (!entry) return unknownTool();
-      return plugin![2] === "snapshot" ? snapshot(entry, input, req.headers.get("x-acon-known")) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
+      return plugin![2] === "revision" ? revision(entry, input) : plugin![2] === "snapshot" ? snapshot(entry, input, req.headers.get("x-acon-known"), req.headers.get("x-acon-fresh")) : action(entry, cookie!, input, { identity: serve ? principal! : "local", node: "local", via: "console" });
   }
   const server = Bun.serve({
     hostname: serve ? serve.hostname.replace(/^\[(.*)\]$/, "$1") : "127.0.0.1",

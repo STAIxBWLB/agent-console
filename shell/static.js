@@ -33,6 +33,8 @@ export function createStaticTransport(config, onStatus = () => {}) {
     const known = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "x-acon-known")?.[1];
     // A node (or its Access CORS policy) may refuse the custom header in preflight; after one such failure send plain requests.
     if (known !== undefined && !node.knownOff) headers["X-Acon-Known"] = known;
+    const fresh = Object.entries(extraHeaders).find(([name]) => name.toLowerCase() === "x-acon-fresh")?.[1];
+    if (fresh !== undefined) headers["X-Acon-Fresh"] = fresh;
     const action = body !== undefined && /^\/p\/[^/]+\/action$/.test(path);
     const deadline = action ? 35000 : 8000;
     const signal = AbortSignal.timeout(deadline);

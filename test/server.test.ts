@@ -103,6 +103,41 @@ describe("snapshot", () => {
     expect(tools.tools[0].panels.some((panel: { id: string }) => panel.id === "lineage")).toBe(false);
   });
 
+  test("revision validates scopes, projects provider output and refuses unsupported plugins", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    const entry: PluginEntry = { tool: "demo", file: "demo.json", status: "ready", manifest: plugin.manifest, provider };
+    const server = startServer({ plugins: [entry], version: "test", pluginsDir: "/tmp", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    expect((await post(server, "/p/demo/revision", { scopes: ["notes"] }, cookie)).status).toBe(404);
+    plugin.manifest.capabilities!.revision = true;
+    provider.revision = async (scopes) => Object.fromEntries(scopes.map((scope) => [scope, scope === "notes" ? "v1" : "0"]).concat([["extra", "private"]]));
+    const response = await post(server, "/p/demo/revision", { scopes: ["notes", "unknown"] }, cookie);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ notes: "v1", unknown: "0" });
+    expect((await post(server, "/p/demo/revision", { scopes: Array.from({ length: 21 }, (_, i) => String(i)) }, cookie)).status).toBe(400);
+    expect((await post(server, "/p/demo/revision", { scopes: ["notes", "notes"] }, cookie)).status).toBe(400);
+    provider.revision = async () => ({});
+    expect((await post(server, "/p/demo/revision", { scopes: ["notes"] }, cookie)).status).toBe(502);
+  });
+
+  test("fresh snapshot bypasses cached data", async () => {
+    const plugin = createDemoPlugin();
+    const provider = await plugin.open({ home: "/tmp", log: () => {} });
+    let value = 1;
+    provider.snapshot = async () => ({ value });
+    const server = startServer({ plugins: [{ tool: "demo", file: "fixture", status: "ready", manifest: plugin.manifest, provider }], version: "test", pluginsDir: "/tmp", log: () => {} });
+    running.push(server);
+    const cookie = await login(server);
+    const read = (headers: Record<string, string> = {}) => post(server, "/p/demo/snapshot", { panel: "notes" }, cookie, headers);
+    expect((await (await read()).json()).value).toBe(1);
+    value = 2;
+    expect((await (await read()).json()).value).toBe(1);
+    expect((await (await read({ "X-Acon-Fresh": "1" })).json()).value).toBe(2);
+    expect((await read({ "X-Acon-Fresh": "wrong" })).status).toBe(400);
+  });
+
   test("a provider failure is summarized and listed in System", async () => {
     const { server } = await boot({ throwOn: "secret task text" });
     const cookie = await login(server);

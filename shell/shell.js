@@ -1592,7 +1592,7 @@ async function showTool(r) {
   await p.loading;
   if (state.route.area !== "tool" || state.route.tool !== tool.tool || !p.instance) return;
   const view = JSON.stringify([r.panel, r.params]);
-  if (p.view !== view) { p.cursor = 0; p.version = ""; p.lastData = null; p.view = view; p.gen += 1; }
+  if (p.view !== view) { p.cursor = 0; p.version = ""; p.lastData = null; p.revision = undefined; p.lastFullAt = 0; p.view = view; p.gen += 1; }
   p.panel = r.panel;
   p.lastSig = "";
   safe(tool.tool, "show", () => p.instance.show?.(r.panel, r.params));
@@ -1607,9 +1607,29 @@ async function pollPanel() {
   const tool = toolById(r.tool);
   p.busy = true;
   const gen = p.gen;
-  const after = p.cursor;
   const startedAt = Date.now();
-  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel }, p.version ? { "X-Acon-Known": p.version } : {});
+  const revisionEnabled = tool?.capabilities?.revision === true;
+  let revision;
+  if (revisionEnabled) {
+    const check = await post(`/p/${r.tool}/revision`, { scopes: [r.panel] });
+    if (check.status === 200 && typeof check.data?.[r.panel] === "string") revision = check.data[r.panel];
+    if (state.route.tool !== r.tool || gen !== p.gen || document.visibilityState !== "visible") {
+      p.busy = false; p.next = 0;
+      if (document.visibilityState === "visible") queueMicrotask(() => pollPanel());
+      return;
+    }
+    const safetyDue = !p.lastFullAt || startedAt - p.lastFullAt >= 60000;
+    if (revision !== undefined && revision === p.revision && !safetyDue && p.lastSig !== "" && !p.forceSnapshot) {
+      p.busy = false;
+      p.next = startedAt + adaptivePollMs(tool?.pollMs, Date.now() - startedAt);
+      if (p.resume) { p.resume = false; p.next = 0; queueMicrotask(() => pollPanel()); }
+      return;
+    }
+  }
+  const safetyDue = revisionEnabled && (!p.lastFullAt || startedAt - p.lastFullAt >= 60000);
+  const after = safetyDue ? 0 : p.cursor;
+  const headers = { ...(p.version && !safetyDue ? { "X-Acon-Known": p.version } : {}), ...(revisionEnabled ? { "X-Acon-Fresh": "1" } : {}) };
+  const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel }, headers);
   p.busy = false;
   p.next = startedAt + adaptivePollMs(tool?.pollMs, Date.now() - startedAt);
   const resume = p.resume; p.resume = false;
@@ -1618,6 +1638,7 @@ async function pollPanel() {
   if (state.route.tool !== r.tool) return;
   if (gen !== p.gen) { p.next = 0; pollPanel(); return; }
   if (res.status === 200) {
+    if (revisionEnabled && res.data?.ok !== false) { p.revision = revision; p.lastFullAt = Date.now(); p.forceSnapshot = false; }
     p.version = res.headers?.["x-acon-version"] ?? "";
     if (!p.banner.hidden) p.banner.hidden = true;
     if (typeof res.data.cursor === "number") p.cursor = res.data.cursor;
@@ -1665,7 +1686,7 @@ async function runAction(tool, input, opts) {
 function afterAction(tool, opts = {}) {
   const p = state.panels.get(tool);
   // A snapshot already in flight predates the action: discard it (pollPanel re-polls on a generation change).
-  if (p) { p.next = 0; p.gen += 1; }
+  if (p) { p.next = 0; p.gen += 1; p.forceSnapshot = true; }
   pollPanel();
   if (opts.inbox !== false && toolById(tool)?.capabilities?.inbox) pollInbox();
 }

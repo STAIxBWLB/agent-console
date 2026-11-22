@@ -4,9 +4,11 @@
 
 ### Compatibility
 
-- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: the API 1 read declaration is optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; read ids are console-only and require the new declaration. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest field. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks.
+- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: API 1 read and revision declarations are optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; read ids and the revision route are console-only and require their declarations. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest fields. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks.
 
 ### Added
+
+- Let opted-in plugins expose opaque per-panel revisions so the visible panel skips unchanged snapshot reads and forces a safety refresh on the first poll at or after 60 seconds (#118).
 
 - Allow plugins to declare non-navigation console snapshot ids in `capabilities.reads`, validated by conformance, without granting principal access or adding tabs (#97).
 

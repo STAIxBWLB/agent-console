@@ -9,6 +9,16 @@ import { dispatchConsoleSnapshot, dispatchConsoleAction, dispatchPrincipalSnapsh
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
+const revisionFixture = createDemoPlugin();
+revisionFixture.manifest.capabilities!.revision = true;
+const revisionOpen = revisionFixture.open;
+revisionFixture.open = async (ctx) => {
+  const provider = await revisionOpen(ctx);
+  provider.revision = async (scopes) => Object.fromEntries(scopes.map((scope) => [scope, scope === "notes" ? "fixture-1" : "0"]));
+  return provider;
+};
+registerConsoleConformance(revisionFixture);
+
 const readFixture = createDemoPlugin();
 readFixture.manifest.capabilities!.reads = ["lineage"];
 registerConsoleConformance(readFixture, { destructive: [{ action: "delete", id: "n1" }] });

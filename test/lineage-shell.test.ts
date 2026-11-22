@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 
 const source = readFileSync(join(import.meta.dir, "..", "shell", "shell.js"), "utf8");
-function pollHarness(post: (path: string, input: Record<string, unknown>) => Promise<unknown>) {
+function pollHarness(post: (path: string, input: Record<string, unknown>, headers?: Record<string, string>) => Promise<unknown>, revision = false) {
   const delivered: Record<string, unknown>[] = [];
   const p = { instance: { show: () => {} }, busy: false, next: 0, gen: 1, cursor: 7, banner: { hidden: false }, lastSig: "", lastData: null as Record<string, unknown> | null, view: JSON.stringify(["lineage", { rootId: "old" }]), mount: { hidden: true }, loading: Promise.resolve(), snapListeners: [(value: Record<string, unknown>) => { delivered.push(value); }] };
   const state = { route: { area: "tool", tool: "a:ares", panel: "lineage", params: { rootId: "old" } }, panels: new Map([["a:ares", p]]) };
   const body = source.slice(source.indexOf("async function showTool("), source.indexOf("// ---------- actions and confirm"));
-  const poll = runInNewContext(`${source.slice(source.indexOf("function adaptivePollMs("), source.indexOf("const inboxApplied"))}\n${body}\n({poll: pollPanel, show: showTool})`, { state, post, document: { visibilityState: "visible" }, toolById: (id: string) => ({ tool: id, pollMs: 2000 }), safe: (_tool: string, _where: string, fn: () => void) => fn(), Date, JSON }) as { poll: () => Promise<void>; show: (r: unknown) => Promise<void> };
+  const poll = runInNewContext(`${source.slice(source.indexOf("function adaptivePollMs("), source.indexOf("const inboxApplied"))}\n${body}\n({poll: pollPanel, show: showTool})`, { state, post, document: { visibilityState: "visible" }, toolById: (id: string) => ({ tool: id, pollMs: 2000, capabilities: { revision } }), safe: (_tool: string, _where: string, fn: () => void) => fn(), Date, JSON }) as { poll: () => Promise<void>; show: (r: unknown) => Promise<void> };
   return { p, state, delivered, poll: poll.poll, show: poll.show };
 }
 
@@ -109,6 +109,43 @@ describe("bounded lineage shell snapshot delivery", () => {
     expect(h.p.cursor).toBe(9);
     expect(requests).toEqual([{ rootId: "old", after: 7, panel: "lineage" }, { rootId: "new", after: 0, panel: "lineage" }]);
   });
+});
+
+test("revision polling skips unchanged snapshots and refreshes changes and safety deadlines", async () => {
+  const requests: { path: string; input: Record<string, unknown>; headers?: Record<string, string> }[] = [];
+  let revision = "1";
+  const h = pollHarness(async (path, input, headers) => {
+    requests.push({ path, input, headers });
+    return path.endsWith("/revision") ? { status: 200, data: { lineage: revision } } : { status: 200, data: { cursor: 8, value: revision }, headers: { "x-acon-version": "old-version" } };
+  }, true);
+  await h.poll();
+  h.p.next = 0; await h.poll();
+  expect(requests.map((request) => request.path.split("/").at(-1))).toEqual(["revision", "snapshot", "revision"]);
+  revision = "2";
+  h.p.next = 0; await h.poll();
+  expect(requests.at(-1)?.headers).toMatchObject({ "X-Acon-Fresh": "1", "X-Acon-Known": "old-version" });
+  expect(h.delivered.map((value) => value.value)).toEqual(["1", "2"]);
+  (h.p as typeof h.p & { lastFullAt: number }).lastFullAt = Date.now() - 60001;
+  h.p.next = 0; await h.poll();
+  expect(requests.at(-1)?.input.after).toBe(0);
+  expect(requests.at(-1)?.headers).toEqual({ "X-Acon-Fresh": "1" });
+});
+
+test("revision failures fall back to snapshots and never certify an unchanged value", async () => {
+  const paths: string[] = [];
+  let fail = false;
+  const h = pollHarness(async (path) => {
+    paths.push(path);
+    if (path.endsWith("/revision")) return fail ? { status: 502, data: {} } : { status: 200, data: { lineage: "v1" } };
+    return { status: 200, data: { cursor: 8, value: "ok" } };
+  }, true);
+  await h.poll();
+  fail = true;
+  h.p.next = 0; await h.poll();
+  expect(paths.map((path) => path.split("/").at(-1))).toEqual(["revision", "snapshot", "revision", "snapshot"]);
+  fail = false;
+  h.p.next = 0; await h.poll();
+  expect(paths.at(-1)?.endsWith("/snapshot")).toBe(true);
 });
 
 test("host navigation keeps node ownership, explicit foreign nodes and the old unqualified fallback", () => {
