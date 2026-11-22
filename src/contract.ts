@@ -142,6 +142,8 @@ export type Tone = "ok" | "warn" | "err" | "neutral";
 export interface InboxItem {
   id: string;
   group: InboxGroup;
+  /** Opt in to generic person-needed push on a subscribed serve node. */
+  push?: boolean;
   kind: string;
   title: string;
   detail?: string;

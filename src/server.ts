@@ -2,6 +2,8 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { BodyError, createPrincipalEndpoint, readBoundedJson, readBoundedText, readPrincipalAudit, PrincipalError, PRINCIPAL_INPUT_MAX } from "./principal.ts";
+import { PushStore, PushDispatcher } from "./push.ts";
+import { PushPoller } from "./push-poll.ts";
 import { SnapshotCache, snapshotMaxAge } from "./snapshot-cache.ts";
 import { canonical } from "./canonical.ts";
 import { ACTION_ID, type ActionMeta, type ActionResult } from "./contract.ts";
@@ -57,7 +59,7 @@ const RESERVED = ["confirmed", "fingerprint"];
 const secret = () => randomBytes(32).toString("hex");
 const asset = (name: string) => readFileSync(new URL(`../shell/${name}`, import.meta.url), "utf8");
 
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'";
+const CSP = "default-src 'none'; script-src 'self'; manifest-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-src 'self'; frame-ancestors 'none'";
 const ASSET_INLINE = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp", "text/plain", "text/csv"]);
 // Assets may be framed by the shell (PDF viewer), never by another origin, and load nothing themselves.
 const ASSET_CSP = "default-src 'none'; frame-ancestors 'self'";
@@ -326,6 +328,11 @@ export function startServer(options: ServerOptions) {
     return new Response(null, { status: 303, headers: { ...HEADERS, Location: "/", "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${LOGIN_MS / 1000}` } });
   }
 
+  // No files, keys, or polling are created by local acon ui. An empty serve store sends nothing.
+  const pushStore = serve ? new PushStore(options.home ?? dirname(dirname(options.pluginsDir))) : undefined;
+  const pushPoller = pushStore ? new PushPoller(pushStore, new PushDispatcher(pushStore), async () => { await refresh(); return [...tools.values()]; }, log) : undefined;
+  pushPoller?.start();
+
   const principalEndpoint = serve && serve.mode !== "loopback" ? createPrincipalEndpoint({ home: options.home ?? dirname(dirname(options.pluginsDir)), serve, getPlugins: async () => { await refresh(); return [...tools.values()]; }, version: options.version, callMs, log, now }) : undefined;
 
   async function handle(req: Request): Promise<Response> {
@@ -380,6 +387,10 @@ export function startServer(options: ServerOptions) {
         ? reject(409, "this page uses a plugin version the console no longer has; reload the page", { reload: true })
         : reject(404, "unknown tool");
       if (req.method === "GET") {
+        if ((path === "/push-worker.js" || path === "/manifest.webmanifest") && serve) {
+          if (!live) return reject(401, "session expired or missing; sign in again");
+          return new Response(asset(path === "/push-worker.js" ? "push-worker.js" : "manifest.webmanifest"), { headers: { ...HEADERS, "Content-Type": path.endsWith(".js") ? "text/javascript; charset=utf-8" : "application/manifest+json; charset=utf-8" } });
+        }
         const file = files[path];
         if (file) return new Response(file.body, { headers: { ...HEADERS, ...(file.frame ? { "Content-Security-Policy": FRAME_CSP, "X-Frame-Options": "SAMEORIGIN", "Cache-Control": "private, max-age=3600" } : {}), "Content-Type": file.type } });
         if (plugin && (plugin[2] === "panel.js" || plugin[2] === "panel.css")) {
@@ -430,7 +441,7 @@ export function startServer(options: ServerOptions) {
       if (req.method !== "POST") return reject(405, "POST required");
       if (!originOk) return reject(403, "origin required");
       if (req.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json") return reject(415, "JSON required");
-      const known = path === "/session" || path === "/tools" || path === "/ping" || path === "/audit" || (plugin && (plugin[2] === "snapshot" || plugin[2] === "revision" || plugin[2] === "action"));
+      const known = path === "/session" || path === "/tools" || path === "/ping" || path === "/audit" || (serve && ["/push/key", "/push/status", "/push/subscribe", "/push/unsubscribe"].includes(path)) || (plugin && (plugin[2] === "snapshot" || plugin[2] === "revision" || plugin[2] === "action"));
       if (!known) return reject(404, "not found");
       if (path !== "/session" && !live) return reject(401, "session expired or missing; run acon ui");
       let input: Record<string, unknown>;
@@ -461,6 +472,23 @@ export function startServer(options: ServerOptions) {
         const session = secret();
         sessions.set(session, { expires: now() + SESSION_MS });
         return json({ ok: true }, 200, { "Set-Cookie": `${cookieName}=${session}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}` });
+      }
+      if (serve && pushStore && path.startsWith("/push/")) {
+        try {
+          if (path === "/push/key") return json({ publicKey: pushStore.keys().publicKey });
+          if (path === "/push/status") {
+            if (typeof input.endpoint !== "string" || input.endpoint.length > 2048) return reject(400, "invalid subscription; enable notifications on this device again");
+            return json({ enabled: pushStore.subscriptions().some((sub) => sub.endpoint === input.endpoint) });
+          }
+          if (path === "/push/subscribe") { pushStore.keys(); pushStore.add(input.subscription); void pushPoller?.poll(); return json({ ok: true }); }
+          if (path === "/push/unsubscribe") {
+            if (typeof input.endpoint !== "string" || input.endpoint.length > 2048) return reject(400, "invalid subscription; disable notifications on this device and retry");
+            pushStore.remove(input.endpoint); return json({ ok: true });
+          }
+        } catch (error) {
+          const message = error instanceof Error && /^(invalid|unsupported)/.test(error.message) ? error.message : "push storage is unavailable; check console/push ownership and mode 0600 files";
+          return reject(400, message);
+        }
       }
       if (path === "/audit") {
         const validText = (value: unknown) => value === undefined || (typeof value === "string" && value.length <= 200 && !/[\r\n]/.test(value));
@@ -519,6 +547,7 @@ export function startServer(options: ServerOptions) {
     if (stopped) return;
     stopped = true;
     clearTimeout(timer);
+    pushPoller?.stop();
     tickets.clear();
     sessions.clear();
     confirms.clear();

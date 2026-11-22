@@ -35,6 +35,7 @@
     "shell/",
     "test/fixtures/review/",
     "README.md",
+    "docs/push-phone-receipt.md",
     "CHANGELOG.md",
     "LICENSE"
   ],
