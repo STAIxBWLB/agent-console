@@ -17,6 +17,11 @@ export interface ConformanceOptions {
   destructive?: ({ action: string } & Record<string, unknown>)[];
   /** Asset ids that must answer a served type (provider.asset). */
   assets?: string[];
+  /**
+   * Review documents to check (#115): `pick` returns the ReviewDoc from that panel's snapshot. Each must pass
+   * reviewDocProblems, and every page asset of a `pages` document must answer a served image type.
+   */
+  reviewDocs?: { panel: string; params?: Record<string, string>; pick(snapshot: Record<string, unknown>): unknown }[];
 }
 
 const GROUPS = ["decision", "review", "result", "candidate", "alert"];
@@ -114,7 +119,8 @@ export function tableColumnProblems(columns: unknown): string[] {
 }
 
 /** Review bounds shared with agent-hub through test/fixtures/review/cases.json. */
-export const REVIEW_BOUNDS = Object.freeze({ exact: 2000, context: 64, selectors: 4, threads: 200, body: 4000 });
+export const REVIEW_BOUNDS = Object.freeze({ exact: 2000, context: 64, selectors: 4, threads: 200, body: 4000, pages: 100 });
+const unit = (v: unknown) => finiteNum(v) && (v as number) >= 0 && (v as number) <= 1;
 const SHA256 = /^[0-9a-f]{64}$/;
 const posInt = (v: unknown) => Number.isInteger(v) && (v as number) >= 1;
 const finiteNum = (v: unknown) => typeof v === "number" && Number.isFinite(v);
@@ -145,8 +151,19 @@ function selectorProblems(s: unknown, at: string): string[] {
       if (x.page !== undefined && !posInt(x.page)) out.push(`${at}.page must be an integer >= 1`);
       return out;
     }
+    case "page": {
+      const out: string[] = [];
+      for (const k of Object.keys(x)) if (!["kind", "page", "rect"].includes(k)) out.push(`${at}.${k} is not a page selector field`);
+      if (!posInt(x.page)) out.push(`${at}.page must be an integer >= 1`);
+      if (x.rect !== undefined) {
+        const r = x.rect;
+        if (!Array.isArray(r) || r.length !== 4 || !r.every(unit)) out.push(`${at}.rect must be [x0, y0, x1, y1] with numbers from 0 to 1`);
+        else if (!((r[0] as number) < (r[2] as number) && (r[1] as number) < (r[3] as number))) out.push(`${at}.rect must have x0 < x1 and y0 < y1`);
+      }
+      return out;
+    }
     default:
-      return [`${at}.kind must be lineRange, textQuote, diffHunk, structural or region`];
+      return [`${at}.kind must be lineRange, textQuote, diffHunk, structural, region or page`];
   }
 }
 
@@ -167,6 +184,30 @@ export function reviewAnchorProblems(anchor: unknown): string[] {
     if (a.selectors.length > REVIEW_BOUNDS.selectors) out.push(`anchor.selectors has more than ${REVIEW_BOUNDS.selectors} selectors`);
     a.selectors.forEach((s, i) => out.push(...selectorProblems(s, `anchor.selectors[${i}]`)));
   }
+  return out;
+}
+
+/** Problems in a ReviewDoc passed to ui.review; a pages document over the cap is reported (the kit shows the first pages). */
+export function reviewDocProblems(doc: unknown): string[] {
+  const d = (doc ?? {}) as Record<string, unknown>;
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return ["doc must be an object"];
+  if (!isText(d.path)) return ["doc.path must be a non-empty string"];
+  if (d.kind === "text" || d.kind === "prose") return typeof d.text === "string" ? [] : ["doc.text must be a string"];
+  if (d.kind === "diff") return typeof d.unified === "string" ? [] : ["doc.unified must be a string"];
+  if (d.kind !== "pages") return ["doc.kind must be text, prose, diff or pages"];
+  if (d.contentHash !== undefined && (typeof d.contentHash !== "string" || !SHA256.test(d.contentHash))) return ["doc.contentHash must be a lowercase hex sha256"];
+  if (!Array.isArray(d.pages) || !d.pages.length) return ["doc.pages must be a non-empty array"];
+  const out: string[] = [];
+  if (d.pages.length > REVIEW_BOUNDS.pages) out.push(`doc.pages: ${d.pages.length} is over ${REVIEW_BOUNDS.pages}; ui.review shows the first ${REVIEW_BOUNDS.pages}`);
+  d.pages.forEach((p: unknown, i: number) => {
+    const at = `doc.pages[${i}]`;
+    const page = (p ?? {}) as Record<string, unknown>;
+    if (!p || typeof p !== "object" || Array.isArray(p)) { out.push(`${at} must be an object`); return; }
+    for (const k of Object.keys(page)) if (!["asset", "width", "height", "label"].includes(k)) out.push(`${at}.${k} is not a page field`);
+    if (!isText(page.asset) || (page.asset as string).length > 512) out.push(`${at}.asset must be an asset id of 1-512 characters`);
+    for (const k of ["width", "height"]) if (!posInt(page[k])) out.push(`${at}.${k} must be an integer >= 1`);
+    if (page.label !== undefined && !isText(page.label)) out.push(`${at}.label must be a non-empty string`);
+  });
   return out;
 }
 
@@ -304,6 +345,18 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
     test("an unknown action answers ok: false", async () => {
       const result = await provider.action({ action: "acon-conformance-unknown" }, META);
       expect(result.ok).toBe(false);
+    });
+    for (const [i, entry] of (options.reviewDocs ?? []).entries()) test(`review document ${i + 1} (${entry.panel}) is well formed`, async () => {
+      const snap = await withTimeout(provider.snapshot({ after: 0, panel: entry.panel, ...(entry.params ?? {}) }), 5_000, `${entry.panel} snapshot`);
+      const doc = entry.pick(snap as Record<string, unknown>) as { kind?: string; pages?: { asset: string }[] };
+      expect(reviewDocProblems(doc)).toEqual([]);
+      if (doc?.kind !== "pages") return;
+      expect(typeof provider.asset).toBe("function");
+      for (const page of doc.pages ?? []) {
+        const result = await withTimeout(provider.asset!({ id: page.asset }), 5_000, `asset ${page.asset}`);
+        expect(assetResultProblems(result)).toEqual([]);
+        expect(["image/png", "image/jpeg", "image/webp"]).toContain(String((result as { mime?: unknown } | null)?.mime));
+      }
     });
     for (const input of options.destructive ?? []) test(`${input.action} needs confirmation`, async () => {
       const result = await provider.action(input, META);

@@ -8,9 +8,11 @@
 
 ### Compatibility
 
-- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: API 1 read and revision declarations and inbox push opt-in are optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; serve-only push routes are additive, read ids and the revision route are console-only and require their declarations. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest fields. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks. The optional Space card `refs` field is additive; 0.2.0 drops it.
+- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: API 1 read and revision declarations and inbox push opt-in are optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; serve-only push routes are additive, read ids and the revision route are console-only and require their declarations. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest fields. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks. The optional Space card `refs` field is additive; 0.2.0 drops it. The `pages` review document and `page` anchor selector are additive; 0.2.0's `ui.review` refuses a `pages` document, so plugins that target 0.2.0 must keep a text, prose or diff fallback.
 
 ### Added
+
+- Add a `pages` document type to `ui.review`: page images from plugin assets, region comments by pointer drag and whole-page comments by keyboard, anchored as `{kind: "page", page, rect?}` with normalized coordinates. Show threads on missing pages in the unplaced strip, cap at 100 pages with a notice, and add `reviewDocProblems`, the `reviewDocs` conformance option and shared page-anchor cases (#115).
 
 - Add opt-in, per-device Web Push on `acon serve` with generic private notifications, a bounded subscription store and retry/expiry handling (#117).
 

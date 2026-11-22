@@ -23,7 +23,9 @@ const readFixture = createDemoPlugin();
 readFixture.manifest.capabilities!.reads = ["lineage"];
 registerConsoleConformance(readFixture, { destructive: [{ action: "delete", id: "n1" }] });
 
-registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png", "figure.webp"] });
+const reviewDoc = (key: "draft" | "diff" | "pages") => ({ panel: "review", pick: (snap: Record<string, unknown>) => (snap.review as Record<string, unknown>)[key] });
+registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png", "figure.webp"],
+  reviewDocs: [reviewDoc("draft"), reviewDoc("diff"), reviewDoc("pages")] });
 
 const inbox = async (provider: { snapshot(input: { after: number; panel: string }): Promise<Record<string, unknown>> }) =>
   (await provider.snapshot({ after: 0, panel: "inbox" })).items as unknown[];

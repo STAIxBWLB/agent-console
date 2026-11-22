@@ -219,13 +219,15 @@ export interface SpaceScene {
 /** A ui.table column. Cells render as text; `number` and `percent` format numeric cells, and `percent` expects percent units (38.5, not 0.385). */
 export interface TableColumn { key: string; label: string; align?: "start" | "end"; format?: "text" | "number" | "percent" }
 
-/** Where a review comment points. The kit creates lineRange, textQuote and diffHunk; it only displays the others. */
+/** Where a review comment points. The kit creates lineRange, textQuote, diffHunk and page; it only displays the others. */
 export type ReviewSelector =
   | { kind: "lineRange"; startLine: number; endLine: number }
   | { kind: "textQuote"; exact: string; prefix: string; suffix: string }
   | { kind: "diffHunk"; hunkHeader: string }
   | { kind: "structural"; scheme: string; ref: string }
-  | { kind: "region"; x: number; y: number; width: number; height: number; page?: number };
+  | { kind: "region"; x: number; y: number; width: number; height: number; page?: number }
+  /** A 1-based page of a `pages` document; `rect` is [x0, y0, x1, y1] normalized to the page (0 to 1). Without it, the whole page. */
+  | { kind: "page"; page: number; rect?: [number, number, number, number] };
 /**
  * A review anchor, stored unchanged by the owning tool. `contentHash` is the lowercase hex sha256 of the text the
  * anchor was made against: the projected text when `projection` is set, else the raw file bytes.
@@ -240,12 +242,18 @@ export interface ReviewAnchor {
 }
 /** One comment thread on an anchor; body <= 4000 chars, at most 200 threads per view. */
 export interface ReviewThread { id: string; anchor: ReviewAnchor; body: string; author: string; at: string; state?: "open" | "resolved" }
-/** The document under review: plain text, prose (paragraphs split on blank lines, Markdown shown as source) or a unified diff. */
+/** One page image of a `pages` document: this plugin's asset id and its pixel size. */
+export interface ReviewPage { asset: string; width: number; height: number; label?: string }
+/**
+ * The document under review: plain text, prose (paragraphs split on blank lines, Markdown shown as source), a unified
+ * diff, or rendered pages (images of slides or paper pages; comments anchor to a page and an optional region).
+ */
 export type ReviewDoc =
   | { kind: "text" | "prose"; path: string; text: string; contentHash: string; projection?: { name: string; version: string } }
-  | { kind: "diff"; path: string; unified: string; contentHash: string };
+  | { kind: "diff"; path: string; unified: string; contentHash: string }
+  | { kind: "pages"; path: string; pages: ReviewPage[]; contentHash?: string };
 /** One placement result reported by ui.review; the tool's stored anchor stays the authority. */
-export interface ReviewPlacement { threadId: string; placed: boolean; via: "hash" | "quote" | null }
+export interface ReviewPlacement { threadId: string; placed: boolean; via: "hash" | "quote" | "page" | null }
 
 /** One side of a before/after visual: text, or this plugin's asset id (#24) with alt text. */
 export type VisualSide = { text: string } | { asset: string; alt: string };
@@ -312,7 +320,7 @@ export interface ConsoleUi {
   frame(o: { asset: string; title: string }): PanelElement;
   /** A link to this plugin's asset or to one of its panels; any other target throws TypeError. */
   link(to: { asset: string } | { panel: string; params?: Record<string, string> }, text: string): PanelElement;
-  /** Line-numbered review of a text, prose or diff document: select a range, comment on it, see placed and unplaced threads. */
+  /** Review of a text, prose, diff or pages document: select lines or a page region, comment on it, see placed and unplaced threads. */
   review(o: {
     doc: ReviewDoc; threads: ReviewThread[];
     onComment(c: { anchor: ReviewAnchor; body: string }): void | Promise<unknown>;

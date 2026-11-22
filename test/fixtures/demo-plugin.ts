@@ -38,16 +38,16 @@ const demoPanel = (host: ConsoleHost) => {
       return;
     }
     if (panel === "review") {
-      const r = snap.review as { draft: ReviewDoc; diff: ReviewDoc; threads: ReviewThread[] } | undefined;
+      const r = snap.review as { draft: ReviewDoc; diff: ReviewDoc; pages: ReviewDoc; threads: ReviewThread[] } | undefined;
       if (!r) { list.replaceChildren(ui.empty("Nothing to review")); return; }
       // Reject on failure so ui.review keeps the draft and says it was not sent.
       const send = async (c: { anchor: unknown; body: string }) => {
         const result = await host.action({ action: "comment", anchor: c.anchor, body: c.body });
         if (!result.ok) throw new Error("error" in result ? result.error : "comment not saved");
       };
-      const view = selected === "diff" ? r.diff : r.draft;
+      const view = selected === "diff" ? r.diff : selected === "pages" ? r.pages : r.draft;
       list.replaceChildren(
-        ui.h("p", {}, "View: ", ui.link({ panel: "review" }, "Draft"), " · ", ui.link({ panel: "review", params: { id: "diff" } }, "Diff")),
+        ui.h("p", {}, "View: ", ui.link({ panel: "review" }, "Draft"), " · ", ui.link({ panel: "review", params: { id: "diff" } }, "Diff"), " · ", ui.link({ panel: "review", params: { id: "pages" } }, "Pages")),
         ui.review({ doc: view, threads: r.threads, onComment: send }),
       );
       return;
@@ -121,6 +121,10 @@ const ASSETS: Record<string, { bytes: Uint8Array; mime: string; name: string }> 
   "figure.webp": { bytes: Buffer.from("UklGRh4AAABXRUJQVlA4TBEAAAAvAUAAAAdQ0IIUtP+BiOh/AAA=", "base64"), mime: "image/webp", name: "figure.webp" },
   "not-webp.webp": { bytes: png(), mime: "image/webp", name: "not-webp.webp" },
   "figure.png": { bytes: png(), mime: "image/png", name: "figure.png" },
+  // Rendered pages for the pages review document (#115).
+  "deck/p1.png": { bytes: png(), mime: "image/png", name: "p1.png" },
+  "deck/p2.png": { bytes: png(), mime: "image/png", name: "p2.png" },
+  "deck/p3.png": { bytes: png(), mime: "image/png", name: "p3.png" },
   "logo.svg": { bytes: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'), mime: "image/svg+xml", name: "logo.svg" },
   "notes.txt": { bytes: new TextEncoder().encode("plain text"), mime: "text/plain", name: "notes \"x\".txt" },
   "emoji.txt": { bytes: new TextEncoder().encode("emoji name"), mime: "text/plain", name: `${"a".repeat(119)}\u{1F600}.txt` },
@@ -130,6 +134,7 @@ const ASSETS: Record<string, { bytes: Uint8Array; mime: string; name: string }> 
 
 // Review fixture: a Markdown draft, the version its threads were written against, and a diff between them.
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+const REVIEW_PAGES_DOC: ReviewDoc = { kind: "pages", path: "slides/deck.tex", pages: [1, 2, 3].map((n) => ({ asset: `deck/p${n}.png`, width: 1600, height: 900, label: `Slide ${n}` })) };
 const DRAFT_V1 = "# Release plan\n\nShip the console on Friday after the review.\nThe hub upgrade follows.\n\n## Risks\n\nThe <b>asset route</b> needs a security pass.\n\nThe hub upgrade follows.\n";
 const DRAFT_V2 = "# Release plan\n\n> Draft 2: dates moved.\n\nShip the console on Monday after the review.\nThe hub upgrade follows.\n\n## Risks\n\nThe <b>asset route</b> needs a security pass.\n\nThe hub upgrade follows.\n";
 const REVIEW_DRAFT: ReviewDoc = { kind: "prose", path: "docs/release-plan.md", text: DRAFT_V2, contentHash: sha256(DRAFT_V2) };
@@ -142,6 +147,10 @@ const REVIEW_THREADS: ReviewThread[] = [
   { id: "r2", author: "codex", at: "2026-11-02T01:05:00Z", body: "Duplicate of the line above; drop one.", anchor: { path: "docs/release-plan.md", contentHash: sha256(DRAFT_V1), selectors: [{ kind: "lineRange", startLine: 10, endLine: 10 }, { kind: "textQuote", exact: "The hub upgrade follows.", prefix: "security pass.\n\n", suffix: "\n" }] } },
   // Written against v1 on text that v2 changed: unplaced.
   { id: "r3", author: "owner", at: "2026-11-02T01:10:00Z", body: "Friday is too early.", anchor: { path: "docs/release-plan.md", contentHash: sha256(DRAFT_V1), selectors: [{ kind: "lineRange", startLine: 3, endLine: 3 }, { kind: "textQuote", exact: "Ship the console on Friday", prefix: "# Release plan\n\n", suffix: " after the review." }] } },
+  // Pages (#115): a region on slide 2, a whole-slide note on slide 3, and one on a slide the deck no longer has.
+  { id: "p1", author: "claude", at: "2026-11-02T01:20:00Z", body: "This chart has no axis labels.", anchor: { path: "slides/deck.tex", selectors: [{ kind: "page", page: 2, rect: [0.1, 0.2, 0.6, 0.7] }] } },
+  { id: "p2", author: "owner", at: "2026-11-02T01:25:00Z", body: "Move this slide before the summary.", anchor: { path: "slides/deck.tex", selectors: [{ kind: "page", page: 3 }] } },
+  { id: "p3", author: "codex", at: "2026-11-02T01:30:00Z", body: "The removed backup slide still had a typo.", anchor: { path: "slides/deck.tex", selectors: [{ kind: "page", page: 7 }] } },
 ];
 
 export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record<string, unknown>[] } {
@@ -206,7 +215,7 @@ export function createDemoPlugin(tool = "demo"): ConsolePlugin & { calls: Record
               cards, links: [{ kind: "message", from: "claude", to: "codex", label: "Review handoff", at: new Date(opened).toISOString() }],
             }, cursor: 1 };
           }
-          if (input.panel === "review") return { review: { draft: REVIEW_DRAFT, diff: REVIEW_DIFF, threads: [...REVIEW_THREADS, ...comments] }, cursor: comments.length + 1 };
+          if (input.panel === "review") return { review: { draft: REVIEW_DRAFT, diff: REVIEW_DIFF, pages: REVIEW_PAGES_DOC, threads: [...REVIEW_THREADS, ...comments] }, cursor: comments.length + 1 };
           if (input.panel === "metrics") return { metrics: METRICS, cursor: 1 };
           if (input.panel === "inbox") return { items: notes.filter((n) => n.status === "open").map(item) };
           if (input.panel === "search") {
