@@ -340,6 +340,47 @@ async function checkTabs(page, requireLast = false) {
     const box = tabs.getBoundingClientRect(); const current = active.getBoundingClientRect();
     if (current.left < box.left - 1 || current.right > box.right + 1 || current.top < box.top - 1 || current.bottom > box.bottom + 1) findings.push({ kind: "active-tab-clipped", detail: active.textContent });
     if (last && active !== tabs.querySelector(".tab:last-child")) findings.push({ kind: "last-tab-inactive", detail: active.textContent });
+    // Hit-test the label with pointer-transparent overlays and visible pseudo-elements enabled.
+    // Pseudo-elements hit as their originating element, so a fade on the tab row is detected too.
+    const range = document.createRange();
+    range.selectNodeContents(active);
+    const labelRects = [...range.getClientRects()].filter((rect) => rect.width && rect.height);
+    const sheet = [...document.styleSheets].find((item) => { try { return Boolean(item.cssRules); } catch { return false; } });
+    if (!sheet || !labelRects.length) findings.push({ kind: "tab-label-check", detail: "Cannot inspect the active tab label" });
+    else {
+      const marked = [];
+      const rules = ["[data-ui-check-hit] { pointer-events: auto !important; }", "[data-ui-check-before]::before { pointer-events: auto !important; }", "[data-ui-check-after]::after { pointer-events: auto !important; }"];
+      const start = sheet.cssRules.length;
+      try {
+        for (const rule of rules) sheet.insertRule(rule, sheet.cssRules.length);
+        for (const el of document.querySelectorAll("body *")) {
+          const box = el.getBoundingClientRect();
+          if (!labelRects.some((rect) => box.left < rect.right && box.right > rect.left && box.top < rect.bottom && box.bottom > rect.top)) continue;
+          const style = getComputedStyle(el);
+          if (style.display === "none" || style.visibility !== "visible" || Number(style.opacity) === 0) continue;
+          const attrs = ["data-ui-check-hit"];
+          for (const [pseudo, attr] of [["::before", "data-ui-check-before"], ["::after", "data-ui-check-after"]]) {
+            const ps = getComputedStyle(el, pseudo);
+            if (ps.content !== "none" && ps.content !== "normal" && ps.display !== "none" && ps.visibility === "visible" && Number(ps.opacity) > 0) attrs.push(attr);
+          }
+          for (const attr of attrs) el.setAttribute(attr, "");
+          marked.push([el, attrs]);
+        }
+        let covered = false;
+        for (const rect of labelRects) {
+          for (let x = Math.floor(rect.left) + 1; x < rect.right && !covered; x += 2) {
+            for (let y = Math.floor(rect.top) + 1; y < rect.bottom; y += 2) {
+              const hit = document.elementFromPoint(x, y);
+              if (!hit || !active.contains(hit)) { covered = true; break; }
+            }
+          }
+        }
+        if (covered) findings.push({ kind: "active-tab-label-covered", detail: active.textContent });
+      } finally {
+        for (const [el, attrs] of marked) for (const attr of attrs) el.removeAttribute(attr);
+        while (sheet.cssRules.length > start) sheet.deleteRule(start);
+      }
+    }
     const before = tabs.scrollLeft > 1;
     const after = tabs.scrollWidth - tabs.clientWidth - tabs.scrollLeft > 1;
     if ((before || after) && !tabs.classList.contains("has-overflow")) findings.push({ kind: "tab-overflow-indicator", detail: "Overflow exists without has-overflow" });
@@ -709,12 +750,12 @@ async function measureCoarse(page) {
     });
   }, COARSE_TARGETS);
 }
-async function runCoarse(ticket, theme) {
-  const scenario = { width: 1024, theme, textPercent: 100 };
-  const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: theme, reducedMotion: "reduce", hasTouch: true });
+async function runCoarse(ticket, theme, width) {
+  const scenario = { width, theme, textPercent: 100 };
+  const context = await browser.newContext({ viewport: { width, height: 768 }, colorScheme: theme, reducedMotion: "reduce", hasTouch: true });
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
-  const label = `1024-${theme}-100-coarse`;
+  const label = `${width}-${theme}-100-coarse`;
   try {
     await page.goto((await ticket(false)).url, { waitUntil: "networkidle" });
     await page.locator("#view-inbox .row-main").first().waitFor();
@@ -730,14 +771,15 @@ async function runCoarse(ticket, theme) {
     });
     const groupFindings = await measureCoarse(page);
     await page.evaluate(() => document.querySelector("[data-ui-check='coarse-probe']")?.remove());
-    report.findings.push(...groupFindings.map((finding) => ({ capture: `1024-${theme}-100-coarse-group-command`, ...finding })));
+    report.findings.push(...groupFindings.map((finding) => ({ capture: `${width}-${theme}-100-coarse-group-command`, ...finding })));
     await page.keyboard.press("Control+k");
     await page.locator("#palette[open]").waitFor();
     await capture(page, scenario, "coarse-palette", await measureCoarse(page));
     await page.keyboard.press("Escape");
     await page.evaluate(() => { location.hash = "#/local/demo/notes"; });
     await page.locator(".panel-mount:not([hidden]) .ui-row-open").first().waitFor();
-    await capture(page, scenario, "coarse-panel", await measureCoarse(page));
+    await settle(page);
+    await capture(page, scenario, "coarse-panel", [...await measureCoarse(page), ...await checkTabs(page)]);
     const review = page.locator("[data-ui-check='review']");
     await review.scrollIntoViewIfNeeded();
     await review.locator(".ui-review-gutter[tabindex='0']").focus();
@@ -1400,7 +1442,7 @@ try {
   if (!focused) {
     for (const width of report.matrix.widths) for (const theme of report.matrix.themes) for (const textPercent of report.matrix.textPercent) await runScenario(ticket, { width, theme, textPercent });
     for (const theme of report.supplementalMatrix.themes) await runScenario(ticket, { width: 320, theme, textPercent: 100 }, true);
-    for (const theme of report.matrix.themes) await runCoarse(ticket, theme);
+    for (const width of [768, 1024]) for (const theme of report.matrix.themes) await runCoarse(ticket, theme, width);
     for (const theme of report.miniPopout.themes) for (const textPercent of report.miniPopout.textPercent) await runMini(ticket, { width: report.miniPopout.width, theme, textPercent }, "mini-popout", report.miniPopout.height, true);
     await runMini(ticket, { width: 375, theme: "light", textPercent: 100 }, "mini-fallback", 1000, false);
   }
