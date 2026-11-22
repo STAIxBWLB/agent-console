@@ -18,6 +18,12 @@ async function installTrackerFixture(page) {
     if (body.scene?.cards?.length) {
       body.scene.cards[0].refs = [{ kind: "issue", repo: "STAIxBWLB/agent-console", number: 124 }, { kind: "pr", repo: "STAIxBWLB/agent-console", number: 999 }];
       body.scene.cards[0].title = `${body.scene.cards[0].title} with a deliberately long title that has to wrap inside its Tracker column without clipping`;
+      // 12 Done cards: the last 10 show, 2 sit behind the disclosure.
+      const done = body.scene.zones.find((zone) => zone.kind === "done");
+      assert(done, "Tracker fixture has no Done zone");
+      body.scene.cards = body.scene.cards.filter((card) => card.zone !== done.id);
+      for (let i = 0; i < 12; i++) body.scene.cards.push({ id: `tracker-done-${i}`, title: `Tracker completed task ${i + 1}`, zone: done.id,
+        ...(done.group ? { group: done.group } : {}), link: { panel: "notes", params: { id: "n1" } } });
     }
     await fulfillSnapshotFixture(route, response, body);
   });
@@ -70,6 +76,15 @@ export async function runSpaceTracker({ browser, ticket, report, output }) {
       assert.deepEqual(kinds.slice(0, 4), ["queue", "work", "review", "done"], "Tracker columns are not Todo/In progress/In review/Done");
       const doneOpen = await page.locator('details[data-tracker-disclosure="done"]').evaluate((n) => n.open);
       assert.equal(doneOpen, width >= 1024, "Done must be open at 1024 px and wider and collapsed below");
+      if (!doneOpen) await page.locator('details[data-tracker-disclosure="done"] > summary').click();
+      const doneColumn = page.locator('[data-tracker-kind="done"]');
+      const earlier = doneColumn.locator('details[data-tracker-disclosure="earlier"]');
+      assert.equal(await earlier.evaluate((n) => n.open), false, "Earlier Done cards were not collapsed");
+      assert.equal(await doneColumn.locator("[data-tracker-card]:visible").count(), 10, "Done must show its last 10 cards");
+      assert((await earlier.locator("summary").innerText()).includes("Show 2 earlier cards"), "Done disclosure does not count earlier cards");
+      await earlier.locator("summary").focus(); await page.keyboard.press("Enter");
+      await doneColumn.locator('[data-tracker-card="demo:tracker-done-0"]').waitFor();
+      assert.equal(await doneColumn.locator("[data-tracker-card]:visible").count(), 12, "Expanded Done does not show all cards");
       const ref = page.locator(".space-tracker .space-ref").first();
       assert.equal(await ref.getAttribute("href"), "https://github.com/STAIxBWLB/agent-console/issues/124");
       assert.equal(await ref.getAttribute("rel"), "noopener noreferrer");
