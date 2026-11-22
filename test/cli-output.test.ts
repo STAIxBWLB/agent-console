@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { MARKERS, ROLE_SGR, asciiMarkers, createOutput, resolveColor } from "../src/cli-output.ts";
@@ -60,7 +60,8 @@ test("ASCII markers follow locale and explicit flag", async () => {
   expect(MARKERS.ok.ascii).toBe("ok");
 });
 test("CLI implementation keeps ANSI escapes in the output module", () => {
-  for (const file of ["src/cli.ts", "bin/acon.js"]) {
+  const sources = readdirSync(join(import.meta.dir, "..", "src")).filter((name) => name.endsWith(".ts") && name !== "cli-output.ts").map((name) => `src/${name}`);
+  for (const file of [...sources, "bin/acon.js"]) {
     const source = readFileSync(join(import.meta.dir, "..", file), "utf8");
     expect(source).not.toMatch(/\\(?:x1[bB]|u001[bB]|033)/);
     expect(source).not.toContain("\x1b");
