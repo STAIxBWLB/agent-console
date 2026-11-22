@@ -87,7 +87,7 @@ serve auth: ACON_ACCESS_TEAM + ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN
 --read-only or ACON_READ_ONLY=1 refuses console /p/<tool>/action requests and writable principal tools; declared readOnly principal tools, snapshots, search and assets remain available.
 The ui server exits 5 minutes after the last request; serve stays up.`;
 
-const OVERVIEW = `acon: local console for agent-hub, agent-mem, vault-mem and agent-research
+export const OVERVIEW = `acon: local console for agent-hub, agent-mem, vault-mem and agent-research
 
 Usage: acon <command> [options]
 
@@ -105,7 +105,7 @@ Commands:
 
 Use acon help <command> for details.
 --read-only keeps declared readOnly principal tools available.`;
-const DETAILS: Record<string, { usage: string; description: string; flags: string[]; example: string }> = {
+export const DETAILS: Record<string, { usage: string; description: string; flags: string[]; example: string }> = {
   ui: { usage: "acon ui [--no-open] [--json]", description: "Start a local console with a one-time link.", flags: ["--no-open  Print the link without opening a browser", "--json  Print the existing session JSON"], example: "acon ui --no-open" },
   serve: { usage: "acon serve [--host H] [--port P] [--origin URL]... [--read-only] [--json]", description: "Run a resident console with Access or bearer authentication.", flags: ["--host H  Bind to a specific host", "--port P  Bind to a port", "--origin URL  Allow an exact browser origin; repeatable", "--read-only  Refuse mutating console actions", "--json  Print the existing server JSON"], example: "acon serve --host 127.0.0.1" },
   build: { usage: "acon build --static --nodes id=https://origin[,id=origin] [--out DIR]", description: "Write a credential-free static multi-node shell.", flags: ["--static  Build the static shell", "--nodes LIST  Set exact node origins", "--out DIR  Set the output directory"], example: "acon build --static --nodes desk=https://node.example.com" },
@@ -117,11 +117,11 @@ const DETAILS: Record<string, { usage: string; description: string; flags: strin
 };
 let output = createOutput();
 
-const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], principal: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
-const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"], build: ["--nodes", "--out"] };
+export const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], principal: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
+export const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"], build: ["--nodes", "--out"] };
 const SUBCOMMANDS: Record<string, string> = { token: "new", setup: "launchd" };
 
-function parse(argv: string[]): { command: string; flags: Set<string>; args: string[]; values: Record<string, string[]> } | string {
+export function parse(argv: string[]): { command: string; flags: Set<string>; args: string[]; values: Record<string, string[]> } | string {
   const [command = "help", ...all] = argv;
   if (["help", "--help", "-h", "--version", "-v", "version"].includes(command)) return { command, flags: new Set(), args: [], values: {} };
   const allowed = COMMANDS[command];
