@@ -323,7 +323,7 @@ describe("principal registry and bearer transport", () => {
     const text = list.stdout.toString(); expect(text).not.toContain(f.token); expect(text).not.toContain(TOKEN); expect(JSON.parse(text).principals[0].id).toBe("assistant");
     expect(run("off", "assistant").exitCode).toBe(0); expect(readPrincipalRegistry(f.home).principals[0]!.enabled).toBe(false);
     expect(run("on", "assistant").exitCode).toBe(0); expect(readPrincipalRegistry(f.home).principals[0]!.enabled).toBe(true);
-    const help = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "bin", "acon.js"), "help"], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: f.home, AGENTHUB_HOME: f.home }, stdout: "pipe", stderr: "pipe" });
+    const help = Bun.spawnSync([process.execPath, join(import.meta.dir, "..", "bin", "acon.js"), "help", "serve"], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: f.home, AGENTHUB_HOME: f.home }, stdout: "pipe", stderr: "pipe" });
     expect(help.exitCode).toBe(0); expect(help.stdout.toString()).not.toContain("refuses every plugin action"); expect(help.stdout.toString()).toContain("declared readOnly principal tools");
     const missing = run("off", "missing");
     expect(missing.exitCode).toBe(1); expect(missing.stderr.toString()).toContain("not registered");
