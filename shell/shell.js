@@ -2176,9 +2176,9 @@ function renderAudit() {
   const rows = (result?.rows ?? []).map((row) => Object.fromEntries(columns.map(({ key }) => [key, row[key] ?? "Not recorded"])));
   root.replaceChildren(h("h1", { class: "lead", id: "audit-title", text: "Principal audit" }),
     h("p", { class: "sub", text: "Newest first. Existing audit records do not include operation, panel or refusal reason." }), form,
-    auditState.error ? h("p", { class: "notice", role: "alert", text: auditState.error }) : null,
-    result ? consoleUi.table({ caption: "Principal audit records", columns, rows, sortable: false }) : null,
-    result && !rows.length ? h("p", { class: "sub", text: "No records match these filters." }) : null,
+    ...(auditState.error ? [h("p", { class: "notice", role: "alert", text: auditState.error })] : []),
+    ...(result ? [consoleUi.table({ caption: "Principal audit records", columns, rows, sortable: false })] : []),
+    ...(result && !rows.length ? [h("p", { class: "sub", text: "No records match these filters." })] : []),
     h("div", { class: "audit-actions" },
       h("button", { type: "button", class: "btn", disabled: auditState.offset === 0, onclick: () => { auditState.offset = Math.max(0, auditState.offset - 50); void fetchAudit(); }, text: "Previous" }),
       h("span", { text: `Offset ${auditState.offset}` }),
