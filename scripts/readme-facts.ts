@@ -2,6 +2,7 @@
 // `bun scripts/readme-facts.ts` exits 1 when a block differs; `--write` rewrites the blocks.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { commandLines } from "../src/cli-help.ts";
 import { CONSOLE_API_MAX, CONSOLE_API_MIN } from "../src/contract.ts";
 
 const root = join(import.meta.dir, "..");
@@ -21,12 +22,6 @@ const PRODUCERS = [
   { tool: "ares", repo: "agent-research", register: "ares setup console --apply", api: 1, pin: "commit 27e4f89 (0.1.2)" },
 ];
 
-function usage(): string {
-  const cli = readFileSync(join(root, "src", "cli.ts"), "utf8");
-  const lines = /\nUsage:\n([\s\S]*?)\n\n/.exec(cli)?.[1];
-  if (!lines) throw new Error("readme-facts: no Usage block in src/cli.ts; keep the USAGE text's `Usage:` section followed by a blank line");
-  return lines.split("\n").map((line) => line.replace(/^ {2}/, "")).join("\n");
-}
 
 const api = CONSOLE_API_MIN === CONSOLE_API_MAX ? `${CONSOLE_API_MIN}` : `${CONSOLE_API_MIN}-${CONSOLE_API_MAX}`;
 const blocks: Record<string, string> = {
@@ -41,7 +36,7 @@ const blocks: Record<string, string> = {
     "| --- | --- | --- | --- | --- |",
     ...PRODUCERS.map((p) => `| \`${p.tool}\` | [${p.repo}](https://github.com/STAIxBWLB/${p.repo}) | \`${p.register}\` | ${p.api} | ${p.pin} |`),
   ].join("\n"),
-  commands: ["```text", usage(), "```"].join("\n"),
+  commands: ["```text", commandLines().join("\n"), "```"].join("\n"),
 };
 
 const readme = readFileSync(readmePath, "utf8");

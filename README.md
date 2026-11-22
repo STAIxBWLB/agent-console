@@ -39,23 +39,16 @@ All commands, as `acon help` prints them:
 
 <!-- facts:commands -->
 ```text
-acon ui [--no-open] [--json]   serve the console on 127.0.0.1 and print a one-time link
-acon serve [--host H] [--port P] [--origin https://host]... [--read-only] [--json]
-                               resident console behind Cloudflare Access or a bearer token
-acon build --static --nodes id=https://origin[,id=origin] [--out dist]
-                               write the static multi-node shell (no credentials or plugin data)
-acon token new [--file PATH] [--force]
-                               write a 0600 bearer token file (default $AGENTHUB_HOME/console/token); prints the path only
-acon setup launchd [--label ID] [--apply] [serve flags]
-                               print a LaunchAgent plist for acon serve; --apply installs and loads it
-acon plugins [--json]          list registered plugins and verify their module hashes
-acon principal list [--json]   list server principals (safe metadata only)
-acon principal off <id>        disable a server principal
-acon principal on <id>         enable a server principal
-acon install <name|https URL|dir> [--force]
-                               install a pet or asset package
-acon install --list [--json]   list the packages in the index
-acon --version | help
+  ui          Open a local console with a one-time link
+  serve       Run an authenticated resident console
+  build       Build a static multi-node shell
+  token       Create a bearer token file
+  setup       Prepare or install a LaunchAgent
+  plugins     List registered plugins
+  principal   List or enable and disable principals
+  install     Install or list pets and asset packages
+  version     Show the console version
+  help        Show command help
 ```
 <!-- /facts:commands -->
 

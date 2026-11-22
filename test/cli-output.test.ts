@@ -33,7 +33,7 @@ test("color precedence and JSON remain deterministic", async () => {
   const json = await run(["plugins", "--json", "--color=always"], { FORCE_COLOR: "1" });
   expect(json.out).not.toContain("\x1b"); expect(JSON.parse(json.out).plugins).toEqual([]);
   expect(JSON.parse((await run(["version", "--json"])).out).version).toBeTruthy();
-  expect(JSON.parse((await run(["help", "--json"])).out).help).toContain("Commands:");
+  expect(JSON.parse((await run(["help", "--json"])).out).help.commands.map((entry: { name: string }) => entry.name)).toContain("plugins");
 });
 test("human output fits 80 cells and usage and operation failures use stderr", async () => {
   for (const args of [["plugins"], ["help"]]) {

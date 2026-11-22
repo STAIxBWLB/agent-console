@@ -9,6 +9,7 @@ import { PrincipalError, readPrincipalRegistry, setPrincipalEnabled } from "./pr
 import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
 import { serveConfig, type ServeArgs, type ServeOptions } from "./serve.ts";
 import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, reloadAgent, stableBun, tokenPath } from "./setup.ts";
+import { HELP, GLOBAL_FLAGS, commandLines } from "./cli-help.ts";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
@@ -60,70 +61,17 @@ export function createOutput(options: OutputOptions = {}) {
   };
 }
 
-const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem, vault-mem and agent-research
-
-Usage:
-  acon ui [--no-open] [--json]   serve the console on 127.0.0.1 and print a one-time link
-  acon serve [--host H] [--port P] [--origin https://host]... [--read-only] [--json]
-                                 resident console behind Cloudflare Access or a bearer token
-  acon build --static --nodes id=https://origin[,id=origin] [--out dist]
-                                 write the static multi-node shell (no credentials or plugin data)
-  acon token new [--file PATH] [--force]
-                                 write a 0600 bearer token file (default $AGENTHUB_HOME/console/token); prints the path only
-  acon setup launchd [--label ID] [--apply] [serve flags]
-                                 print a LaunchAgent plist for acon serve; --apply installs and loads it
-  acon plugins [--json]          list registered plugins and verify their module hashes
-  acon principal list [--json]   list server principals (safe metadata only)
-  acon principal off <id>        disable a server principal
-  acon principal on <id>         enable a server principal
-  acon install <name|https URL|dir> [--force]
-                                 install a pet or asset package
-  acon install --list [--json]   list the packages in the index
-  acon --version | help
-
-Plugins register a manifest under $AGENTHUB_HOME/console/plugins (default ~/.agenthub).
-Packages install to $AGENTHUB_HOME/console/pets/<id> or console/assets/<id>; ACON_ASSETS_INDEX overrides the index URL.
-serve auth: ACON_ACCESS_TEAM + ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN_FILE (bearer); required off loopback.
---read-only or ACON_READ_ONLY=1 refuses console /p/<tool>/action requests and writable principal tools; declared readOnly principal tools, snapshots, search and assets remain available.
-The ui server exits 5 minutes after the last request; serve stays up.`;
-
-export const OVERVIEW = `acon: local console for agent-hub, agent-mem, vault-mem and agent-research
-
-Usage: acon <command> [options]
-
-Commands:
-  ui          Open a local console with a one-time link
-  serve       Run an authenticated resident console
-  build       Build a static multi-node shell
-  token       Create a bearer token file
-  setup       Prepare or install a LaunchAgent
-  plugins     List registered plugins
-  principal   List or enable and disable principals
-  install     Install or list pets and asset packages
-  version     Show the console version
-  help        Show command help
-
-Use acon help <command> for details.
---read-only keeps declared readOnly principal tools available.`;
-export const DETAILS: Record<string, { usage: string; description: string; flags: string[]; example: string }> = {
-  ui: { usage: "acon ui [--no-open] [--json]", description: "Start a local console with a one-time link.", flags: ["--no-open  Print the link without opening a browser", "--json  Print the existing session JSON"], example: "acon ui --no-open" },
-  serve: { usage: "acon serve [--host H] [--port P] [--origin URL]... [--read-only] [--json]", description: "Run a resident console with Access or bearer authentication.", flags: ["--host H  Bind to a specific host", "--port P  Bind to a port", "--origin URL  Allow an exact browser origin; repeatable", "--read-only  Refuse mutating console actions", "--json  Print the existing server JSON"], example: "acon serve --host 127.0.0.1" },
-  build: { usage: "acon build --static --nodes id=https://origin[,id=origin] [--out DIR]", description: "Write a credential-free static multi-node shell.", flags: ["--static  Build the static shell", "--nodes LIST  Set exact node origins", "--out DIR  Set the output directory"], example: "acon build --static --nodes desk=https://node.example.com" },
-  token: { usage: "acon token new [--file PATH] [--force]", description: "Write a private bearer token file and print its path.", flags: ["--file PATH  Set the token file", "--force  Replace an existing token"], example: "acon token new" },
-  setup: { usage: "acon setup launchd [--label ID] [--apply] [serve flags]", description: "Print or install a LaunchAgent for acon serve.", flags: ["--label ID  Set the LaunchAgent label", "--apply  Install and load the agent", "--host H, --port P, --origin URL, --read-only  Configure serve"], example: "acon setup launchd" },
-  plugins: { usage: "acon plugins [--json]", description: "List registered plugins and check module hashes.", flags: ["--json  Print the existing plugin JSON"], example: "acon plugins" },
-  principal: { usage: "acon principal list [--json] | off <id> | on <id>", description: "List or enable and disable server principals.", flags: ["--json  Print the existing list JSON"], example: "acon principal list" },
-  install: { usage: "acon install <name|https URL|dir> [--force] | --list [--json]", description: "Install a pet or asset package, or list the index.", flags: ["--list  List packages", "--force  Replace an installed package", "--json  Print the existing result JSON"], example: "acon install --list" },
-};
 let output = createOutput();
 
-export const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], principal: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
-export const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"], build: ["--nodes", "--out"] };
+export const COMMANDS: Record<string, string[]> = Object.fromEntries(Object.entries(HELP).map(([name, entry]) => [name, entry.flags.filter((f) => !f.value).map((f) => f.name)]));
+export const VALUED: Record<string, string[]> = Object.fromEntries(Object.entries(HELP).map(([name, entry]) => [name, entry.flags.filter((f) => f.value).map((f) => f.name)]));
 const SUBCOMMANDS: Record<string, string> = { token: "new", setup: "launchd" };
 
 export function parse(argv: string[]): { command: string; flags: Set<string>; args: string[]; values: Record<string, string[]> } | string {
   const [command = "help", ...all] = argv;
-  if (["help", "--help", "-h", "--version", "-v", "version"].includes(command)) return { command, flags: new Set(), args: [], values: {} };
+  if (Object.hasOwn(HELP, command) && all.some((arg) => arg === "--help" || arg === "-h")) return { command: "help", flags: new Set(), args: [command], values: {} };
+  if (["help", "--help", "-h"].includes(command)) return { command: "help", flags: new Set(), args: all, values: {} };
+  if (["--version", "-v", "version"].includes(command)) return { command: "version", flags: new Set(), args: [], values: {} };
   const allowed = COMMANDS[command];
   if (!allowed) return `unknown command: ${command}`;
   const values: Record<string, string[]> = {};
@@ -227,12 +175,12 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
     ...(values["--origin"] ?? []).flatMap((o) => ["--origin", o]), ...(flags.has("--read-only") ? ["--read-only"] : []),
   ];
   const bun = stableBun(process.execPath, process.env.PATH);
-  if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`);
+  if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`, EXIT.fail);
   const plist = launchdPlist({ label, bun, script: launchScript(resolve(home)), args, env, logDir: join(resolve(home), "console", "logs") });
   if (!flags.has("--apply")) { output.raw(plist); return EXIT.ok; }
-  if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)");
+  if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)", EXIT.fail);
   const uid = process.getuid?.();
-  if (uid === undefined) return fail("could not read the user id");
+  if (uid === undefined) return fail("could not read the user id", EXIT.fail);
   mkdirSync(join(resolve(home), "console", "logs"), { recursive: true, mode: 0o700 });
   const dir = join(homedir(), "Library", "LaunchAgents");
   mkdirSync(dir, { recursive: true });
@@ -299,7 +247,7 @@ export async function main(argv: string[]): Promise<number> {
     filtered.push(arg);
   }
   const commandName = filtered.find((arg) => arg !== "--json") ?? "help";
-  if (["help", "--help", "-h", "version", "--version", "-v"].includes(commandName) && filtered.includes("--json")) {
+  if ((["help", "--help", "-h", "version", "--version", "-v"].includes(commandName) || filtered.includes("--help") || filtered.includes("-h")) && filtered.includes("--json")) {
     jsonFlag = true;
     filtered.splice(filtered.indexOf("--json"), 1);
   }
@@ -308,32 +256,36 @@ export async function main(argv: string[]): Promise<number> {
   if (typeof parsed === "string") {
     output.error(parsed);
     const name = filtered[0] ?? "";
-    const help = DETAILS[name];
+    const help = HELP[name];
     output.diagnostic(`Usage: ${help?.usage ?? "acon <command> [options]"}`);
     output.diagnostic(`Run 'acon help${help ? ` ${name}` : ""}' for details.`);
     return EXIT.usage;
   }
   const { command, flags, args, values } = parsed;
   if (["--version", "-v", "version"].includes(command)) { if (jsonFlag) output.json({ version: pkg.version }); else output.raw(`${pkg.version}\n`); return EXIT.ok; }
-  if (["help", "--help", "-h"].includes(command)) {
-    const detail = filtered[1];
-    if (detail && !Object.hasOwn(COMMANDS, detail)) { output.error(`unknown help command: ${detail}`); return EXIT.usage; }
-    const text = detail ? USAGE : OVERVIEW;
-    if (jsonFlag) output.json({ help: text });
+  if (command === "help") {
+    const detail = args[0];
+    if (args.length > 1 || (detail && !Object.hasOwn(HELP, detail))) {
+      output.error(args.length > 1 ? `unexpected argument: ${args[1]}` : `unknown help command: ${detail}`, "acon help");
+      output.diagnostic("Usage: acon help [command]"); return EXIT.usage;
+    }
+    if (jsonFlag) output.json({ help: detail ? { command: detail, ...HELP[detail]!, globalFlags: GLOBAL_FLAGS } : { commands: Object.entries(HELP).map(([name, entry]) => ({ name, ...entry })), globalFlags: GLOBAL_FLAGS } });
     else if (detail) {
-      const help = DETAILS[detail]!;
+      const help = HELP[detail]!;
       output.line(` acon ${detail}`, "header"); output.section("Usage"); output.line(help.usage);
       output.section("Description"); output.line(help.description);
-      output.section("Options"); for (const flag of help.flags) output.line(flag);
-      output.line("--color=auto|always|never  Choose color policy"); output.line("--ascii  Use ASCII markers");
-      output.section("Examples"); output.line(help.example);
+      const allFlags = [...help.flags, ...GLOBAL_FLAGS];
+      output.section(`Flags (${allFlags.length})`);
+      const labels = allFlags.map((flag) => `${flag.name}${flag.value ? ` <${flag.value.toLowerCase()}>` : ""}`);
+      const width = Math.max(...labels.map((label) => label.length));
+      for (const [index, flag] of allFlags.entries()) output.line(`  ${labels[index]!.padEnd(width)}  ${flag.description}`);
+      output.section("Examples"); for (const example of help.examples) output.line(example);
+      output.section("Details"); for (const line of help.details) output.line(line);
     } else {
       output.line(" acon: local console for agent-hub, agent-mem, vault-mem and agent-research", "header");
-      output.section("Commands");
-      for (const line of OVERVIEW.split("\n").filter((value) => /^  [a-z]/.test(value))) output.line(line);
-      output.section("Options"); output.line("--color=auto|always|never  Choose color policy"); output.line("--ascii  Use ASCII markers"); output.line("--json  Output a JSON document for read commands");
+      output.section("Usage"); output.line("acon <command> [options]");
+      output.section("Commands"); for (const line of commandLines()) output.line(line);
       output.line("Use acon help <command> for details.");
-      output.line("--read-only keeps declared readOnly principal tools available.");
     }
     return EXIT.ok;
   }
