@@ -56,3 +56,16 @@ test("launchd platform refusal uses the runtime exit code", () => {
   expect(result.exitCode).toBe(1);
   expect(result.stderr.toString()).toContain("needs macOS");
 });
+
+
+test("build help explains multiple nodes and extra help arguments name the actual token", () => {
+  const bin = join(import.meta.dir, "..", "bin", "acon.js");
+  const run = (args: string[]) => Bun.spawnSync([process.execPath, bin, ...args], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", COLUMNS: "80", NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
+  const build = run(["help", "build"]);
+  expect(build.exitCode).toBe(0);
+  expect(build.stdout.toString()).toContain("id=https://origin pairs, separated by commas");
+  expect(build.stdout.toString()).toContain("no credentials or plugin data");
+  const extra = run(["help", "serve", "extra"]);
+  expect(extra.exitCode).toBe(2);
+  expect(extra.stderr.toString()).toContain("unexpected argument: extra");
+});

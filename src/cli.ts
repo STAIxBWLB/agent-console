@@ -265,7 +265,10 @@ export async function main(argv: string[]): Promise<number> {
   if (["--version", "-v", "version"].includes(command)) { if (jsonFlag) output.json({ version: pkg.version }); else output.raw(`${pkg.version}\n`); return EXIT.ok; }
   if (command === "help") {
     const detail = args[0];
-    if (args.length > 1 || (detail && !Object.hasOwn(HELP, detail))) { output.error(`unknown help command: ${detail}`, "acon help"); output.diagnostic("Usage: acon help [command]"); return EXIT.usage; }
+    if (args.length > 1 || (detail && !Object.hasOwn(HELP, detail))) {
+      output.error(args.length > 1 ? `unexpected argument: ${args[1]}` : `unknown help command: ${detail}`, "acon help");
+      output.diagnostic("Usage: acon help [command]"); return EXIT.usage;
+    }
     if (jsonFlag) output.json({ help: detail ? { command: detail, ...HELP[detail]!, globalFlags: GLOBAL_FLAGS } : { commands: Object.entries(HELP).map(([name, entry]) => ({ name, ...entry })), globalFlags: GLOBAL_FLAGS } });
     else if (detail) {
       const help = HELP[detail]!;
