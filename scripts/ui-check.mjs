@@ -72,6 +72,7 @@ function fixturePanel(host) {
   const { ui } = host;
   const mount = ui.h("div", { "data-ui-check": "fixture" });
   host.mount.append(mount);
+  host.snapshot({ panel: "fixture-read" }).then((result) => { mount.dataset.readOk = String(result.fixtureRead === true); }, () => { mount.dataset.readOk = "false"; });
   let panel = "notes";
   let selected;
   host.onSnapshot((snapshot) => {
@@ -144,6 +145,7 @@ if(petProblems.length || assetProblems.length || (!artRoot && pets.length!==1) |
 async function entry(tool) {
 const plugin = createDemoPlugin(tool);
 if(tool==="echo") {plugin.manifest.title="Echo";plugin.manifest.capabilities={space:true};plugin.manifest.commands=[];}
+plugin.manifest.capabilities.reads=["fixture-read"];
 plugin.manifest.pollMs=2000;
 plugin.manifest.panels = [
   {id:"notes",title:"Notes and proposed changes"}, {id:"log",title:"Activity and provenance log"},
@@ -154,6 +156,7 @@ const provider = await plugin.open({home,log:()=>{}});
 provider.assets = {js:${JSON.stringify(`export default ${fixturePanel.toString()};`)}};
 const snapshot = provider.snapshot.bind(provider);
 provider.snapshot = async (input) => {
+  if (input.panel === "fixture-read") return {fixtureRead:true};
   const result = await snapshot(input);
   if (result.scene) return {...result,scene:{...result.scene,groups:result.scene.groups.map((group)=>({...group,title:tool==="echo"?"Echo "+group.title:group.title}))}};
   if (result.notes) return {...result,notes:result.notes.map((note)=>({...note,title:note.title+" with additional review context"}))};
@@ -843,6 +846,19 @@ async function runScenario(ticket, scenario, fallback = false) {
     await page.locator("#confirm button").filter({ hasText: /^Cancel$/ }).click();
     await page.evaluate(() => { location.hash = "#/local/demo/notes"; });
     await page.locator(".panel-mount:not([hidden]) .ui-row-open").first().waitFor();
+    await settle(page);
+    await page.locator("[data-ui-check=fixture][data-read-ok]").waitFor();
+    if (await page.locator("[data-ui-check=fixture]").getAttribute("data-read-ok") !== "true") report.findings.push({ kind: "read-snapshot", detail: "Panel host failed to read its declared snapshot id" });
+    const readNavigation = await page.evaluate(() => ({
+      tabs: [...document.querySelectorAll("#tabs .tab")].map((tab) => tab.textContent),
+      read: document.querySelector("#tabs .tab[aria-selected='true']")?.textContent,
+    }));
+    if (readNavigation.tabs.includes("fixture-read")) report.findings.push({ kind: "read-navigation-tab", detail: "A declared read appeared as a tab" });
+    await page.evaluate(() => { location.hash = "#/local/demo/fixture-read"; });
+    await settle(page);
+    const selectedAfterRead = await page.locator("#tabs .tab[aria-selected='true']").textContent();
+    if (selectedAfterRead !== readNavigation.read) report.findings.push({ kind: "read-navigation-target", detail: "A declared read became a navigation target" });
+    await page.evaluate(() => { location.hash = "#/local/demo/notes"; });
     await settle(page);
     await capture(page, scenario, "panel-rows", await checkTabs(page));
     const statusFinding = await page.locator("[data-ui-check='status-only']").evaluate((row) => {

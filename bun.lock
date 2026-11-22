@@ -8,6 +8,7 @@
         "@mermaid-js/tiny": "12.2.0",
         "@tabler/icons": "3.50.0",
         "@types/bun": "^1.3.0",
+        "acon-0-2": "npm:@staix/agent-console@0.2.0",
         "acon-n-1": "npm:@staix/agent-console@0.1.8",
         "three": "0.187.0",
         "typescript": "^5.8.0",
@@ -22,6 +23,8 @@
     "@types/bun": ["@types/bun@1.4.4", "", { "dependencies": { "bun-types": "1.4.4" } }, "sha512-9wkRDXUXK124pEnAutE6n/l18j+i9GC5IAHK8TmX/2nlySETmky0OU6yL5U8pW1AoKh++AN9auDCr647BfurjQ=="],
 
     "@types/node": ["@types/node@26.6.6", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog=="],
+
+    "acon-0-2": ["@staix/agent-console@0.2.0", "", { "bin": { "acon": "bin/acon.js" } }, "sha512-FSthEczbMWG2XSfxlMSZjtNkOcRj3J9xmtDdPBpE3uAvp1N8ZW74K3OxJAQ8ustESgJ6ahAJ/DLTaQLqhLmLGA=="],
 
     "acon-n-1": ["@staix/agent-console@0.1.8", "", { "bin": { "acon": "bin/acon.js" } }, "sha512-gQUfEUN39aUldOi2IhEM9Ykk6FNOhS6YDb2EzBl2I8DZTp2pPSIkIwNU4h2V5CkvK61r1e3KvilDKmVewaGOLg=="],
 

@@ -244,6 +244,12 @@ export function registerConsoleConformance(plugin: ConsolePlugin, options: Confo
         expect(result && typeof result === "object" && !Array.isArray(result)).toBe(true);
       }
     });
+    if (plugin.manifest.capabilities?.reads?.length) test("every declared read answers a snapshot within 5 s", async () => {
+      for (const panel of plugin.manifest.capabilities!.reads!) {
+        const result = await withTimeout(provider.snapshot({ after: 0, panel }), 5_000, `snapshot ${panel}`);
+        expect(isPlainObject(result)).toBe(true);
+      }
+    });
     if (plugin.manifest.capabilities?.inbox) test("inbox items have the InboxItem shape", async () => {
       const result = await provider.snapshot({ after: 0, panel: "inbox" });
       expect(Array.isArray(result.items)).toBe(true);

@@ -235,6 +235,20 @@ export function manifestProblems(manifest: unknown, tool?: string): string[] {
     const value = m.capabilities?.[key];
     if (value !== undefined && !validMaxAge(value)) out.push(`capabilities.${key} must be a finite number from 0 to 60000 ms`);
   }
+  const reads = m.capabilities?.reads;
+  if (reads !== undefined) {
+    if (!Array.isArray(reads)) out.push("capabilities.reads must be an array; provide an array of read ids or omit it");
+    else {
+      const ids = new Set<string>();
+      for (const id of reads) {
+        if (typeof id !== "string" || !PANEL_ID.test(id)) out.push(`capabilities.reads id ${JSON.stringify(String(id))} must match ^[a-z][a-z0-9-]{0,31}$; rename it`);
+        else if (["inbox", "search", "space"].includes(id)) out.push(`capabilities.reads id ${JSON.stringify(id)} is reserved (inbox, search, space); choose another id`);
+        else if (ids.has(id)) out.push(`capabilities.reads id ${JSON.stringify(id)} is duplicated; remove the duplicate`);
+        else if (Array.isArray(m.panels) && m.panels.some((panel) => panel?.id === id)) out.push(`capabilities.reads id ${JSON.stringify(id)} is also a panel id; rename the read or the panel`);
+        else ids.add(id);
+      }
+    }
+  }
   const actions = m.capabilities?.actions;
   if (actions !== undefined && (!Array.isArray(actions) || actions.some((a) => typeof a !== "string"))) out.push("capabilities.actions must be strings");
   if (m.capabilities?.space !== undefined && typeof m.capabilities.space !== "boolean") out.push("capabilities.space must be a boolean");
@@ -298,9 +312,14 @@ export function principalToolProblems(tools: unknown, pluginId: string): string[
 }
 
 /** Panels declared either explicitly or by the console's reserved panel capabilities. */
-export function declaresPanel(manifest: ConsolePanelManifest, panel: unknown): boolean {
+function declaresPrincipalPanel(manifest: ConsolePanelManifest, panel: unknown): boolean {
   const caps = manifest.capabilities;
   return Boolean(manifest.panels.some((p) => p.id === panel) || (panel === "inbox" && caps?.inbox) || (panel === "search" && caps?.search) || (panel === "space" && caps?.space === true));
+}
+
+/** Console snapshots also accept explicitly declared non-navigation read ids. */
+export function declaresPanel(manifest: ConsolePanelManifest, panel: unknown): boolean {
+  return declaresPrincipalPanel(manifest, panel) || (typeof panel === "string" && manifest.capabilities?.reads?.includes(panel) === true);
 }
 
 /** Console-only dispatch. Input keys never select an authority or a provider port. */
@@ -334,7 +353,7 @@ export async function dispatchPrincipalSnapshot(entry: PluginEntry, input: { pri
   const provider = principalProvider(entry, input.principal);
   if (typeof provider.principalSnapshot !== "function") throw new Error("plugin has no principalSnapshot port; implement it before serving principal snapshots");
   if (typeof input.panel !== "string" || !PANEL_ID.test(input.panel)) throw new Error("principal panel is invalid; pass a valid panel id to the principal snapshot port");
-  if (!declaresPanel(entry.manifest!, input.panel)) throw new Error("principal panel is not declared by this plugin; select a declared panel or panel capability");
+  if (!declaresPrincipalPanel(entry.manifest!, input.panel)) throw new Error("principal panel is not declared by this plugin; select a declared panel or panel capability");
   const load = async () => principalResult(await provider.principalSnapshot!({ principal: input.principal, panel: input.panel }));
   if (!entry.snapshotCache) return load();
   const reply = await entry.snapshotCache.read({ provider, tool: entry.tool, panel: input.panel, namespace: "principal", input,

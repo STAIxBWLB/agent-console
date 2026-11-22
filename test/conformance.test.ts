@@ -9,6 +9,10 @@ import { dispatchConsoleSnapshot, dispatchConsoleAction, dispatchPrincipalSnapsh
 import { createAskPlugin } from "./fixtures/ask-plugin.ts";
 import { createDemoPlugin } from "./fixtures/demo-plugin.ts";
 
+const readFixture = createDemoPlugin();
+readFixture.manifest.capabilities!.reads = ["lineage"];
+registerConsoleConformance(readFixture, { destructive: [{ action: "delete", id: "n1" }] });
+
 registerConsoleConformance(createDemoPlugin(), { destructive: [{ action: "delete", id: "n1" }], assets: ["report.pdf", "figure.png", "figure.webp"] });
 
 const inbox = async (provider: { snapshot(input: { after: number; panel: string }): Promise<Record<string, unknown>> }) =>

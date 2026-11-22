@@ -28,6 +28,8 @@ export interface ConsolePanelManifest {
   /** Poll interval for the visible panel; the shell clamps it to 2-60 s. */
   pollMs?: number;
   capabilities?: {
+    /** Additional console snapshot ids that are not navigation panels. */
+    reads?: string[];
     actions?: string[];
     confirm?: boolean;
     multiProject?: boolean;

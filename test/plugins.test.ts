@@ -460,6 +460,26 @@ describe("principal plugin dispatch", () => {
     expect(declaresPanel(manifest, "space")).toBe(false);
     expect(declaresPanel({ ...base, capabilities: { inbox: false, search: false } }, "inbox")).toBe(false);
   });
+  test("non-navigation reads validate ids, duplicates and panel collisions", () => {
+    const base = createPrincipalPlugin().manifest;
+    const withReads = (reads: unknown) => ({ ...base, capabilities: { ...base.capabilities, reads } });
+    expect(manifestProblems(withReads(["lineage"]))).toEqual([]);
+    for (const reads of ["lineage", ["Bad"], ["inbox"], ["search"], ["space"], ["status"], ["lineage", "lineage"], [1]]) {
+      expect(manifestProblems(withReads(reads))).not.toEqual([]);
+    }
+    expect(manifestProblems(withReads(["Bad"]))[0]).toBe('capabilities.reads id "Bad" must match ^[a-z][a-z0-9-]{0,31}$; rename it');
+    expect(manifestProblems(withReads(["space"]))[0]).toBe('capabilities.reads id "space" is reserved (inbox, search, space); choose another id');
+    expect(manifestProblems(withReads(["status"]))[0]).toBe('capabilities.reads id "status" is also a panel id; rename the read or the panel');
+    expect(declaresPanel(withReads(["lineage"]) as typeof base, "lineage")).toBe(true);
+    expect(declaresPanel(withReads(["lineage"]) as typeof base, "other")).toBe(false);
+  });
+  test("declared console reads do not grant principal snapshots", async () => {
+    const plugin = createPrincipalPlugin();
+    plugin.manifest.capabilities!.reads = ["lineage"];
+    const provider = await plugin.open(ctx("/tmp"));
+    const entry: PluginEntry = { tool: plugin.manifest.tool, file: "fixture", status: "ready", manifest: plugin.manifest, provider };
+    await expect(dispatchPrincipalSnapshot(entry, { principal: "assistant", panel: "lineage" })).rejects.toThrow("not declared");
+  });
   test("principal capability validation enforces object and namespace shape", () => {
     const manifest = createPrincipalPlugin().manifest;
     expect(manifestProblems(manifest)).toEqual([]);
