@@ -1,4 +1,4 @@
-import { Report, resolveColor, streamEnv, asciiMarkers, markerCell, MARKERS, paint, errorLine, terminalText, wrap, EXIT, type MarkerName, type Role } from "@staix/cli-output";
+import { Report, resolveColor, streamEnv, asciiMarkers, paint, errorSpans, lineSpans, streamWidth, terminalText, wrap, EXIT, type MarkerName, type Role } from "@staix/cli-output";
 import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
@@ -13,8 +13,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 
-// Streaming unindented lines and role-separated error output await STAIxBWLB/cli-output#6.
-// The standard tokens, color policy, report layout and error text all come from the package.
+// Error-span wrapping awaits STAIxBWLB/cli-output#19; all roles and rendering come from the package.
 export interface OutputOptions { color?: string; ascii?: boolean; json?: boolean; env?: Readonly<Record<string, string | undefined>>; stdout?: NodeJS.WriteStream; stderr?: NodeJS.WriteStream }
 export function createOutput(options: OutputOptions = {}) {
   const env = options.env ?? process.env, stdout = options.stdout ?? process.stdout, stderr = options.stderr ?? process.stderr;
@@ -24,15 +23,10 @@ export function createOutput(options: OutputOptions = {}) {
     const result = resolveColor(options.color, streamEnv(!!stream.isTTY, env), "acon");
     return result instanceof Error ? false : result;
   };
-  const columns = (stream: NodeJS.WriteStream) => {
-    const n = stream.isTTY ? stream.columns : Number(env.COLUMNS);
-    return n && Number.isFinite(n) && n >= 20 ? n : undefined;
-  };
+  const columns = (stream: NodeJS.WriteStream) => streamWidth(!!stream.isTTY, stream.columns, env);
   const line = (value: unknown, role: Role = "value") => {
-    const text = terminalText(value).replace(/[\n\t]/g, " ");
-    const limit = columns(stdout);
-    const lines = limit === undefined ? [text] : wrap(text, limit, 0);
-    for (const part of lines) stdout.write(`${paint([{ text: part, role }], color(stdout))}\n`);
+    const text = terminalText(value, { singleLine: true });
+    for (const spans of lineSpans(text, columns(stdout))) stdout.write(`${paint(spans.map((span) => ({ ...span, role })), color(stdout))}\n`);
   };
   const report = (build: (out: Report) => void, initialBlank = false) => {
     const value = new Report(columns(stdout), ascii); build(value);
@@ -41,18 +35,17 @@ export function createOutput(options: OutputOptions = {}) {
     if (lines.length) stdout.write(`${lines.join("\n")}\n`);
   };
   const error = (value: unknown, next?: string) => {
-    const lines = errorLine("acon", terminalText(value).replace(/[\n\t]/g, " "), "", { tty: !!stderr.isTTY, ascii, ...(next ? { next } : {}) });
+    const lines = errorSpans("acon", terminalText(value, { singleLine: true }), "", { tty: !!stderr.isTTY, ascii, ...(next ? { next } : {}) });
+    // #19: wrap only the diagnostic while retaining the package's TTY marker span.
+    const first = lines[0]!;
+    const text = first.map((span) => span.text).join("");
     const limit = columns(stderr);
-    const first = limit === undefined ? [lines[0]!] : wrap(lines[0]!, limit, 2);
-    if (stderr.isTTY && color(stderr)) {
-      const marker = markerCell("fail", ascii).trimEnd();
-      first[0] = paint([{ text: marker, role: "error" }, { text: first[0]!.slice(marker.length) }], true);
-    }
-    if (next && color(stderr)) {
-      const prefix = markerCell("next", ascii).trimEnd();
-      lines[1] = paint([{ text: "  " }, { text: prefix, role: MARKERS.next.role }, { text: lines[1]!.slice(2 + prefix.length) }], true);
-    }
-    stderr.write(`${[...first, ...lines.slice(1)].join("\n")}\n`);
+    const wrapped = limit === undefined ? [text] : wrap(text, limit, 2);
+    const marker = stderr.isTTY ? first[0] : undefined;
+    const rendered = wrapped.map((part, index) => index === 0 && marker
+      ? paint([marker, { text: part.slice(marker.text.length) }], color(stderr))
+      : paint([{ text: part }], color(stderr)));
+    stderr.write(`${[...rendered, ...lines.slice(1).map((spans) => paint(spans, color(stderr)))].join("\n")}\n`);
   };
   return {
     line,
@@ -63,7 +56,7 @@ export function createOutput(options: OutputOptions = {}) {
     error,
     json: (value: unknown) => stdout.write(`${JSON.stringify(value)}\n`),
     raw: (value: string) => stdout.write(value),
-    diagnostic: (value: string) => stderr.write(`${terminalText(value).replace(/[\n\t]/g, " ")}\n`),
+    diagnostic: (value: string) => stderr.write(`${terminalText(value, { singleLine: true })}\n`),
   };
 }
 

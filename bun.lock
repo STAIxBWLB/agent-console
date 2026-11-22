@@ -5,7 +5,7 @@
     "": {
       "name": "@staix/agent-console",
       "dependencies": {
-        "@staix/cli-output": "0.1.0",
+        "@staix/cli-output": "0.1.1",
       },
       "devDependencies": {
         "@mermaid-js/tiny": "12.2.0",
@@ -21,7 +21,7 @@
   "packages": {
     "@mermaid-js/tiny": ["@mermaid-js/tiny@12.2.0", "", {}, "sha512-9bEE+R974NTh1YJlfc6ztgwhy6+9sE+wAFiFrqvSdtlJHdxGfLytQmHYHNpFKmj94+Z+uMicYrQeGXnTTjILAQ=="],
 
-    "@staix/cli-output": ["@staix/cli-output@0.1.0", "", {}, "sha512-ZRGNoNR+m849k5bN3h37Jd/Jbm6OKnJfBUAdFgftbACvJNq0Ws2l0fT1+XLGPQAmwguyP4xw6afQrAHa4l6uNg=="],
+    "@staix/cli-output": ["@staix/cli-output@0.1.1", "", {}, "sha512-Gi1vKJTfhvo7riyCK1QMLwZ0hN2AtTeEsgt7UpJoK3if5Yu4MN79cXkY5Z3B79w83M/vc5gsdMiWnm7tESePrw=="],
 
     "@tabler/icons": ["@tabler/icons@3.50.0", "", {}, "sha512-HflLxyrH1cqC7s7jzQGSjpsTAVIoaf7+/yHjbdM59rJQBMjliibp+LYhDPFxOMcwa1M8DNpOk6ENzQiWn9a1Dg=="],
 

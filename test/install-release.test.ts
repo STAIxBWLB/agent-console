@@ -21,7 +21,7 @@ describe("versioned console install (#26)", () => {
     const installed = Bun.spawnSync([process.execPath, join(first.dir, "bin", "acon.js"), "--version", "--json"], { cwd: home, stdout: "pipe", stderr: "pipe" });
     expect(installed.exitCode).toBe(0);
     expect(JSON.parse(installed.stdout.toString()).version).toBeTruthy();
-    expect(JSON.parse(readFileSync(join(first.dir, "node_modules", "@staix", "cli-output", "package.json"), "utf8")).version).toBe("0.1.0");
+    expect(JSON.parse(readFileSync(join(first.dir, "node_modules", "@staix", "cli-output", "package.json"), "utf8")).version).toBe("0.1.1");
     // Package files only: no test code. The shared review fixture (#28) is published on purpose.
     expect(existsSync(join(first.dir, "test", "server.test.ts"))).toBe(false);
     expect(existsSync(join(first.dir, "test", "fixtures", "demo-plugin.ts"))).toBe(false);
