@@ -186,7 +186,7 @@ export const AUDIT_UNAVAILABLE = "principal audit is unavailable; check console/
 const AUDIT_MAX_BYTES = 8 * 1024 * 1024;
 const AUDIT_EXPORT_MAX = 1000;
 export interface AuditQuery { principal?: string; operation?: string; outcome?: string; from?: string; to?: string; offset: number; limit: number; export: boolean }
-export type AuditRow = { time: string; principal: string; tool: string | null; plugin: string | null; outcome: string; latencyMs?: number; operation?: string; panel?: string; reason?: string };
+export type AuditRow = { time: string; principal: string; tool: string | null; plugin: string | null; outcome: string; latencyMs?: number; panel?: string; reason?: string };
 
 /** The writer's owned, non-writable directory and 0600/no-symlink/single-link file checks also apply to reads. */
 export function readPrincipalAudit(home: string, query: AuditQuery): { rows: AuditRow[]; hasMore: boolean; jsonl?: string } {
@@ -216,10 +216,10 @@ export function readPrincipalAudit(home: string, query: AuditQuery): { rows: Aud
       if (!isPlainObject(raw) || typeof raw.time !== "string" || !Number.isFinite(Date.parse(raw.time)) || typeof raw.principal !== "string" || typeof raw.outcome !== "string") throw new PrincipalError("principal audit contains invalid records; inspect principal.jsonl before retrying");
       const text = (value: unknown) => typeof value === "string" ? value.slice(0, 200) : null;
       const row: AuditRow = { time: raw.time.slice(0, 200), principal: raw.principal.slice(0, 200), tool: text(raw.tool), plugin: text(raw.plugin), outcome: raw.outcome.slice(0, 200) };
-      for (const key of ["operation", "panel", "reason"] as const) if (typeof raw[key] === "string") row[key] = raw[key].slice(0, 200);
+      for (const key of ["panel", "reason"] as const) if (typeof raw[key] === "string") row[key] = raw[key].slice(0, 200);
       if (typeof raw.latencyMs === "number" && Number.isFinite(raw.latencyMs)) row.latencyMs = raw.latencyMs;
       const day = new Date(row.time).toISOString().slice(0, 10);
-      if ((query.principal && row.principal !== query.principal) || (query.operation && row.operation !== query.operation) || (query.outcome && row.outcome !== query.outcome) || (query.from && day < query.from) || (query.to && day > query.to)) continue;
+      if ((query.principal && row.principal !== query.principal) || (query.operation && row.tool !== query.operation) || (query.outcome && row.outcome !== query.outcome) || (query.from && day < query.from) || (query.to && day > query.to)) continue;
       matches.push(row);
       if (query.export) exported.push(lines[i]!);
       if (query.export && matches.length > AUDIT_EXPORT_MAX) throw new PrincipalError("filtered audit export exceeds 1000 rows; narrow the filters before exporting");

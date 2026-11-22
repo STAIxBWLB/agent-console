@@ -2172,10 +2172,13 @@ function renderAudit() {
     auditState.offset = 0; void fetchAudit();
   } }, fields.map(([key, label, type]) => h("label", {}, h("span", { text: label }), h("input", { name: key, type, value: auditState.filters[key] ?? "", maxlength: type === "text" ? "200" : undefined }))), h("button", { type: "submit", class: "btn", text: "Apply filters" }));
   const result = auditState.result;
-  const columns = [["time", "Time (UTC)"], ["principal", "Principal"], ["operation", "Operation"], ["plugin", "Plugin"], ["panel", "Panel"], ["tool", "Tool"], ["outcome", "Outcome"], ["reason", "Reason"]].map(([key, label]) => ({ key, label }));
+  const entries = result?.rows ?? [];
+  const columns = [["time", "Time (UTC)"], ["principal", "Principal"], ["tool", "Operation"], ["plugin", "Target plugin"], ["outcome", "Outcome"], ["latencyMs", "Latency (ms)"],
+    ...(entries.some((row) => row.panel != null) ? [["panel", "Panel"]] : []),
+    ...(entries.some((row) => row.reason != null) ? [["reason", "Reason"]] : [])].map(([key, label]) => ({ key, label }));
   const rows = (result?.rows ?? []).map((row) => Object.fromEntries(columns.map(({ key }) => [key, row[key] ?? "Not recorded"])));
   root.replaceChildren(h("h1", { class: "lead", id: "audit-title", text: "Principal audit" }),
-    h("p", { class: "sub", text: "Newest first. Existing audit records do not include operation, panel or refusal reason." }), form,
+    h("p", { class: "sub", text: "Newest first. Operation is the recorded tool; panel and reason appear when recorded." }), form,
     ...(auditState.error ? [h("p", { class: "notice", role: "alert", text: auditState.error })] : []),
     ...(result ? [consoleUi.table({ caption: "Principal audit records", columns, rows, sortable: false })] : []),
     ...(result && !rows.length ? [h("p", { class: "sub", text: "No records match these filters." })] : []),

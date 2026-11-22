@@ -36,13 +36,13 @@ test("audit filters and pages newest first; export returns all filtered JSONL", 
   const f = await local();
   const rows = [
     { time: "2026-11-01T00:00:00.000Z", principal: "alpha", tool: "t.one", plugin: "t", outcome: "ok", latencyMs: 3 },
-    { time: "2026-11-02T00:00:00.000Z", principal: "beta", tool: null, plugin: null, outcome: "refused", latencyMs: 1, operation: "call", reason: "denied" },
-    { time: "2026-11-03T00:00:00.000Z", principal: "beta", tool: "t.two", plugin: "t", outcome: "ok", latencyMs: 2, operation: "call" },
+    { time: "2026-11-02T00:00:00.000Z", principal: "beta", tool: "t.one", plugin: null, outcome: "refused", latencyMs: 1, reason: "denied" },
+    { time: "2026-11-03T00:00:00.000Z", principal: "beta", tool: "t.one", plugin: "t", outcome: "ok", latencyMs: 2 },
   ];
   writeFileSync(f.file, rows.map((row) => JSON.stringify(row)).join("\n") + "\n", { mode: 0o600 });
-  const page = await (await f.post({ principal: "beta", operation: "call", from: "2026-11-02", limit: 1 }, f.cookie)).json();
+  const page = await (await f.post({ principal: "beta", operation: "t.one", from: "2026-11-02", limit: 1 }, f.cookie)).json();
   expect(page.rows[0].time).toBe(rows[2]!.time); expect(page.hasMore).toBe(true);
-  const next = await (await f.post({ principal: "beta", operation: "call", limit: 1, offset: 1 }, f.cookie)).json();
+  const next = await (await f.post({ principal: "beta", operation: "t.one", limit: 1, offset: 1 }, f.cookie)).json();
   expect(next.rows[0].reason).toBe("denied"); expect(next.hasMore).toBe(false);
   const exportResult = await (await f.post({ principal: "beta", export: true }, f.cookie)).json();
   expect(exportResult.jsonl).toBe(`${JSON.stringify(rows[2])}\n${JSON.stringify(rows[1])}\n`);

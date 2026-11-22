@@ -834,7 +834,7 @@ async function runScenario(ticket, scenario, fallback = false) {
     await page.evaluate(() => { location.hash = "#/local/~audit"; });
     await page.locator("#view-audit .ui-table tbody tr").first().waitFor();
     const auditText = await page.locator("#view-audit").innerText();
-    const auditFindings = auditText.includes("fixture-audit") && auditText.includes("Not recorded") ? [] : [{ kind: "audit-fixture", detail: "Audit view did not show the fixture and absent fields" }];
+    const auditFindings = auditText.includes("fixture-audit") && auditText.includes("demo.read") ? [] : [{ kind: "audit-fixture", detail: "Audit view did not show the fixture and recorded operation" }];
     await capture(page, scenario, "audit", auditFindings);
     await page.evaluate(() => { location.hash = "#/local/inbox"; });
     await page.locator("#view-inbox:not([hidden]) .row-main").first().waitFor();
