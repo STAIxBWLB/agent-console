@@ -155,23 +155,43 @@ export class PushStore {
 /** Bounded in-memory deduplication; transient failures remain unsent for a later poll. */
 export class PushDispatcher {
   private sent = new Map<string, string>();
-  constructor(private store: PushStore, private request: typeof fetch = fetch) {}
+  private backoff = new Map<string, { failures: number; notBefore: number }>();
+  constructor(private store: PushStore, private request: typeof fetch = fetch, private now: () => number = Date.now) {}
+  private defer(endpoint: string, retryAfter?: string | null): void {
+    const previous = this.backoff.get(endpoint);
+    const failures = Math.min((previous?.failures ?? 0) + 1, 6);
+    const exponential = Math.min(900000, 30000 * 2 ** (failures - 1));
+    let advertised = 0;
+    if (retryAfter) {
+      const value = retryAfter.trim();
+      if (/^\d+$/.test(value)) advertised = Number(value) * 1000;
+      else { const date = Date.parse(value); if (Number.isFinite(date)) advertised = Math.max(0, date - this.now()); }
+    }
+    const delay = Math.max(exponential, Math.min(3600000, Number.isFinite(advertised) ? advertised : 3600000));
+    if (this.backoff.size >= 10 && !this.backoff.has(endpoint)) this.backoff.delete(this.backoff.keys().next().value!);
+    this.backoff.set(endpoint, { failures, notBefore: this.now() + delay });
+  }
   async send(tool: string, item: { id: string }, revision: string): Promise<void> {
     const payload = buildPushPayload(tool, item.id);
-    for (const subscription of this.store.subscriptions()) {
+    const subscriptions = this.store.subscriptions();
+    const active = new Set(subscriptions.map((sub) => createHash("sha256").update(sub.endpoint).digest("base64url")));
+    for (const key of this.backoff.keys()) if (!active.has(key)) this.backoff.delete(key);
+    for (const subscription of subscriptions) {
       if (!this.store.subscriptions().some((current) => current.endpoint === subscription.endpoint)) continue;
-      const key = createHash("sha256").update(JSON.stringify([subscription.endpoint, payload.tag])).digest("base64url");
-      if (this.sent.get(key) === revision) continue;
+      const endpoint = createHash("sha256").update(subscription.endpoint).digest("base64url");
+      const key = createHash("sha256").update(JSON.stringify([endpoint, payload.tag])).digest("base64url");
+      if ((this.backoff.get(endpoint)?.notBefore ?? 0) > this.now() || this.sent.get(key) === revision) continue;
       try {
         const keys = this.store.keys();
         const response = await this.request(subscription.endpoint, { method: "POST", redirect: "error", signal: AbortSignal.timeout(10000), headers: {
           Authorization: vapidAuthorization(subscription.endpoint, keys), "Content-Encoding": "aes128gcm", "Content-Type": "application/octet-stream", TTL: "86400", Topic: payload.tag,
         }, body: new Uint8Array(encryptPush(subscription, payload)) });
-        if (response.status === 404 || response.status === 410) { this.store.remove(subscription.endpoint); this.sent.delete(key); continue; }
-        if (!response.ok) continue; // 429, 5xx and other refusals remain eligible for later retry.
+        if (response.status === 404 || response.status === 410) { this.store.remove(subscription.endpoint); this.sent.delete(key); this.backoff.delete(endpoint); continue; }
+        if (!response.ok) { this.defer(endpoint, response.status === 429 || response.status === 503 ? response.headers.get("Retry-After") : null); continue; }
+        this.backoff.delete(endpoint);
         if (this.sent.size >= 2000 && !this.sent.has(key)) this.sent.delete(this.sent.keys().next().value!);
         this.sent.set(key, revision);
-      } catch { /* Network and push service errors do not leak endpoint secrets; retry on a later poll. */ }
+      } catch { this.defer(endpoint); /* Do not leak endpoint secrets in logs. */ }
     }
   }
 }

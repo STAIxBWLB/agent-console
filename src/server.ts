@@ -487,7 +487,7 @@ export function startServer(options: ServerOptions) {
           }
         } catch (error) {
           const message = error instanceof Error && /^(invalid|unsupported)/.test(error.message) ? error.message : "push storage is unavailable; check console/push ownership and mode 0600 files";
-          return reject(400, message);
+          return reject(message.startsWith("push storage") ? 503 : 400, message);
         }
       }
       if (path === "/audit") {

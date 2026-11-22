@@ -76,7 +76,7 @@ test("push delivery refuses redirects", async () => {
   }) as unknown as typeof fetch);
   await dispatcher.send("demo", { id: "item" }, "v1");
   await dispatcher.send("demo", { id: "item" }, "v1");
-  expect(attempts).toBe(2);
+  expect(attempts).toBe(1);
 });
 
 test("private store limits subscriptions, refuses unsafe files and keeps VAPID keys stable", () => {
@@ -101,16 +101,16 @@ test("fake push service retries transient failures and removes expired subscript
   store.add({ endpoint: "https://fcm.googleapis.com/alive", keys });
   store.add({ endpoint: "https://fcm.googleapis.com/expired", keys });
   const requests: { endpoint: string; topic: string }[] = [];
-  let transient = true;
+  let transient = true; let clock = 100000;
   const service = new PushDispatcher(store, (async (input, init) => {
     const endpoint = String(input); requests.push({ endpoint, topic: new Headers(init?.headers).get("Topic")! });
     if (endpoint.endsWith("expired")) return new Response(null, { status: 410 });
     if (transient) return new Response(null, { status: 429 });
     return new Response(null, { status: 201 });
-  }) as typeof fetch);
+  }) as typeof fetch, () => clock);
   await service.send("demo", { id: "item" }, "v1");
   expect(store.subscriptions()).toHaveLength(1);
-  transient = false;
+  transient = false; clock += 30000;
   await service.send("demo", { id: "item" }, "v1");
   await service.send("demo", { id: "item" }, "v1");
   await service.send("demo", { id: "item" }, "v2");
@@ -125,13 +125,37 @@ test("both expired statuses are removed and both retryable statuses are retried"
     const store = new PushStore(home); store.keys();
     const receiver = createECDH("prime256v1"); receiver.generateKeys();
     store.add({ endpoint: "https://fcm.googleapis.com/device", keys: { p256dh: receiver.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 6).toString("base64url") } });
-    let attempts = 0;
-    const dispatcher = new PushDispatcher(store, (async () => { attempts++; return new Response(null, { status }); }) as unknown as typeof fetch);
+    let attempts = 0, clock = 100000;
+    const dispatcher = new PushDispatcher(store, (async () => { attempts++; return new Response(null, { status }); }) as unknown as typeof fetch, () => clock);
     await dispatcher.send("demo", { id: "one" }, "v1");
+    clock += 30000;
     await dispatcher.send("demo", { id: "one" }, "v1");
     expect(attempts).toBe(status === 404 || status === 410 ? 1 : 2);
     expect(store.subscriptions().length).toBe(status === 404 || status === 410 ? 0 : 1);
   }
+});
+
+test("Retry-After pauses every item on the endpoint, honors dates and resets after success", async () => {
+  const home = mkdtempSync(join(tmpdir(), "acon-push-"));
+  const store = new PushStore(home); store.keys();
+  const receiver = createECDH("prime256v1"); receiver.generateKeys();
+  store.add({ endpoint: "https://fcm.googleapis.com/device", keys: { p256dh: receiver.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 6).toString("base64url") } });
+  let clock = Date.parse("2026-11-22T00:00:00Z"), requests = 0;
+  const dispatcher = new PushDispatcher(store, (async () => {
+    requests++;
+    if (requests === 1) return new Response(null, { status: 429, headers: { "Retry-After": "120" } });
+    if (requests === 2) return new Response(null, { status: 503, headers: { "Retry-After": new Date(clock + 180000).toUTCString() } });
+    if (requests === 3) return new Response(null, { status: 201 });
+    return new Response(null, { status: 500 });
+  }) as unknown as typeof fetch, () => clock);
+  await dispatcher.send("demo", { id: "one" }, "v1");
+  clock += 15000; await dispatcher.send("demo", { id: "two" }, "v1"); expect(requests).toBe(1);
+  clock += 105000; await dispatcher.send("demo", { id: "one" }, "v1"); expect(requests).toBe(2);
+  clock += 179000; await dispatcher.send("demo", { id: "one" }, "v1"); expect(requests).toBe(2);
+  clock += 1000; await dispatcher.send("demo", { id: "one" }, "v1"); expect(requests).toBe(3);
+  await dispatcher.send("demo", { id: "two" }, "v1"); expect(requests).toBe(4);
+  clock += 29999; await dispatcher.send("demo", { id: "two" }, "v1"); expect(requests).toBe(4);
+  clock += 1; await dispatcher.send("demo", { id: "two" }, "v1"); expect(requests).toBe(5);
 });
 
 test("poller selects only opted-in person-needed inbox items and deduplicates unchanged revisions", async () => {
@@ -167,6 +191,10 @@ test("push routes are serve-only and require an authenticated browser origin", a
     expect((await post("/push/key", {}, "https://untrusted.example")).status).toBe(403);
     const key = await (await post("/push/key", {})).json();
     expect(typeof key.publicKey).toBe("string");
+    const keyFile = join(home, "console", "push", "vapid.json");
+    chmodSync(keyFile, 0o644);
+    expect((await post("/push/key", {})).status).toBe(503);
+    chmodSync(keyFile, 0o600);
     const receiver = createECDH("prime256v1"); receiver.generateKeys();
     const subscription = { endpoint: "https://fcm.googleapis.com/device", keys: { p256dh: receiver.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 3).toString("base64url") } };
     expect((await post("/push/subscribe", { subscription })).status).toBe(200);
