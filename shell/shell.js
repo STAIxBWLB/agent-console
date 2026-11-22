@@ -1610,6 +1610,7 @@ async function pollPanel() {
   const startedAt = Date.now();
   const revisionEnabled = tool?.capabilities?.revision === true;
   let revision;
+  const safetyDue = revisionEnabled && (!p.lastFullAt || startedAt - p.lastFullAt >= 60000);
   if (revisionEnabled) {
     const check = await post(`/p/${r.tool}/revision`, { scopes: [r.panel] });
     if (check.status === 200 && typeof check.data?.[r.panel] === "string") revision = check.data[r.panel];
@@ -1618,7 +1619,6 @@ async function pollPanel() {
       if (document.visibilityState === "visible") queueMicrotask(() => pollPanel());
       return;
     }
-    const safetyDue = !p.lastFullAt || startedAt - p.lastFullAt >= 60000;
     if (revision !== undefined && revision === p.revision && !safetyDue && p.lastSig !== "" && !p.forceSnapshot) {
       p.busy = false;
       p.next = startedAt + adaptivePollMs(tool?.pollMs, Date.now() - startedAt);
@@ -1626,7 +1626,6 @@ async function pollPanel() {
       return;
     }
   }
-  const safetyDue = revisionEnabled && (!p.lastFullAt || startedAt - p.lastFullAt >= 60000);
   const after = safetyDue ? 0 : p.cursor;
   const headers = { ...(p.version && !safetyDue ? { "X-Acon-Known": p.version } : {}), ...(revisionEnabled ? { "X-Acon-Fresh": "1" } : {}) };
   const res = await post(`/p/${r.tool}/snapshot`, { ...r.params, after, panel: r.panel }, headers);

@@ -183,7 +183,7 @@ export function startServer(options: ServerOptions) {
     : { tool: p.tool, status: p.status, reason: p.reason, file: p.file });
 
   async function revision(entry: PluginEntry, input: Record<string, unknown>) {
-    if (entry.manifest!.capabilities?.revision !== true || typeof entry.provider!.revision !== "function") return reject(404, "revision checks are not enabled for this plugin");
+    if (entry.manifest!.capabilities?.revision !== true || typeof entry.provider!.revision !== "function") return reject(404, "revision checks are not enabled for this plugin; declare capabilities.revision and implement revision(scopes)");
     const scopes = input.scopes;
     if (!Array.isArray(scopes) || scopes.length > 20 || scopes.some((scope) => typeof scope !== "string" || scope.length === 0 || scope.length > 200) || new Set(scopes).size !== scopes.length) return reject(400, "scopes must be up to 20 unique nonempty strings of at most 200 characters");
     try {

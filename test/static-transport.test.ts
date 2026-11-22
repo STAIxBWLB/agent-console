@@ -320,6 +320,25 @@ test("a node that refuses X-Acon-Known in preflight gets a plain retry and no he
   expect(seen).toEqual([known, null, null]);
 });
 
+test("a node refusing X-Acon-Fresh gets one plain retry even without X-Acon-Known", async () => {
+  const seen: { known: string | null; fresh: string | null }[] = [];
+  const { make } = transport((async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/session") return Response.json({ resourceToken: "a".repeat(64), expiresIn: 3600000 });
+    if (path === "/tools") return Response.json({ tools: [] });
+    const headers = new Headers(init?.headers);
+    const entry = { known: headers.get("X-Acon-Known"), fresh: headers.get("X-Acon-Fresh") };
+    seen.push(entry);
+    if (entry.fresh !== null) throw new TypeError("Failed to fetch");
+    return Response.json({ ok: true });
+  }) as typeof fetch);
+  const client = make({ api: 1, nodes: [config.nodes[0]] });
+  await client.tools();
+  expect((await client.post("/p/a:demo/snapshot", { panel: "notes" }, undefined, { "X-Acon-Fresh": "1" })).status).toBe(200);
+  expect((await client.post("/p/a:demo/snapshot", { panel: "notes" }, undefined, { "X-Acon-Fresh": "1", "X-Acon-Known": "2".repeat(64) })).status).toBe(200);
+  expect(seen).toEqual([{ known: null, fresh: "1" }, { known: null, fresh: null }, { known: null, fresh: null }]);
+});
+
 test("static transport accepts older nodes with no cache headers or response-header interface", async () => {
   for (const noHeadersInterface of [false, true]) {
     const { make } = transport((async (input) => {
