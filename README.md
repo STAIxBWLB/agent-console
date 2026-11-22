@@ -497,7 +497,7 @@ registerConsoleConformance(plugin, { destructive: [{ action: "delete", id: "x" }
 
 ## Vendored browser assets
 
-The published package pins `@staix/cli-output` as its sole runtime dependency for the CLI. Other `src/` imports remain builtins (`node:`, `bun:`, `bun`) and relative files. Third-party browser assets may ship in `shell/vendor/` under these conditions:
+The published package pins `@staix/cli-output` 0.1.1 as its sole runtime dependency for the CLI. Other `src/` imports remain builtins (`node:`, `bun:`, `bun`) and relative files. Third-party browser assets may ship in `shell/vendor/` under these conditions:
 
 - The source package is an exact `devDependencies` pin in `package.json`, never a runtime dependency.
 - `scripts/vendor-<name>.ts` deterministically copies only the files the shell uses.

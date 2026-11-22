@@ -79,3 +79,29 @@ test("CLI implementation keeps ANSI escapes in the shared package", () => {
     expect(source).not.toContain("\x1b");
   }
 });
+
+test("CLI uses the package's C1 sanitizer and role-tagged next-step spans", () => {
+  const root = join(Bun.resolveSync("@staix/cli-output", import.meta.dir), "..", "..");
+  const fixtures = JSON.parse(readFileSync(join(root, "fixtures", "v1", "text.json"), "utf8"));
+  const input = fixtures.find((item: { id: string }) => item.id === "c1-complete");
+  let stdout = "", stderr = "";
+  const out = { isTTY: false, write: (value: string) => { stdout += value; return true; } } as unknown as NodeJS.WriteStream;
+  const err = { isTTY: true, columns: 80, write: (value: string) => { stderr += value; return true; } } as unknown as NodeJS.WriteStream;
+  const output = createOutput({ stdout: out, stderr: err, color: "always", env: { LANG: "en_US.UTF-8" } });
+  output.line(input.input);
+  expect(stdout).toBe(`${input.expected}\n`);
+  output.error("failed", "acon help");
+  expect(stderr).toContain(`${ROLE_SGR.accent}→ acon help`);
+});
+
+test("shared stream width honors narrow positive COLUMNS and wraps long diagnostics", () => {
+  let stdout = "", stderr = "";
+  const out = { isTTY: false, write: (value: string) => { stdout += value; return true; } } as unknown as NodeJS.WriteStream;
+  const err = { isTTY: true, columns: 40, write: (value: string) => { stderr += value; return true; } } as unknown as NodeJS.WriteStream;
+  const output = createOutput({ stdout: out, stderr: err, color: "never", env: { LANG: "en_US.UTF-8", COLUMNS: "10" } });
+  output.line("abcdefghijkl");
+  expect(stdout).toBe("abcdefghij\nkl\n");
+  output.error("x".repeat(70), "acon help");
+  for (const line of stderr.trimEnd().split("\n")) expect(Bun.stringWidth(line, { ambiguousIsNarrow: true })).toBeLessThanOrEqual(40);
+  expect(stderr).toContain("  → acon help\n");
+});
