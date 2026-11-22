@@ -9,6 +9,7 @@
 - Do not add agent-environment refusal or TTY requirements. Keep static build output credential-free and node origins exact; never deploy a production static shell without explicit authorization. `acon serve` (H1, #20) must keep authentication mandatory off loopback.
 - For each minor release, state N-1 compatibility in `CHANGELOG.md` per surface (plugin API, routes, manifest files): N is the release's minor line and N-1 is the latest published patch of the previous minor line (for example, 0.3.x supports 0.2.4). Patch releases carry no N-1 line and must preserve their minor line's N-1; ship a change that cannot preserve it as a minor release. Starting with the first minor after 0.1.x, add a CI compatibility check against that previous minor's latest published patch and run it on every build; 0.1.x has no previous minor to check.
 - Run `bun install --frozen-lockfile`, then `bun run check`. Passing output includes `boundary: ok`, all tests passing and a package dry-run.
+- PR CI runs Ubuntu only. Add the `ci:macos` label to a PR that changes platform-specific code (paths, processes, signals, the file system or the shell). Main push and `workflow_dispatch` always run macOS too.
 - Use conventional English commits without coauthor trailers unless requested.
 
 <!-- AGENT_HUB:BEGIN (managed by `ahub init`, edits inside are overwritten) -->
