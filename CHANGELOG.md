@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Tab-row overflow fades no longer cover the selected tab label and appear only when a tab is hidden (#100).
+
 ## [0.2.0] - 2026-11-10
 
 ### Compatibility
