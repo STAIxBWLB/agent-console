@@ -1,4 +1,4 @@
-import { Report, resolveColor, streamEnv, asciiMarkers, paint, errorSpans, lineSpans, streamWidth, terminalText, wrap, EXIT, type MarkerName, type Role } from "@staix/cli-output";
+import { Report, MARKERS, markerCell, resolveColor, streamEnv, asciiMarkers, paint, errorSpans, lineSpans, streamWidth, terminalText, wrap, EXIT, type MarkerName, type Role } from "@staix/cli-output";
 import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
@@ -50,6 +50,7 @@ export function createOutput(options: OutputOptions = {}) {
   };
   return {
     line,
+    report,
     section: (title: string) => report((r) => { r.section(title); }, true),
     bullet: (name: MarkerName, text: unknown) => report((r) => { r.bullet(name, terminalText(text)); }),
     kv: (key: string, value: unknown) => report((r) => { r.kv([[key, value]]); }),
@@ -143,6 +144,15 @@ async function install(home: string, source: string | undefined, flags: Set<stri
 }
 
 // Quote a path or source as one POSIX shell argument for a copyable next step.
+// cli-output#31: keep a long path whole on its own line until Report supports unbreakable tokens.
+function reportPath(report: Report, label: string, value: string): void {
+  const pathText = terminalText(value, { singleLine: true });
+  if (report.columns !== undefined && Bun.stringWidth(`  ${label}:  ${pathText}`, { ambiguousIsNarrow: true }) > report.columns) {
+    report.line(`  ${label}:`);
+    report.append([[{ text: `    ${pathText}` }]]);
+  } else report.kv([[label, pathText]]);
+}
+
 const shellQuote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
 const serveArgs = (values: Record<string, string[]>, flags: Set<string>): ServeArgs => ({ host: values["--host"]?.[0], port: values["--port"]?.[0], origins: values["--origin"] ?? [], readOnly: flags.has("--read-only") });
 
@@ -213,20 +223,34 @@ function principalCommand(home: string, args: string[], flags: Set<string>): num
       const principals = readPrincipalRegistry(home).principals.map(({ id, enabled, tools, ratePerMinute }) => ({ id, enabled, tools, ratePerMinute }));
       if (flags.has("--json")) output.json({ principals });
       else {
-        output.line(" acon Principals", "header"); output.section("Registered principals");
-        if (!principals.length) output.bullet("absent", "No server principals registered.");
-        for (const principal of principals) output.bullet(principal.enabled ? "ok" : "absent", `${principal.id} ${principal.enabled ? "enabled" : "disabled"} ${principal.tools.join(", ")} ${principal.ratePerMinute}/min`);
+        output.report((report) => {
+          report.header("acon", "Principals", pkg.version);
+          report.section("Registered principals", String(principals.length));
+          if (!principals.length) {
+            report.bullet("absent", "No principals registered.");
+            reportPath(report, "Registry", join(home, "console", "principals.json"));
+          }
+          else report.table(["ID", "STATE", "TOOLS", "RATE"], principals.map((principal) => {
+            const name = principal.enabled ? "ok" : "absent";
+            const tools = principal.tools.length > 3 ? `${principal.tools.slice(0, 3).join(", ")} ... (+${principal.tools.length - 3})` : principal.tools.join(", ");
+            return [principal.id, { text: `${markerCell(name, report.ascii)} ${principal.enabled ? "enabled" : "disabled"}`, role: MARKERS[name].role }, tools || "-", `${principal.ratePerMinute}/min`];
+          }), 2);
+        });
       }
     } else {
       setPrincipalEnabled(home, args[1]!, args[0] === "on");
-      output.bullet("ok", `Principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
+      output.report((report) => {
+        report.header("acon", "Principals", pkg.version);
+        report.section("Principal");
+        report.bullet("ok", `Principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
+      });
     }
     return EXIT.ok;
   } catch (error) {
-    const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
-    const brief = cause.split("; ")[0]!;
-    const next = cause.includes("not registered") ? "acon principal list" : `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
-    output.error(cause.includes("not registered") ? brief : `${brief}; expected an owned console directory and a mode 0600 registry`, next);
+    const diagnostic = error instanceof PrincipalError ? error.diagnostic : undefined;
+    const message = diagnostic?.message ?? "principal registry IO failed";
+    const next = diagnostic?.next ?? `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
+    output.error(diagnostic?.next ? message : `${message}; expected an owned console directory and a mode 0600 registry`, next);
     return EXIT.fail;
   }
 }
@@ -317,10 +341,20 @@ export async function main(argv: string[]): Promise<number> {
     if (flags.has("--json")) output.json({ dir: scan.dir, ...(scan.error ? { error: scan.error } : {}), plugins: scan.entries.map(summary) });
     else {
       if (scan.error) output.error(scan.error);
-      output.line(" acon Plugins", "header"); output.section("Registered plugins");
-      output.kv("Directory", scan.dir);
-      if (!scan.entries.length) output.bullet("absent", "No plugins registered.");
-      if (scan.entries.length) output.table([...scan.entries].sort((a, b) => Number(a.status === "verified") - Number(b.status === "verified")).map((p) => ({ id: `${p.tool}${p.version ? `@${p.version}` : ""}`, state: p.status, detail: p.reason ?? p.module ?? "" })));
+      output.report((report) => {
+        report.header("acon", "Plugins", pkg.version);
+        report.section("Registered plugins", String(scan.entries.length));
+        reportPath(report, "Directory", scan.dir);
+        if (!scan.entries.length) report.bullet("absent", "No plugins registered.");
+        else {
+          const entries = [...scan.entries].sort((a, b) => Number(a.status === "verified") - Number(b.status === "verified"));
+          report.table(["ID", "VERSION", "STATE", "DETAIL"], entries.map((entry) => {
+            const marker = entry.status === "verified" ? "ok" : "warn";
+            return [entry.tool, entry.version ?? "-", { text: `${markerCell(marker, report.ascii)} ${entry.status}`, role: MARKERS[marker].role }, entry.diagnostic?.message ?? entry.reason ?? "-"];
+          }), 3);
+          for (const entry of entries) if (entry.diagnostic) report.bullet("next", entry.diagnostic.next);
+        }
+      });
     }
     return scan.error ? EXIT.fail : EXIT.ok;
   }

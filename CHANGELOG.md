@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Show plugin and principal lists as counted tables with status markers; plugin setup commands appear as separate next steps (#134).
+
 - Generate CLI help and the README command list from one source. `help --json` now returns structured command metadata instead of a help string. Command `--help`/`-h`, `help help`, and `help version` now exit 0; launchd platform, user-id and Bun-path failures exit 1 instead of 2 (#134).
 
 - Use exactly pinned `@staix/cli-output` 0.1.1 for CLI output standard v1 and its published fixtures. Bun 1.4.4 is now the minimum; archived releases install the production dependency from Bun's local cache. Shared report formatting wraps long identifiers, shortens long paths in the middle, drops empty columns, removes C1 and other terminal control sequences, colors the full next step and honors narrow positive `COLUMNS` widths (#133).

@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MARKERS, ROLE_SGR, asciiMarkers, resolveColor } from "@staix/cli-output";
+import { MARKERS, ROLE_SGR, SGR_RESET, asciiMarkers, resolveColor } from "@staix/cli-output";
+import pkg from "../package.json" with { type: "json" };
 import { createOutput } from "../src/cli.ts";
 
 const bin = join(import.meta.dir, "..", "bin", "acon.js");
@@ -14,7 +15,7 @@ async function run(args: string[], extra: Record<string, string> = {}) {
 test("plugin report golden output and named ANSI roles", async () => {
   const plain = await run(["plugins", "--color=never"]);
   expect(plain.code).toBe(0);
-  expect(plain.out).toMatch(/^ acon Plugins\n\n▸ Registered plugins\n  Directory:  .+\n  -  No plugins registered\.\n$/);
+  expect(plain.out).toMatch(/^ acon Plugins  [0-9.]+\n\n▸ Registered plugins \(0\)\n  Directory:  .+\n  -  No plugins registered\.\n$/);
   const colored = await run(["plugins", "--color=always"]);
   expect(colored.out).toContain(`${ROLE_SGR.header} acon Plugins`);
   expect(colored.out).toContain(`${ROLE_SGR.section}▸ Registered plugins`);
@@ -104,4 +105,37 @@ test("shared stream width honors narrow positive COLUMNS and wraps long diagnost
   output.error("x".repeat(70), "acon help");
   for (const line of stderr.trimEnd().split("\n")) expect(Bun.stringWidth(line, { ambiguousIsNarrow: true })).toBeLessThanOrEqual(40);
   expect(stderr).toContain("  → acon help\n");
+});
+
+
+test("principal table, plugin problems, and JSON preserve their contracts", async () => {
+  const home = mkdtempSync("/tmp/acon-o-");
+  const consoleDir = join(home, "console");
+  mkdirSync(join(consoleDir, "plugins"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(consoleDir, "principals.json"), JSON.stringify({ version: 1, principals: [{ id: "assistant", enabled: true, tools: ["demo.read"], ratePerMinute: 60, access: { email: "fixture@example.com" } }] }), { mode: 0o600 });
+  writeFileSync(join(consoleDir, "plugins", "demo.json"), JSON.stringify({ api: 1, tool: "demo", module: join(home, "missing.js"), sha256: "0".repeat(64) }));
+  const env = { AGENTHUB_HOME: home };
+  const plugins = await run(["plugins", "--color=never"], env);
+  expect(plugins.code).toBe(0);
+  expect(plugins.out).toBe(` acon Plugins  ${pkg.version}\n\n▸ Registered plugins (1)\n  Directory:  ${home}/console/plugins\n  ID    STATE     DETAIL\n  demo  ⚠  stale  module is missing\n  →  demo setup\n`);
+  expect(plugins.out).not.toContain("re-run");
+  const json = await run(["plugins", "--json"], env);
+  expect(JSON.parse(json.out).plugins[0].reason).toBe("module is missing; re-run `demo setup`");
+  const principal = await run(["principal", "list", "--color=never"], env);
+  expect(principal.code).toBe(0);
+  expect(principal.out).toBe(` acon Principals  ${pkg.version}\n\n▸ Registered principals (1)\n  ID         STATE       TOOLS       RATE\n  assistant  ✓  enabled  demo.read   60/min\n`);
+  const off = await run(["principal", "off", "assistant", "--color=never"], env);
+  expect(off.out).toBe(` acon Principals  ${pkg.version}\n\n▸ Principal\n  ✓  Principal assistant disabled\n`);
+  const on = await run(["principal", "on", "assistant", "--color=never"], env);
+  expect(on.out).toBe(` acon Principals  ${pkg.version}\n\n▸ Principal\n  ✓  Principal assistant enabled\n`);
+  const ascii = await run(["principal", "list"], { ...env, LANG: "C" });
+  expect(ascii.out).toBe(` acon Principals  ${pkg.version}\n\n> Registered principals (1)\n  ID         STATE       TOOLS       RATE\n  assistant  ok enabled  demo.read   60/min\n`);
+  const color = await run(["principal", "list", "--color=always"], env);
+  expect(color.out).toBe(`${ROLE_SGR.header} acon Principals${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Registered principals${SGR_RESET}${ROLE_SGR.hint} (1)${SGR_RESET}\n  ${ROLE_SGR.key}ID       ${SGR_RESET}  ${ROLE_SGR.key}STATE     ${SGR_RESET}  ${ROLE_SGR.key}TOOLS     ${SGR_RESET}  ${ROLE_SGR.key}RATE${SGR_RESET}\n  assistant  ${ROLE_SGR.success}✓  enabled${SGR_RESET}  demo.read   60/min\n`);
+});
+
+test("long plugin directory paths stay copyable", async () => {
+  const home = join(mkdtempSync("/tmp/acon-o-"), "long-directory-name-that-exceeds-the-terminal-width");
+  const result = await run(["plugins", "--color=never"], { AGENTHUB_HOME: home, COLUMNS: "40" });
+  expect(result.out.split("\n")).toContain(`    ${home}/console/plugins`);
 });
