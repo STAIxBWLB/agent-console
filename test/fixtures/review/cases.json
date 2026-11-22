@@ -1,12 +1,13 @@
 {
  "version": 1,
- "description": "Strings of the form <N x c> stand for c repeated N times; a list with repeat is count copies of `of` with ids idPrefix+index. Shared ReviewAnchor/ReviewThread cases for agent-console (src/conformance.ts) and agent-hub#1056. Each invalid case names the field that must be rejected; validators may word problems differently.",
+ "description": "Strings of the form <N x c> stand for c repeated N times; a list with repeat is count copies of `of` with ids idPrefix+index. Shared ReviewAnchor/ReviewThread cases for agent-console (src/conformance.ts) and agent-hub#1056. Each invalid case names the field that must be rejected; validators may word problems differently. Page anchors (#115): {kind: page, page >= 1, rect?: [x0, y0, x1, y1] in 0..1 with x0 < x1, y0 < y1}.",
  "bounds": {
   "exact": 2000,
   "context": 64,
   "selectors": 4,
   "threads": 200,
-  "body": 4000
+  "body": 4000,
+  "pages": 100
  },
  "anchors": {
   "valid": [
@@ -104,6 +105,54 @@
        "exact": "<2000 x x>",
        "prefix": "<64 x p>",
        "suffix": "<64 x s>"
+      }
+     ]
+    }
+   },
+   {
+    "name": "page whole",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 3
+      }
+     ]
+    }
+   },
+   {
+    "name": "page region",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 2,
+       "rect": [
+        0.1,
+        0.2,
+        0.6,
+        0.7
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "name": "page region full bounds",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 1,
+       "rect": [
+        0,
+        0,
+        1,
+        1
+       ]
       }
      ]
     }
@@ -362,6 +411,89 @@
        "y": 0,
        "width": 1,
        "height": 1
+      }
+     ]
+    }
+   },
+   {
+    "name": "page zero",
+    "field": "page",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 0
+      }
+     ]
+    }
+   },
+   {
+    "name": "page rect out of range",
+    "field": "rect",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 1,
+       "rect": [
+        0,
+        0,
+        1.5,
+        1
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "name": "page rect inverted",
+    "field": "rect",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 1,
+       "rect": [
+        0.6,
+        0.2,
+        0.1,
+        0.7
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "name": "page rect three numbers",
+    "field": "rect",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 1,
+       "rect": [
+        0,
+        0,
+        1
+       ]
+      }
+     ]
+    }
+   },
+   {
+    "name": "page extra field",
+    "field": "width",
+    "value": {
+     "path": "slides/deck.tex",
+     "selectors": [
+      {
+       "kind": "page",
+       "page": 1,
+       "width": 2
       }
      ]
     }

@@ -111,12 +111,21 @@ function fixturePanel(host) {
       ],
       onComment: (c) => { review.dataset.lastComment = JSON.stringify(c); },
     }));
+    // #115: a pages document (demo assets), one region thread on page 2 and one on a page the deck no longer has.
+    const pagesReview = ui.h("section", { "data-ui-check": "review-pages" }, ui.review({
+      doc: { kind: "pages", path: "slides/deck.tex", pages: [1, 2, 3].map((n) => ({ asset: "figure.png", width: 1600, height: 900, label: `Slide ${n}` })) },
+      threads: [
+        { id: "pr", author: "fixture", at: "2026-11-02T00:00:00Z", body: "Region note.", anchor: { path: "slides/deck.tex", selectors: [{ kind: "page", page: 2, rect: [0.1, 0.2, 0.6, 0.7] }] } },
+        { id: "pm", author: "fixture", at: "2026-11-02T00:00:00Z", body: "Missing page.", anchor: { path: "slides/deck.tex", selectors: [{ kind: "page", page: 9 }] } },
+      ],
+      onComment: (c) => { pagesReview.dataset.lastComment = JSON.stringify(c); },
+    }));
     const visual = ui.h("section", { "data-ui-check": "visual" },
       ui.visual({ kind: "mermaid", title: "Fixture flow", source: "flowchart LR\n  A[Draft] --> B{Review}\n  B -->|ok| C[Ship]" }),
       ui.visual({ kind: "comparison", title: "Fixture options", options: [{ title: "First option with a longer name", pros: ["fast"], cons: ["new"], recommended: true }, { title: "Second", summary: "Kept for comparison" }] }),
       ui.visual({ kind: "beforeAfter", caption: "Fixture change", before: { text: "old <b>text</b>" }, after: { text: "new text" } }),
       ui.visual({ kind: "mermaid", title: "Fixture broken", source: "flowchart LR\n  A -->" }));
-    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics, review, visual);
+    mount.replaceChildren(rows ?? ui.empty("No pending notes"), ui.rows([status], (item) => item), ui.notice("These records are isolated browser-check fixtures."), form, metrics, review, pagesReview, visual);
   });
   return { show(id, params) { panel = id; selected = params?.id; }, hide() {}, destroy() { mount.remove(); } };
 }
@@ -902,6 +911,7 @@ async function runScenario(ticket, scenario, fallback = false) {
     await capture(page, scenario, "panel-form", typingFinding);
     await capture(page, scenario, "panel-metrics", await checkMetrics(page));
     await capture(page, scenario, "panel-review", await checkReview(page));
+    await capture(page, scenario, "panel-review-pages", await checkPagesReview(page));
     await capture(page, scenario, "panel-visual", await checkVisual(page));
     await page.evaluate(() => { location.hash = "#/local/demo/archive"; });
     await page.locator("#tabs .tab:last-child[aria-selected='true']").waitFor();
@@ -980,6 +990,58 @@ async function checkReview(page) {
     return out;
   });
   if (!typed) findings.push({ kind: "review-keyboard", detail: "Enter on the gutter did not move focus to the comment box" });
+  return findings;
+}
+
+/** Pages review (#115): keyboard whole-page comment, pointer region comment, unplaced strip, lazy images, no overflow. */
+async function checkPagesReview(page) {
+  const section = page.locator("[data-ui-check='review-pages']");
+  await section.scrollIntoViewIfNeeded();
+  const findings = [];
+  const last = async () => section.evaluate((root) => { try { return JSON.parse(root.dataset.lastComment ?? "null"); } catch { return null; } });
+  // Keyboard only: focus the first page button, move to page 3, Enter, type, Tab to Comment, Enter.
+  await section.locator(".ui-review-page-btn[tabindex='0']").focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  const typed = await page.evaluate(() => document.activeElement?.classList.contains("ui-review-input"));
+  await page.keyboard.type("Whole slide note");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+  await settle(page);
+  const whole = await last();
+  const sel = whole?.anchor?.selectors?.[0];
+  if (!typed || whole?.body !== "Whole slide note" || sel?.kind !== "page" || sel.page !== 3 || sel.rect) findings.push({ kind: "review-pages-keyboard", detail: `Keyboard whole-page comment: ${JSON.stringify(whole)?.slice(0, 300)}` });
+  // Pointer: drag on page 1 from 20%/30% to 70%/80% of its rendered box.
+  const canvas = section.locator(".ui-review-page-canvas").first();
+  await canvas.scrollIntoViewIfNeeded();
+  const box = await canvas.boundingBox();
+  if (box) {
+    await page.mouse.move(box.x + box.width * 0.2, box.y + box.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5, { steps: 4 });
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.8, { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.type("Region note from pointer");
+    await section.locator(".ui-review-box button[type='submit']").click();
+    await settle(page);
+    const region = await last();
+    const r = region?.anchor?.selectors?.[0]?.rect;
+    const near = (a, b) => Math.abs(a - b) < 0.03;
+    if (region?.body !== "Region note from pointer" || region.anchor.selectors[0].page !== 1 || !Array.isArray(r) || !near(r[0], 0.2) || !near(r[1], 0.3) || !near(r[2], 0.7) || !near(r[3], 0.8)) findings.push({ kind: "review-pages-pointer", detail: `Pointer region comment: ${JSON.stringify(region)?.slice(0, 300)}` });
+  } else findings.push({ kind: "review-pages-pointer", detail: "Page canvas has no box" });
+  findings.push(...await section.evaluate((root) => {
+    const out = [];
+    const view = root.querySelector(".ui-review");
+    if (view?.getAttribute("data-placed") !== "1" || view?.getAttribute("data-unplaced") !== "1") out.push({ kind: "review-pages-placement", detail: "Page 2 thread should place and the page 9 thread should be unplaced" });
+    if (!root.querySelector(".ui-review-strip")?.textContent.includes("Page 9")) out.push({ kind: "review-pages-strip", detail: "Unplaced strip does not name the missing page" });
+    if (![...root.querySelectorAll("img")].every((img) => img.loading === "lazy" && new URL(img.src).pathname.endsWith("/asset"))) out.push({ kind: "review-pages-images", detail: "Page images must be lazy plugin assets" });
+    { const styled = [...root.querySelectorAll("[style]")].find((n) => n.getAttribute("style").trim()); if (styled) out.push({ kind: "inline-style", detail: `Pages review carries a style attribute: ${styled.tagName}.${styled.className} ${styled.getAttribute("style")}` }); }
+    const width = root.getBoundingClientRect().width;
+    for (const el of root.querySelectorAll(".ui-review-doc, .ui-review-page-canvas, .ui-review-strip, .ui-review-box")) if (el.getBoundingClientRect().width > width + 1) out.push({ kind: "review-overflow", detail: `${el.className} wider than its panel` });
+    for (const btn of root.querySelectorAll(".ui-review-page-btn")) if (btn.getBoundingClientRect().height < 43) out.push({ kind: "review-pages-target", detail: "Page button under 44 px" });
+    return out;
+  }));
   return findings;
 }
 

@@ -286,6 +286,18 @@ button.link { padding: 0; border: 0; background: none; text-decoration: underlin
 .ui-review-box-actions { display: flex; gap: var(--acon-space-2); }
 .ui-review-box-actions .btn { min-height: 44px; }
 @media (max-width: 600px) { .ui-review-unit { grid-template-columns: 3rem minmax(0, 1fr); } .ui-review-mark { grid-column: 2; justify-self: start; } }
+/* Pages (#115): the image sets the box; the SVG overlay uses the same 0..1 coordinates as the anchor. */
+.ui-review-pages { display: flex; flex-direction: column; gap: var(--acon-space-4); padding: var(--acon-space-3); overflow-x: hidden; }
+.ui-review-page { margin: 0; min-width: 0; }
+.ui-review-page-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--acon-space-2); margin-bottom: var(--acon-space-2); }
+.ui-review-page-btn { min-height: 44px; padding: 0 var(--acon-space-3); border: 1px solid var(--acon-line-control); border-radius: var(--acon-radius-2); background: var(--acon-surface-2); color: var(--acon-text); font: inherit; font-size: var(--acon-text-sm); cursor: pointer; overflow-wrap: anywhere; text-align: start; }
+.ui-review-page-btn:focus-visible { outline: 2px solid var(--acon-accent); outline-offset: 2px; }
+.ui-review-page-canvas { position: relative; max-width: 100%; width: fit-content; border: 1px solid var(--acon-line); cursor: crosshair; user-select: none; }
+.ui-review-page-img { display: block; max-width: 100%; height: auto; }
+.ui-review-page-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.ui-review-page-mark { fill: var(--acon-warn-soft); fill-opacity: 0.5; stroke: var(--acon-warn); stroke-width: 2; }
+.ui-review-page-selection { fill: var(--acon-accent-soft); fill-opacity: 0.4; stroke: var(--acon-accent); stroke-width: 2; }
+.ui-review-page.ui-review-selected .ui-review-page-canvas { outline: 2px solid var(--acon-accent); outline-offset: 2px; }
 .ui-visual { margin: var(--acon-space-3) 0; min-width: 0; }
 .ui-visual > figcaption { margin-bottom: var(--acon-space-2); font-weight: 600; }
 .ui-visual-frame { display: block; width: 100%; border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface); color-scheme: normal; }

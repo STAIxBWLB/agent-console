@@ -331,9 +331,10 @@ function reviewAnchor(doc, rows, sides, a, b, startChar, endChar) {
     selectors,
   };
 }
-function reviewView(o, openSheet, onError, markIcon = () => null) {
+function reviewView(o, openSheet, onError, markIcon = () => null, assetUrl = null) {
   const doc = o?.doc ?? {};
-  if (!["text", "prose", "diff"].includes(doc.kind)) throw new TypeError("ui.review doc.kind must be text, prose or diff");
+  if (doc.kind === "pages" && assetUrl) return reviewPagesView(o, openSheet, onError, markIcon, assetUrl);
+  if (!["text", "prose", "diff"].includes(doc.kind)) throw new TypeError("ui.review doc.kind must be text, prose, diff or pages");
   const { rows, notes } = reviewRows(doc);
   const cut = notes.length > 0;
   const sides = reviewIndex(rows);
@@ -556,6 +557,167 @@ function reviewView(o, openSheet, onError, markIcon = () => null) {
   return h("section", { class: "ui-review", "data-placed": String(placed.length), "data-unplaced": String(unplaced.length) },
     notes.map((n) => consoleUi.notice(n, "warn")), strip, docEl, status, box);
 }
+// Pages (#115): page images of this plugin's assets; anchors are {kind: "page", page, rect?} with rect normalized 0..1.
+const REVIEW_PAGES = Object.freeze({ pages: 100, minRect: 0.01 });
+const round4 = (v) => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
+function reviewPageSelector(anchor) {
+  const sel = Array.isArray(anchor?.selectors) ? anchor.selectors.find((s) => s?.kind === "page") : null;
+  if (!sel || !Number.isInteger(sel.page) || sel.page < 1) return null;
+  const r = sel.rect;
+  const rect = Array.isArray(r) && r.length === 4 && r.every((v) => typeof v === "number" && v >= 0 && v <= 1) && r[0] < r[2] && r[1] < r[3] ? r : null;
+  return { page: sel.page, rect };
+}
+function reviewPagesView(o, openSheet, onError, markIcon, assetUrl) {
+  const doc = o.doc;
+  const all = Array.isArray(doc.pages) ? doc.pages : [];
+  const notes = [];
+  const pages = all.slice(0, REVIEW_PAGES.pages).map((p, i) => ({ no: i + 1, asset: assetId(p), width: Math.max(1, Math.round(finite(p?.width)) || 1), height: Math.max(1, Math.round(finite(p?.height)) || 1), label: typeof p?.label === "string" && p.label ? p.label : `Page ${i + 1}` }));
+  if (all.length > pages.length) notes.push(`Showing the first ${pages.length} of ${all.length} pages.`);
+  const allThreads = Array.isArray(o.threads) ? o.threads : [];
+  const threads = allThreads.slice(0, REVIEW.threads);
+  if (allThreads.length > threads.length) notes.push(`Showing the first ${threads.length} of ${allThreads.length} comment threads.`);
+  const byPage = new Map(), unplaced = [], placed = [];
+  const results = threads.map((t) => {
+    const sel = t?.anchor?.path === doc.path ? reviewPageSelector(t.anchor) : null;
+    const shown = Boolean(sel) && sel.page <= pages.length;
+    if (shown) { placed.push(t); (byPage.get(sel.page) ?? byPage.set(sel.page, []).get(sel.page)).push({ thread: t, rect: sel.rect }); } else unplaced.push(t);
+    return { threadId: String(t?.id ?? ""), placed: shown, via: shown ? "page" : null };
+  });
+  const status = h("p", { class: "ui-review-status", role: "status", "aria-live": "polite" });
+  const textarea = h("textarea", { class: "ui-review-input", name: "comment", rows: "3", maxlength: String(REVIEW.body), required: true, "aria-label": "Comment" });
+  const target = h("p", { class: "ui-review-target" });
+  const sendBtn = h("button", { type: "submit", class: "btn primary", text: "Comment" });
+  const box = h("form", { class: "ui-review-box", hidden: true, "aria-label": "Comment on the selection" },
+    target, textarea, h("div", { class: "ui-review-box-actions" }, sendBtn, h("button", { type: "button", class: "btn", text: "Cancel", onclick: () => clear(true) })));
+  const docEl = h("div", { class: "ui-review-doc ui-review-pages", role: "group", "aria-label": `Review of ${String(doc.path ?? "")}` });
+  let selection = null, focusAt = 0;
+  const pageEls = [], buttons = [], overlays = [];
+  const describe = (sel) => `${sel.rect ? "a region of " : ""}${pages[sel.page - 1]?.label ?? `page ${sel.page}`}`;
+  const anchorFor = (sel) => ({ path: String(doc.path ?? ""), ...(typeof doc.contentHash === "string" ? { contentHash: doc.contentHash } : {}),
+    selectors: [{ kind: "page", page: sel.page, ...(sel.rect ? { rect: sel.rect } : {}) }] });
+  function rectEl(rect, cls) {
+    return svgEl("rect", { class: cls, x: String(rect[0]), y: String(rect[1]), width: String(rect[2] - rect[0]), height: String(rect[3] - rect[1]), "vector-effect": "non-scaling-stroke" });
+  }
+  function paint() {
+    for (const [i, svg] of overlays.entries()) {
+      for (const n of [...svg.childNodes]) if (n.getAttribute?.("class") === "ui-review-page-selection") n.remove?.();
+      pageEls[i]?.classList?.toggle?.("ui-review-selected", Boolean(selection) && selection.page === i + 1 && !selection.rect);
+      if (selection?.rect && selection.page === i + 1) svg.append(rectEl(selection.rect, "ui-review-page-selection"));
+    }
+  }
+  function select(sel) {
+    selection = sel;
+    paint();
+    target.textContent = `Comment on ${describe(sel)}`;
+    box.hidden = false;
+    status.textContent = `${describe(sel)} selected`;
+  }
+  function clear(refocus) {
+    selection = null; box.hidden = true; textarea.value = ""; paint();
+    if (refocus) buttons[focusAt]?.focus();
+  }
+  function focusPage(k) {
+    k = Math.max(0, Math.min(pages.length - 1, k));
+    buttons[focusAt]?.setAttribute("tabindex", "-1");
+    focusAt = k;
+    buttons[k]?.setAttribute("tabindex", "0");
+    buttons[k]?.focus();
+  }
+  function showThreads(list) {
+    const body = openSheet?.(list.length === 1 ? "Comment" : `${list.length} comments`);
+    if (!body) return;
+    body.replaceChildren(...list.map(({ thread: t }) => h("article", { class: "ui-review-thread" },
+      h("header", {}, h("strong", { text: String(t.author ?? "") }), " ", h("time", { datetime: String(t.at ?? ""), text: String(t.at ?? "") }), t.state ? consoleUi.chip(String(t.state), t.state === "resolved" ? "ok" : "neutral") : null),
+      h("p", { class: "ui-review-thread-body", text: String(t.body ?? "") }))));
+  }
+  pages.forEach((p, i) => {
+    const list = byPage.get(p.no) ?? [];
+    const button = h("button", { type: "button", class: "ui-review-page-btn", tabindex: i === 0 ? "0" : "-1", "data-page": String(p.no),
+      "aria-label": `${p.label}, page ${p.no} of ${pages.length}. Enter comments on the whole page`, text: p.label });
+    buttons.push(button);
+    const svg = svgEl("svg", { class: "ui-review-page-overlay", viewBox: "0 0 1 1", preserveAspectRatio: "none", "aria-hidden": "true", focusable: "false" });
+    for (const m of list) if (m.rect) svg.append(rectEl(m.rect, "ui-review-page-mark"));
+    overlays.push(svg);
+    const img = h("img", { class: "ui-review-page-img", src: assetUrl(p.asset), alt: p.label, width: String(p.width), height: String(p.height), loading: "lazy", decoding: "async", draggable: "false" });
+    const canvas = h("div", { class: "ui-review-page-canvas", "data-page": String(p.no) }, img, svg);
+    const mark = list.length ? h("button", { type: "button", class: "ui-review-mark", onclick: () => showThreads(list) }, markIcon(), h("span", { text: list.length === 1 ? "1 comment" : `${list.length} comments` })) : null;
+    const el = h("figure", { class: `ui-review-page${list.length ? " ui-review-has-thread" : ""}`, "data-page": String(p.no) },
+      h("figcaption", { class: "ui-review-page-head" }, button, mark), canvas);
+    pageEls.push(el);
+    docEl.append(el);
+    // Pointer drag selects a region; coordinates are normalized to the rendered page box.
+    let start = null;
+    const at = (e) => { const b = canvas.getBoundingClientRect(); return [round4((e.clientX - b.left) / (b.width || 1)), round4((e.clientY - b.top) / (b.height || 1))]; };
+    const rectOf = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault?.();
+      start = at(e);
+      canvas.setPointerCapture?.(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!start) return;
+      const r = rectOf(start, at(e));
+      if (r[2] - r[0] < REVIEW_PAGES.minRect || r[3] - r[1] < REVIEW_PAGES.minRect) return;
+      selection = { page: p.no, rect: r }; paint();
+    });
+    const finish = (e) => {
+      if (!start) return;
+      const r = rectOf(start, at(e));
+      start = null;
+      canvas.releasePointerCapture?.(e.pointerId);
+      if (r[2] - r[0] < REVIEW_PAGES.minRect || r[3] - r[1] < REVIEW_PAGES.minRect) { if (selection?.rect && selection.page === p.no && box.hidden) clear(false); return; }
+      focusAt = i; buttons.forEach((btn, k) => btn.setAttribute("tabindex", k === i ? "0" : "-1"));
+      select({ page: p.no, rect: r });
+      textarea.focus();
+    };
+    canvas.addEventListener("pointerup", finish);
+    canvas.addEventListener("pointercancel", () => { start = null; paint(); });
+  });
+  docEl.addEventListener("keydown", (e) => {
+    const k = Number(e.target?.getAttribute?.("data-page")) - 1;
+    if (!pages.length || !Number.isInteger(k) || k < 0 || !String(e.target?.className ?? "").includes("ui-review-page-btn")) return;
+    const step = ["ArrowDown", "ArrowRight", "PageDown"].includes(e.key) ? 1 : ["ArrowUp", "ArrowLeft", "PageUp"].includes(e.key) ? -1 : 0;
+    if (step) { e.preventDefault(); focusPage(k + step); return; }
+    if (e.key === "Home" || e.key === "End") { e.preventDefault(); focusPage(e.key === "Home" ? 0 : pages.length - 1); return; }
+    if (e.key === "Escape" && selection) { e.preventDefault(); clear(true); }
+  });
+  docEl.addEventListener("click", (e) => {
+    const k = Number(e.target?.getAttribute?.("data-page")) - 1;
+    if (!String(e.target?.className ?? "").includes("ui-review-page-btn") || !Number.isInteger(k) || k < 0) return;
+    focusPage(k);
+    select({ page: k + 1, rect: null });
+    textarea.focus();
+  });
+  box.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const body = textarea.value.trim();
+    if (!selection || !body) { status.textContent = "Write a comment first."; textarea.focus(); return; }
+    const sent = selection, sentBody = textarea.value;
+    sendBtn.disabled = true;
+    try {
+      await o.onComment({ anchor: anchorFor(sent), body: body.slice(0, REVIEW.body) });
+      status.textContent = `Comment sent on ${describe(sent)}.`;
+      if (selection === sent && textarea.value === sentBody) clear(true);
+    } catch (error) {
+      if (typeof onError === "function") onError(error);
+      status.textContent = "The comment was not sent. Your text is kept; try again, and check System for details.";
+    } finally { sendBtn.disabled = false; }
+  });
+  const strip = unplaced.length ? h("section", { class: "ui-review-strip", "aria-label": "Comments that could not be placed" },
+    h("h3", { text: unplaced.length === 1 ? "1 comment could not be placed in this version" : `${unplaced.length} comments could not be placed in this version` }),
+    h("ul", {}, unplaced.map((t) => {
+      const sel = reviewPageSelector(t?.anchor);
+      return h("li", { class: "ui-review-unplaced" },
+        h("span", { class: "ui-review-who" }, h("strong", { text: String(t?.author ?? "") }), " ", h("time", { datetime: String(t?.at ?? ""), text: String(t?.at ?? "") })),
+        sel ? h("p", { class: "ui-review-quote", text: `${sel.rect ? "Region on page" : "Page"} ${sel.page}` }) : null,
+        h("p", { class: "ui-review-thread-body", text: String(t?.body ?? "") }));
+    }))) : null;
+  if (!pages.length) docEl.append(h("p", { class: "sub", text: "No pages to review." }));
+  if (typeof o.onPlacement === "function") o.onPlacement(results);
+  return h("section", { class: "ui-review", "data-placed": String(placed.length), "data-unplaced": String(unplaced.length), "data-pages": String(pages.length) },
+    notes.map((n) => consoleUi.notice(n, "warn")), strip, docEl, status, box);
+}
 // ---------- end review surface ----------
 // ---------- visuals (ui.visual) ----------
 // Mermaid renders only in a sandbox="allow-scripts" frame (opaque origin, no network by its CSP). The parent sends
@@ -731,7 +893,7 @@ function kitFor(tool, hash, route = (path) => path, o = {}) {
   onTheme(() => { if (frames) for (const entry of [...frames.live]) entry.retheme(theme()); });
   const kit = Object.freeze({
     ...consoleUi,
-    review: (o) => reviewView(o, openSheet, onError, markIcon),
+    review: (o) => reviewView(o, openSheet, onError, markIcon, assetUrl),
     visual: (payload) => visualView(payload, kit, frames ??= visualFrames(), theme),
     img(o) {
       const id = assetId(o);
