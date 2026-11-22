@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Adopt CLI output standard v1: shared color and marker policy, bounded reports, command help and JSON for help/version. `plugins` is a view and now exits 0 when a report lists invalid plugins; a scan failure still exits 1. Static build and launchctl operational failures now exit 1 rather than 2. Human messages and formatting changed; existing JSON schemas, token paths and generated plist output remain unchanged (#111).
+
 ### Compatibility
 
 - 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: API 1 read and revision declarations are optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; read ids and the revision route are console-only and require their declarations. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest fields. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks. The optional Space card `refs` field is additive; 0.2.0 drops it.
