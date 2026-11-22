@@ -1,7 +1,8 @@
+import { createOutput } from "./cli-output.ts";
 import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
-import { buildStatic } from "./static.ts";
+import { buildStatic, parseStaticNodes } from "./static.ts";
 import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { PrincipalError, readPrincipalRegistry, setPrincipalEnabled } from "./principal.ts";
@@ -38,6 +39,36 @@ Packages install to $AGENTHUB_HOME/console/pets/<id> or console/assets/<id>; ACO
 serve auth: ACON_ACCESS_TEAM + ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN_FILE (bearer); required off loopback.
 --read-only or ACON_READ_ONLY=1 refuses console /p/<tool>/action requests and writable principal tools; declared readOnly principal tools, snapshots, search and assets remain available.
 The ui server exits 5 minutes after the last request; serve stays up.`;
+
+const OVERVIEW = `acon: local console for agent-hub, agent-mem, vault-mem and agent-research
+
+Usage: acon <command> [options]
+
+Commands:
+  ui          Open a local console with a one-time link
+  serve       Run an authenticated resident console
+  build       Build a static multi-node shell
+  token       Create a bearer token file
+  setup       Prepare or install a LaunchAgent
+  plugins     List registered plugins
+  principal   List or enable and disable principals
+  install     Install or list pets and asset packages
+  version     Show the console version
+  help        Show command help
+
+Use acon help <command> for details.
+--read-only keeps declared readOnly principal tools available.`;
+const DETAILS: Record<string, { usage: string; description: string; flags: string[]; example: string }> = {
+  ui: { usage: "acon ui [--no-open] [--json]", description: "Start a local console with a one-time link.", flags: ["--no-open  Print the link without opening a browser", "--json  Print the existing session JSON"], example: "acon ui --no-open" },
+  serve: { usage: "acon serve [--host H] [--port P] [--origin URL]... [--read-only] [--json]", description: "Run a resident console with Access or bearer authentication.", flags: ["--host H  Bind to a specific host", "--port P  Bind to a port", "--origin URL  Allow an exact browser origin; repeatable", "--read-only  Refuse mutating console actions", "--json  Print the existing server JSON"], example: "acon serve --host 127.0.0.1" },
+  build: { usage: "acon build --static --nodes id=https://origin[,id=origin] [--out DIR]", description: "Write a credential-free static multi-node shell.", flags: ["--static  Build the static shell", "--nodes LIST  Set exact node origins", "--out DIR  Set the output directory"], example: "acon build --static --nodes desk=https://node.example.com" },
+  token: { usage: "acon token new [--file PATH] [--force]", description: "Write a private bearer token file and print its path.", flags: ["--file PATH  Set the token file", "--force  Replace an existing token"], example: "acon token new" },
+  setup: { usage: "acon setup launchd [--label ID] [--apply] [serve flags]", description: "Print or install a LaunchAgent for acon serve.", flags: ["--label ID  Set the LaunchAgent label", "--apply  Install and load the agent", "--host H, --port P, --origin URL, --read-only  Configure serve"], example: "acon setup launchd" },
+  plugins: { usage: "acon plugins [--json]", description: "List registered plugins and check module hashes.", flags: ["--json  Print the existing plugin JSON"], example: "acon plugins" },
+  principal: { usage: "acon principal list [--json] | off <id> | on <id>", description: "List or enable and disable server principals.", flags: ["--json  Print the existing list JSON"], example: "acon principal list" },
+  install: { usage: "acon install <name|https URL|dir> [--force] | --list [--json]", description: "Install a pet or asset package, or list the index.", flags: ["--list  List packages", "--force  Replace an installed package", "--json  Print the existing result JSON"], example: "acon install --list" },
+};
+let output = createOutput();
 
 const COMMANDS: Record<string, string[]> = { ui: ["--no-open", "--json"], plugins: ["--json"], principal: ["--json"], install: ["--list", "--force", "--json"], serve: ["--json", "--read-only"], token: ["--force"], setup: ["--apply", "--read-only"], build: ["--static"] };
 const VALUED: Record<string, string[]> = { serve: ["--host", "--port", "--origin"], token: ["--file"], setup: ["--host", "--port", "--origin", "--label"], build: ["--nodes", "--out"] };
@@ -80,7 +111,7 @@ const summary = (p: PluginEntry) => ({ tool: p.tool, ...(p.version ? { version: 
 function openBrowser(url: string): void {
   const argv = process.platform === "darwin" ? ["open", url] : process.platform === "win32" ? ["cmd", "/c", "start", "", url] : ["xdg-open", url];
   try { Bun.spawn(argv, { stdio: ["ignore", "ignore", "ignore"] }).unref(); }
-  catch { console.error("acon: could not open a browser; open the link above yourself"); }
+  catch { output.error("could not open a browser; open the link above yourself"); }
 }
 
 async function install(home: string, source: string | undefined, flags: Set<string>): Promise<number> {
@@ -88,24 +119,27 @@ async function install(home: string, source: string | undefined, flags: Set<stri
   try {
     if (flags.has("--list")) {
       const { packages } = await fetchIndex(index);
-      if (flags.has("--json")) console.log(JSON.stringify({ index, packages }));
+      if (flags.has("--json")) output.json({ index, packages });
       else {
-        console.log(`Packages in ${printable(index, 500)}:`);
-        for (const p of packages) console.log(`${p.kind.padEnd(5)} ${p.id.padEnd(16)} ${`${Math.ceil(p.size / 1024)} KB`.padStart(8)}  ${printable(p.name, 64)}${p.description ? `: ${printable(p.description)}` : ""}`);
-        console.log("Install one with acon install <id>.");
+        output.line(" acon Packages", "header");
+        output.section("Index"); output.kv("Source", printable(index, 500));
+        output.section("Packages");
+        for (const p of packages) output.bullet("active", `${p.kind.padEnd(5)} ${p.id} ${Math.ceil(p.size / 1024)} KB ${printable(p.name, 64)}${p.description ? `: ${printable(p.description)}` : ""}`);
+        if (!packages.length) output.bullet("absent", "No packages found.");
+        output.bullet("next", "acon install <id>");
       }
       return 0;
     }
     const r = await installPackage(source!, { home, index, force: flags.has("--force") });
-    if (flags.has("--json")) console.log(JSON.stringify(r));
+    if (flags.has("--json")) output.json(r);
     else {
-      console.log(`acon: ${r.replaced ? "replaced" : "installed"} ${r.kind} ${r.id} in ${r.dir} (${r.files.length} files)`);
-      console.log(r.verified ? "acon: every file matched its sha256 in the index." : "acon: not hash-verified (installed by URL or directory); the package passed the same checks the console runs.");
-      console.log("acon: run acon ui again to see it.");
+      output.bullet("ok", `${r.replaced ? "Replaced" : "Installed"} ${r.kind} ${r.id} in ${r.dir} (${r.files.length} files)`);
+      output.line(r.verified ? "every file matched its sha256 in the index." : "not hash-verified (installed by URL or directory); the package passed the same checks the console runs.");
+      output.bullet("next", "acon ui");
     }
     return 0;
   } catch (error) {
-    console.error(`acon: ${error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`}`);
+    output.error(error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`);
     return 1;
   }
 }
@@ -117,10 +151,10 @@ function token(home: string, file: string | undefined, force: boolean): number {
   try { newTokenFile(path, force); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    console.error(`acon: ${code === "EEXIST" ? `${path} already exists; it was not changed (use --force to replace it)` : `could not write ${path} (${code ?? (error as Error).message})`}`);
+    output.error(code === "EEXIST" ? `${path} already exists; it was not changed (use --force to replace it)` : `could not write ${path} (${code ?? (error as Error).message})`);
     return 1;
   }
-  console.log(path);
+  output.raw(`${path}\n`);
   return 0;
 }
 
@@ -142,7 +176,7 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   const bun = stableBun(process.execPath, process.env.PATH);
   if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`);
   const plist = launchdPlist({ label, bun, script: launchScript(resolve(home)), args, env, logDir: join(resolve(home), "console", "logs") });
-  if (!flags.has("--apply")) { process.stdout.write(plist); return 0; }
+  if (!flags.has("--apply")) { output.raw(plist); return 0; }
   if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)");
   const uid = process.getuid?.();
   if (uid === undefined) return fail("could not read the user id");
@@ -153,10 +187,10 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   writeFileSync(file, plist, { mode: 0o644 });
   const run = (...argv: string[]) => Bun.spawnSync(["launchctl", ...argv], { stdout: "pipe", stderr: "pipe" });
   const failed = reloadAgent((...argv) => { const r = run(...argv); return { exitCode: r.exitCode, stderr: r.stderr.toString() }; }, `gui/${uid}`, label, file);
-  if (failed) return fail(failed);
+  if (failed) return fail(failed, 1);
   const print = run("print", `gui/${uid}/${label}`);
-  console.log(`acon: wrote ${file} and loaded gui/${uid}/${label}`);
-  process.stdout.write(print.stdout.toString());
+  output.bullet("ok", `Wrote ${file} and loaded gui/${uid}/${label}`);
+  output.raw(print.stdout.toString());
   return print.exitCode === 0 ? 0 : 1;
 }
 
@@ -170,41 +204,87 @@ export function launchScript(home: string, packageRoot = resolve(import.meta.dir
   return join(packageRoot, "bin", "acon.js");
 }
 
-const fail = (message: string): number => { console.error(`acon: ${message}`); return 2; };
+const fail = (message: string, code = 2): number => { output.error(message); return code; };
 
 function principalCommand(home: string, args: string[], flags: Set<string>): number {
   try {
     if (args[0] === "list") {
       const principals = readPrincipalRegistry(home).principals.map(({ id, enabled, tools, ratePerMinute }) => ({ id, enabled, tools, ratePerMinute }));
-      if (flags.has("--json")) console.log(JSON.stringify({ principals }));
-      else if (!principals.length) console.log("No server principals registered.");
-      else for (const principal of principals) console.log(`${principal.id.padEnd(24)} ${principal.enabled ? "enabled" : "disabled"}  ${principal.tools.join(", ")}  ${principal.ratePerMinute}/min`);
+      if (flags.has("--json")) output.json({ principals });
+      else {
+        output.line(" acon Principals", "header"); output.section("Registered principals");
+        if (!principals.length) output.bullet("absent", "No server principals registered.");
+        for (const principal of principals) output.bullet(principal.enabled ? "ok" : "absent", `${principal.id} ${principal.enabled ? "enabled" : "disabled"} ${principal.tools.join(", ")} ${principal.ratePerMinute}/min`);
+      }
     } else {
       setPrincipalEnabled(home, args[1]!, args[0] === "on");
-      console.log(`acon: principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
+      output.bullet("ok", `Principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
     }
     return 0;
   } catch (error) {
     const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
-    console.error(`acon: ${cause}; check $AGENTHUB_HOME/console/principals.json ownership/mode 0600 and run acon principal list to choose a registered id before retrying`);
+    output.error(`${cause}; check $AGENTHUB_HOME/console/principals.json ownership/mode 0600 and run acon principal list to choose a registered id before retrying`);
     return 1;
   }
 }
 
 export async function main(argv: string[]): Promise<number> {
-  const parsed = parse(argv);
-  if (typeof parsed === "string") { console.error(`acon: ${parsed}\n\n${USAGE}`); return 2; }
+  output = createOutput({ json: argv.includes("--json") });
+  const filtered: string[] = [];
+  let color: string | undefined; let ascii = false; let jsonFlag = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === "--ascii") { ascii = true; continue; }
+    if (arg === "--color" || arg.startsWith("--color=")) {
+      if (color !== undefined) { output.error("--color may be given once"); return 2; }
+      color = arg === "--color" ? argv[++i] : arg.slice(8);
+      if (!["auto", "always", "never"].includes(color ?? "")) { output.error("--color must be auto, always or never"); return 2; }
+      continue;
+    }
+    filtered.push(arg);
+  }
+  const commandName = filtered.find((arg) => arg !== "--json") ?? "help";
+  if (["help", "--help", "-h", "version", "--version", "-v"].includes(commandName) && filtered.includes("--json")) {
+    jsonFlag = true;
+    filtered.splice(filtered.indexOf("--json"), 1);
+  }
+  output = createOutput({ color, ascii, json: jsonFlag || filtered.includes("--json") });
+  const parsed = parse(filtered);
+  if (typeof parsed === "string") { output.error(parsed); output.diagnostic("Usage: acon <command> [options]"); output.diagnostic("Run 'acon help' for details."); return 2; }
   const { command, flags, args, values } = parsed;
-  if (["--version", "-v", "version"].includes(command)) { console.log(pkg.version); return 0; }
-  if (["help", "--help", "-h"].includes(command)) { console.log(USAGE); return 0; }
+  if (["--version", "-v", "version"].includes(command)) { if (jsonFlag) output.json({ version: pkg.version }); else output.raw(`${pkg.version}\n`); return 0; }
+  if (["help", "--help", "-h"].includes(command)) {
+    const detail = filtered[1];
+    if (detail && !Object.hasOwn(COMMANDS, detail)) { output.error(`unknown help command: ${detail}`); return 2; }
+    const text = detail ? USAGE : OVERVIEW;
+    if (jsonFlag) output.json({ help: text });
+    else if (detail) {
+      const help = DETAILS[detail]!;
+      output.line(` acon ${detail}`, "header"); output.section("Usage"); output.line(help.usage);
+      output.section("Description"); output.line(help.description);
+      output.section("Options"); for (const flag of help.flags) output.line(flag);
+      output.line("--color=auto|always|never  Choose color policy"); output.line("--ascii  Use ASCII markers");
+      output.section("Examples"); output.line(help.example);
+    } else {
+      output.line(" acon: local console for agent-hub, agent-mem, vault-mem and agent-research", "header");
+      output.section("Commands");
+      for (const line of OVERVIEW.split("\n").filter((value) => /^  [a-z]/.test(value))) output.line(line);
+      output.section("Options"); output.line("--color=auto|always|never  Choose color policy"); output.line("--ascii  Use ASCII markers"); output.line("--json  Output a JSON document for read commands");
+      output.line("Use acon help <command> for details.");
+      output.line("--read-only keeps declared readOnly principal tools available.");
+    }
+    return 0;
+  }
   if (command === "build") {
+    try { parseStaticNodes(values["--nodes"]![0]!); }
+    catch (error) { return fail((error as Error).message); }
     try {
       const result = await buildStatic(values["--nodes"]![0]!, values["--out"]?.[0]);
-      console.log(`acon: static shell written to ${result.out}; serve that directory over https and allow its origin on each acon serve node`);
+      output.bullet("ok", `static shell written to ${result.out}; serve that directory over https and allow its origin on each acon serve node`);
       return 0;
     } catch (error) {
-      console.error(`acon: static build failed: ${(error as Error).message}; check --nodes and choose an unused --out directory`);
-      return 2;
+      output.error(`static build failed: ${(error as Error).message}; check --nodes and choose an unused --out directory`);
+      return 1;
     }
   }
   const home = familyHome();
@@ -215,20 +295,22 @@ export async function main(argv: string[]): Promise<number> {
   let serve: ServeOptions | undefined;
   if (command === "serve") {
     const config = serveConfig(serveArgs(values, flags), process.env);
-    if (typeof config === "string") { console.error(`acon: ${config}`); return 2; }
+    if (typeof config === "string") { output.error(config); return 2; }
     serve = config;
   }
   const scan = scanPlugins(home);
   if (command === "plugins") {
-    if (flags.has("--json")) console.log(JSON.stringify({ dir: scan.dir, ...(scan.error ? { error: scan.error } : {}), plugins: scan.entries.map(summary) }));
+    if (flags.has("--json")) output.json({ dir: scan.dir, ...(scan.error ? { error: scan.error } : {}), plugins: scan.entries.map(summary) });
     else {
-      if (scan.error) console.error(`acon: ${scan.error}`);
-      if (!scan.entries.length) console.log(`No plugins registered in ${scan.dir}.`);
-      for (const p of scan.entries) console.log(`${`${p.tool}${p.version ? `@${p.version}` : ""}`.padEnd(24)} ${p.status.padEnd(9)} ${p.reason ?? p.module ?? ""}`);
+      if (scan.error) output.error(scan.error);
+      output.line(" acon Plugins", "header"); output.section("Registered plugins");
+      output.kv("Directory", scan.dir);
+      if (!scan.entries.length) output.bullet("absent", "No plugins registered.");
+      if (scan.entries.length) output.table([...scan.entries].sort((a, b) => Number(a.status === "verified") - Number(b.status === "verified")).map((p) => ({ id: `${p.tool}${p.version ? `@${p.version}` : ""}`, state: p.status, detail: p.reason ?? p.module ?? "" })));
     }
-    return scan.error || scan.entries.some((p) => p.status !== "verified") ? 1 : 0;
+    return scan.error ? 1 : 0;
   }
-  const log = (line: string) => console.error(`acon: ${line}`);
+  const log = (line: string) => output.error(line);
   const plugins = await loadPlugins(scan, { home, log });
   const { pets, problems: petProblems } = loadPets(petDirs(home));
   const { packs: assetPacks, problems: assetProblems } = loadAssetPacks([join(home, "console", "assets")]);
@@ -250,18 +332,19 @@ export async function main(argv: string[]): Promise<number> {
   process.on("SIGTERM", shutdown);
   if (serve) {
     const info = { origin: server.origin, port: server.port, mode: serve.mode, readOnly: Boolean(serve.readOnly), origins: serve.origins, pid: process.pid, plugins: plugins.map(summary) };
-    if (flags.has("--json")) console.log(JSON.stringify(info));
+    if (flags.has("--json")) output.json(info);
     else {
-      console.log(`acon: serving on ${serve.hostname}:${server.port} (${serve.mode === "access" ? "Cloudflare Access" : serve.mode === "bearer" ? "bearer token" : "loopback, no auth"})${serve.readOnly ? ", read-only" : ""}; allowed origins: ${serve.origins.join(", ")}`);
+      output.bullet("ok", `Serving on ${serve.hostname}:${server.port} (${serve.mode === "access" ? "Cloudflare Access" : serve.mode === "bearer" ? "bearer token" : "loopback, no auth"})${serve.readOnly ? ", read-only" : ""}; allowed origins: ${serve.origins.join(", ")}`);
       if (scan.error) log(scan.error);
       for (const p of plugins) if (p.status !== "ready") log(`${p.tool} not loaded (${p.status}): ${p.reason}`);
     }
     return await new Promise<number>(() => {});
   }
   const url = server.issue();
-  if (flags.has("--json")) console.log(JSON.stringify({ url, origin: server.origin, pid: process.pid, plugins: plugins.map(summary) }));
+  if (flags.has("--json")) output.json({ url, origin: server.origin, pid: process.pid, plugins: plugins.map(summary) });
   else {
-    console.log(`acon: console at ${url}\nacon: the link works once and expires in 60 s; run acon ui again for a new one.`);
+    output.bullet("ok", `Console at ${url}`);
+    output.line("The link works once and expires in 60 s; run acon ui again for a new one.");
     if (scan.error) log(scan.error);
     for (const p of plugins) if (p.status !== "ready") log(`${p.tool} not loaded (${p.status}): ${p.reason}`);
   }
