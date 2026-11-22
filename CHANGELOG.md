@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Compatibility
+
+- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: the API 1 read declaration is optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; read ids are console-only and require the new declaration. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest field. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks.
+
+### Added
+
+- Allow plugins to declare non-navigation console snapshot ids in `capabilities.reads`, validated by conformance, without granting principal access or adding tabs (#97).
+
 ### Fixed
 
 - Tab-row overflow fades no longer cover the selected tab label and appear only when a tab is hidden (#100).

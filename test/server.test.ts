@@ -92,6 +92,17 @@ describe("snapshot", () => {
     expect(inbox.items.length).toBe(3);
   });
 
+  test("declared reads pass console snapshots without exposing undeclared ids", async () => {
+    const { server, plugin } = await boot();
+    plugin.manifest.capabilities!.reads = ["lineage"];
+    const cookie = await login(server);
+    expect((await post(server, "/p/demo/snapshot", { panel: "lineage" }, cookie)).status).toBe(200);
+    expect((await post(server, "/p/demo/snapshot", { panel: "unknown-read" }, cookie)).status).toBe(400);
+    const tools = await (await post(server, "/tools", {}, cookie)).json();
+    expect(tools.tools[0].capabilities.reads).toEqual(["lineage"]);
+    expect(tools.tools[0].panels.some((panel: { id: string }) => panel.id === "lineage")).toBe(false);
+  });
+
   test("a provider failure is summarized and listed in System", async () => {
     const { server } = await boot({ throwOn: "secret task text" });
     const cookie = await login(server);

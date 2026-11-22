@@ -1,4 +1,4 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["typecheck/compatibility.ts", "test/fixtures/compatibility-plugin.ts"]
+  "include": ["typecheck/compatibility.ts", "typecheck/compatibility-02.ts", "test/fixtures/compatibility-plugin.ts"]
 }

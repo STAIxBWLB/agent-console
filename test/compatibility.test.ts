@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { registerConsoleConformance } from "acon-n-1/conformance";
 import type { ConsolePlugin } from "acon-n-1/contract";
+import { registerConsoleConformance as register02 } from "acon-0-2/conformance";
+import type { ConsolePlugin as Plugin02 } from "acon-0-2/contract";
 import { loadPlugins, pluginDir, scanPlugins, type PluginEntry } from "../src/plugins.ts";
 import { startServer } from "../src/server.ts";
 import { createCompatibilityPlugin } from "./fixtures/compatibility-plugin.ts";
@@ -44,6 +46,27 @@ const historical: ConsolePlugin = {
   async open() { return (await loaded()).provider!; },
 };
 registerConsoleConformance(historical, { home, destructive: [{ action: "delete", id: "note-1" }], assets: ["note.txt"] });
+
+const historical02: Plugin02 = {
+  manifest: createCompatibilityPlugin().manifest,
+  async open() { return (await loaded()).provider!; },
+};
+register02(historical02, { home, destructive: [{ action: "delete", id: "note-1" }], assets: ["note.txt"] });
+test("the 0.2 N-1 baseline is the exact published 0.2.0 package", () => {
+  const root = dirname(dirname(Bun.resolveSync("acon-0-2/conformance", import.meta.dir)));
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  expect(pkg.name).toBe("@staix/agent-console");
+  expect(pkg.version).toBe("0.2.0");
+  expect(pkg.dependencies).toBeUndefined();
+});
+
+test("the 0.2 console ignores new read declarations", async () => {
+  const root = dirname(dirname(Bun.resolveSync("acon-0-2/conformance", import.meta.dir)));
+  const old = await import(join(root, "src", "plugins.ts"));
+  const manifest = { ...createCompatibilityPlugin().manifest, capabilities: { ...createCompatibilityPlugin().manifest.capabilities, reads: ["lineage"] } };
+  expect(old.manifestProblems(manifest)).toEqual([]);
+  expect(old.declaresPanel(manifest, "lineage")).toBe(false);
+});
 
 describe("0.1.8 compatibility surfaces", () => {
   test("the baseline is the exact published 0.1.8 package with no runtime dependencies", () => {
