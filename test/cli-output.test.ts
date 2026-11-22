@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { MARKERS, ROLE_SGR, asciiMarkers, createOutput, resolveColor } from "../src/cli-output.ts";
+import { MARKERS, ROLE_SGR, asciiMarkers, resolveColor } from "@staix/cli-output";
+import { createOutput } from "../src/cli.ts";
 
 const bin = join(import.meta.dir, "..", "bin", "acon.js");
 async function run(args: string[], extra: Record<string, string> = {}) {
@@ -21,12 +22,12 @@ test("plugin report golden output and named ANSI roles", async () => {
   expect(colored.out).toContain(`${ROLE_SGR.hint}-`);
 });
 test("color precedence and JSON remain deterministic", async () => {
-  expect(resolveColor("always", { isTTY: false, NO_COLOR: "1" })).toBe(true);
-  expect(resolveColor("never", { isTTY: true, FORCE_COLOR: "1" })).toBe(false);
-  expect(resolveColor("auto", { isTTY: true, NO_COLOR: "1", FORCE_COLOR: "1" })).toBe(false);
-  expect(resolveColor("auto", { isTTY: false, FORCE_COLOR: "1", CLICOLOR: "0" })).toBe(true);
-  expect(resolveColor("auto", { isTTY: true, FORCE_COLOR: "0" })).toBe(false);
-  expect(resolveColor("auto", { isTTY: true, TERM: "dumb" })).toBe(false);
+  expect(resolveColor("always", { isTTY: false, NO_COLOR: "1" }, "acon")).toBe(true);
+  expect(resolveColor("never", { isTTY: true, FORCE_COLOR: "1" }, "acon")).toBe(false);
+  expect(resolveColor("auto", { isTTY: true, NO_COLOR: "1", FORCE_COLOR: "1" }, "acon")).toBe(false);
+  expect(resolveColor("auto", { isTTY: false, FORCE_COLOR: "1", CLICOLOR: "0" }, "acon")).toBe(true);
+  expect(resolveColor("auto", { isTTY: true, FORCE_COLOR: "0" }, "acon")).toBe(false);
+  expect(resolveColor("auto", { isTTY: true, TERM: "dumb" }, "acon")).toBe(false);
   expect((await run(["plugins"], { FORCE_COLOR: "1" })).out).toContain("\x1b");
   expect((await run(["plugins"], { NO_COLOR: "1", FORCE_COLOR: "1" })).out).not.toContain("\x1b");
   const json = await run(["plugins", "--json", "--color=always"], { FORCE_COLOR: "1" });
@@ -53,13 +54,14 @@ test("token refusal puts the complete corrective command on a separate line", as
   expect(denied.code).toBe(1);
   expect(denied.err).toContain(`  → acon token new --file '${home}/console/token' --force\n`);
 });
-test("table caps id and state columns and wraps detail within 80 cells", () => {
+test("shared table wraps long identifiers and detail within 80 cells", () => {
   let text = "";
   const stream = { isTTY: false, write: (value: string) => { text += value; return true; } } as unknown as NodeJS.WriteStream;
   const out = createOutput({ stdout: stream, stderr: stream, env: { LANG: "C", COLUMNS: "80" }, color: "never" });
   out.table([{ id: "long-".repeat(20), state: "waiting", detail: "detail ".repeat(30) }]);
   const lines = text.trimEnd().split("\n");
-  expect(lines[1]).toContain("...");
+  expect(lines.join("\n")).toContain("long-");
+  expect(lines.join("\n")).not.toContain("...");
   expect(lines[1]).toContain("waiting");
   for (const line of lines) expect(Bun.stringWidth(line, { ambiguousIsNarrow: true })).toBeLessThanOrEqual(80);
 });
@@ -69,8 +71,8 @@ test("ASCII markers follow locale and explicit flag", async () => {
   expect((await run(["plugins", "--ascii"])).out).toContain("> Registered plugins");
   expect(MARKERS.ok.ascii).toBe("ok");
 });
-test("CLI implementation keeps ANSI escapes in the output module", () => {
-  const sources = readdirSync(join(import.meta.dir, "..", "src")).filter((name) => name.endsWith(".ts") && name !== "cli-output.ts").map((name) => `src/${name}`);
+test("CLI implementation keeps ANSI escapes in the shared package", () => {
+  const sources = readdirSync(join(import.meta.dir, "..", "src")).filter((name) => name.endsWith(".ts")).map((name) => `src/${name}`);
   for (const file of [...sources, "bin/acon.js"]) {
     const source = readFileSync(join(import.meta.dir, "..", file), "utf8");
     expect(source).not.toMatch(/\\(?:x1[bB]|u001[bB]|033)/);

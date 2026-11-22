@@ -6,7 +6,7 @@ Status: H0 (`acon ui`, local mode) and H1 (`acon serve`, an authenticated reside
 
 <!-- facts:package -->
 - Package `@staix/agent-console` 0.2.0, command `acon`. Install: `bun add -g @staix/agent-console`.
-- Requires Bun >=1.4.2 (`engines.bun`).
+- Requires Bun >=1.4.4 (`engines.bun`).
 - Library exports: `@staix/agent-console` (`src/contract.ts`), `@staix/agent-console/contract` (`src/contract.ts`), `@staix/agent-console/conformance` (`src/conformance.ts`), `@staix/agent-console/visual-cases` (`src/visual-cases.ts`).
 - Plugin contract api: 1.
 <!-- /facts:package -->
@@ -240,7 +240,7 @@ Prints a LaunchAgent plist that runs the absolute `bun` (the PATH entry, such as
 
 ### Versioned install
 
-From a checkout, `bun scripts/install-release.ts [--home DIR] [--json]` copies the committed package files (not uncommitted changes) into `$AGENTHUB_HOME/console/releases/<version>-<commit>/`, then points `console/current` at it by atomic rename and keeps `console/previous`. An existing release is reused, never changed. Start the resident console from `console/current/bin/acon.js`: an install leaves a running process on the release it started from, and a restart switches it. Roll back by pointing `current` at `previous` and restarting.
+From a checkout, `bun scripts/install-release.ts [--home DIR] [--json]` copies the committed package files (not uncommitted changes), installs the pinned production dependency from Bun's local cache, and stages the release into `$AGENTHUB_HOME/console/releases/<version>-<commit>/`, then points `console/current` at it by atomic rename and keeps `console/previous`. Run `bun install --frozen-lockfile` in the checkout first to populate the cache. An existing release is reused, never changed. Start the resident console from `console/current/bin/acon.js`: an install leaves a running process on the release it started from, and a restart switches it. Roll back by pointing `current` at `previous` and restarting.
 
 ### Static multi-node shell (H2)
 
@@ -497,7 +497,7 @@ registerConsoleConformance(plugin, { destructive: [{ action: "delete", id: "x" }
 
 ## Vendored browser assets
 
-The published package has zero third-party runtime dependencies. Server and CLI code in `src/` imports only builtins (`node:`, `bun:`, `bun`) and relative files. Third-party browser assets may ship in `shell/vendor/` under these conditions:
+The published package pins `@staix/cli-output` as its sole runtime dependency for the CLI. Other `src/` imports remain builtins (`node:`, `bun:`, `bun`) and relative files. Third-party browser assets may ship in `shell/vendor/` under these conditions:
 
 - The source package is an exact `devDependencies` pin in `package.json`, never a runtime dependency.
 - `scripts/vendor-<name>.ts` deterministically copies only the files the shell uses.
@@ -543,3 +543,7 @@ Create release tags only with `scripts/release-tag.ts`, never by hand. On a rele
 Before tagging, run `bun scripts/readme-facts.ts --write` after the version bump, then `node scripts/check-docs.mjs`. For each stale document, reread it against the source on `origin/main`, fix it, and set its `verifiedAgainst` in `docs/verified.json` to that `origin/main` commit (never a branch commit, which a squash merge drops). The release workflow runs `node scripts/check-docs.mjs --require-fresh` on the tagged commit and refuses to publish while any document is stale.
 
 License: MIT
+
+## AGENTS.md background
+
+- The #133 migration permits only the exactly pinned CLI output package as a runtime dependency; other `src/` imports remain constrained by the boundary check.

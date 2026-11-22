@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "@staix/agent-console",
+      "dependencies": {
+        "@staix/cli-output": "0.1.0",
+      },
       "devDependencies": {
         "@mermaid-js/tiny": "12.2.0",
         "@tabler/icons": "3.50.0",
@@ -17,6 +20,8 @@
   },
   "packages": {
     "@mermaid-js/tiny": ["@mermaid-js/tiny@12.2.0", "", {}, "sha512-9bEE+R974NTh1YJlfc6ztgwhy6+9sE+wAFiFrqvSdtlJHdxGfLytQmHYHNpFKmj94+Z+uMicYrQeGXnTTjILAQ=="],
+
+    "@staix/cli-output": ["@staix/cli-output@0.1.0", "", {}, "sha512-ZRGNoNR+m849k5bN3h37Jd/Jbm6OKnJfBUAdFgftbACvJNq0Ws2l0fT1+XLGPQAmwguyP4xw6afQrAHa4l6uNg=="],
 
     "@tabler/icons": ["@tabler/icons@3.50.0", "", {}, "sha512-HflLxyrH1cqC7s7jzQGSjpsTAVIoaf7+/yHjbdM59rJQBMjliibp+LYhDPFxOMcwa1M8DNpOk6ENzQiWn9a1Dg=="],
 

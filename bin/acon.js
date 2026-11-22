@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-const { createOutput } = await import("../src/cli-output.ts");
+const { errorLine, asciiMarkers } = await import("@staix/cli-output");
 const version = /^(\d+)\.(\d+)\.(\d+)/.exec(process.versions.bun ?? "");
-if (!version || Number(version[1]) < 1 || (Number(version[1]) === 1 && (Number(version[2]) < 4 || (Number(version[2]) === 4 && Number(version[3]) < 2)))) {
-  createOutput().error("Bun >=1.4.2 is required. Install Bun: https://bun.sh");
+if (!version || Number(version[1]) < 1 || (Number(version[1]) === 1 && (Number(version[2]) < 4 || (Number(version[2]) === 4 && Number(version[3]) < 4)))) {
+  process.stderr.write(`${errorLine("acon", "Bun >=1.4.4 is required", "", { tty: !!process.stderr.isTTY, ascii: asciiMarkers(process.env), next: "https://bun.sh" }).join("\n")}\n`);
   process.exit(1);
 }
 const { main } = await import("../src/cli.ts");

@@ -1,4 +1,4 @@
-// src/ has no third-party runtime imports; shell/vendor/ follows README's browser asset policy.
+// Only the CLI may import the exact shared output package; shell/vendor/ follows README policy.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,12 +26,15 @@ function vendorProblems(dir: string, pins: Record<string, unknown>, problems: st
 export function boundaryProblems(root: string): string[] {
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as Record<string, unknown>;
   const problems: string[] = [];
-  for (const key of ["dependencies", "peerDependencies", "optionalDependencies"]) if (pkg[key]) problems.push(`package.json must not declare ${key}`);
+  for (const key of ["peerDependencies", "optionalDependencies"]) if (pkg[key]) problems.push(`package.json must not declare ${key}`);
+  const deps = pkg.dependencies as Record<string, unknown> | undefined;
+  if (deps && (Object.keys(deps).length !== 1 || deps["@staix/cli-output"] !== "0.1.0")) problems.push("package.json must not declare dependencies other than exactly @staix/cli-output 0.1.0");
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   for (const name of readdirSync(join(root, "src")).filter((f) => f.endsWith(".ts"))) {
     // The parser sees every form: side-effect, multi-line, re-export, dynamic and require.
     for (const { path } of transpiler.scanImports(readFileSync(join(root, "src", name), "utf8"))) {
-      if (!/^(node:|bun:|\.\.?\/)/.test(path) && path !== "bun") problems.push(`src/${name}: ${path}`);
+      const sharedCli = name === "cli.ts" && path === "@staix/cli-output" && deps?.["@staix/cli-output"] === "0.1.0";
+      if (!sharedCli && !/^(node:|bun:|\.\.?\/)/.test(path) && path !== "bun") problems.push(`src/${name}: ${path}`);
     }
   }
   const vendor = join(root, "shell", "vendor");
