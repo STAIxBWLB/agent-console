@@ -706,6 +706,29 @@ body.pip { margin: 0; overflow-y: auto; }
 .space-board-unassigned { padding: 0 var(--acon-space-2); }
 .space-board-done > summary { min-height: 44px; padding: var(--acon-space-2); cursor: pointer; overflow-wrap: anywhere; }
 .space-board :is(button, summary, [tabindex]):focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
+.space-refs { display: flex; flex-wrap: wrap; gap: var(--acon-space-1); margin: 0; padding: 0 var(--acon-space-2) var(--acon-space-2); min-width: 0; }
+.space-ref { max-width: 100%; overflow-wrap: anywhere; color: var(--acon-text); text-decoration: underline; text-underline-offset: 2px; }
+.space-ref:focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
+
+/* Tracker (#124): one row of kind columns at 1024 px and wider, each list scrolls on its own; stacked below. */
+.space-tracker, .space-tracker-body { min-width: 0; max-width: 100%; }
+.space-tracker-header { margin-bottom: var(--acon-space-3); }
+.space-tracker-label { display: flex; flex-wrap: wrap; align-items: center; gap: var(--acon-space-2); font-size: var(--acon-text-sm); }
+.space-tracker-q { flex: 1 1 16rem; min-width: 0; max-width: 32rem; min-height: 44px; padding: var(--acon-space-2); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-2); background: var(--acon-surface); color: var(--acon-text); font: inherit; }
+.space-tracker-q:focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
+.space-tracker-columns { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--acon-space-3); }
+.space-tracker-column { min-width: 0; padding: var(--acon-space-3); border: 1px solid var(--acon-line); border-radius: var(--acon-radius-3); background: var(--acon-surface); }
+.space-tracker-column h3 { display: inline; margin: 0; font-size: var(--acon-text-sm); overflow-wrap: anywhere; }
+.space-tracker-column > h3 { display: block; margin-bottom: var(--acon-space-3); }
+.space-tracker-done > summary { min-height: 44px; margin-bottom: var(--acon-space-2); cursor: pointer; overflow-wrap: anywhere; }
+.space-tracker-list { min-width: 0; padding: var(--acon-space-1); }
+.space-tracker-project { margin: 0; padding: var(--acon-space-2) var(--acon-space-2) 0; min-width: 0; }
+.space-tracker-project .chip { max-width: 100%; overflow-wrap: anywhere; }
+.space-tracker :is(button, summary, a, [tabindex]):focus-visible { outline: 2px solid var(--acon-focus); outline-offset: 2px; }
+@media (min-width: 1024px) {
+  .space-tracker-columns { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-items: start; }
+  .space-tracker-list { max-height: 70vh; overflow-y: auto; }
+}
 
 
 /* Room consumes the column's available viewport; only its scene can scroll.

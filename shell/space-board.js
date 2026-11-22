@@ -1,4 +1,5 @@
 import { focusSpaceControl } from "./space-team.js";
+import { refChips } from "./space-tracker.js";
 
 function columnKind(zone) {
   if ((!zone.kind || zone.kind === "queue") && /backlog/i.test(zone.title)) return "backlog";
@@ -38,6 +39,8 @@ export function createSpaceBoard(root, host) {
     article.append(h("button", { type: "button", class: "space-board-card", "data-board-card": card.id,
       "data-board-focus": `card:${card.id}`, onclick: () => host.navigate(card.link.tool, card.link.panel, card.link.params) },
     h("strong", { text: card.title }), h("span", { class: "space-board-tone", text: tone })));
+    const chips = refChips(h, card.refs, "data-board-focus", `ref:${card.id}`);
+    if (chips.length) article.append(h("p", { class: "space-refs" }, ...chips));
     if (owner) article.append(h("button", { type: "button", class: "space-board-owner", "data-space-actor": owner.id,
       "data-state": owner.state, "data-stale": String(Boolean(owner.stale)),
       "data-board-focus": `owner:${card.id}`, onclick: (event) => host.openActor(owner.id, event.currentTarget),

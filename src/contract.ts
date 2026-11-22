@@ -188,6 +188,9 @@ export interface SearchHit {
   link: { panel: string; params?: Record<string, string> };
 }
 
+/** A GitHub issue or pull request a Space card refers to; `repo` is `owner/name`, `number` a positive safe integer. */
+export interface SpaceCardRef { kind: "issue" | "pr"; repo: string; number: number }
+
 /** Public collaboration facts, never message bodies, task details, paths or symbols. */
 export interface SpaceScene {
   groups?: { id: string; title: string }[];
@@ -204,6 +207,8 @@ export interface SpaceScene {
   zones: { id: string; title: string; kind?: "queue" | "work" | "review" | "done"; count: number; group?: string }[];
   cards: {
     id: string; title: string; zone: string; owner?: string; tone?: Tone; group?: string;
+    /** Optional GitHub issue or pull request references, at most 4. Older consoles drop the field. */
+    refs?: SpaceCardRef[];
     link: { panel: string; params?: Record<string, string> };
   }[];
   links?: { kind: "message" | "overlap" | "conflict" | "cohort"; from: string; to: string; label?: string; at?: string }[];

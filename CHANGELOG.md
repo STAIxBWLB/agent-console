@@ -4,9 +4,11 @@
 
 ### Compatibility
 
-- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: API 1 read and revision declarations are optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; read ids and the revision route are console-only and require their declarations. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest fields. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks.
+- 0.3.x N-1 targets 0.2.0, the latest published 0.2.x patch. Plugin API: API 1 read and revision declarations are optional and additive; 0.2.0 ignores it and refuses undeclared read snapshots. Routes: existing console and principal routes remain compatible; read ids and the revision route are console-only and require their declarations. Manifest files: existing unversioned and versioned registrations remain compatible, and older consoles ignore the new optional manifest fields. CI runs the published 0.2.0 conformance kit and a directional type bridge, alongside the existing 0.1.8 checks. The optional Space card `refs` field is additive; 0.2.0 drops it.
 
 ### Added
+
+- Add the Space Tracker view: every project's cards in shared Todo, In progress, In review and Done columns by zone kind, with project chips, a keyword filter kept as `q=`, a last-10 Done disclosure and stacked columns below 1024 px. Add optional card `refs` (GitHub issue or pull request, up to 4), validated and counted by the server, checked by conformance and shown as github.com chips on Tracker and Board (#124).
 
 - Add a local-only principal Audit view with server-side filters, bounded pagination and filtered JSONL export; preserve file safety checks and surface missing or unsafe audit files (#116).
 

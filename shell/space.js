@@ -1,10 +1,12 @@
 import { createSpaceBoard } from "./space-board.js";
+import { createSpaceTracker } from "./space-tracker.js";
 import { createActivityBuffer, createSpaceFlow, flowRelativeTime } from "./space-flow.js";
 import { createSpaceTeam, focusSpaceControl } from "./space-team.js";
 import { createSpaceViewController } from "./space-view.js";
 
 // Private shell module. Public collaboration facts enter through the space snapshot allowlist.
 export const SPACE_CAPS = { actors: 96, cards: 200, links: 128 };
+const SECTIONS = ["team", "flow", "board", "tracker", "room"];
 const ACTOR_WIDTH = 112, ACTOR_STEP = 200, ZONE_WIDTH = 234, ZONE_STEP = 250;
 
 export function mergeSpaceScenes(entries) {
@@ -26,7 +28,8 @@ export function mergeSpaceScenes(entries) {
       ...(a.pet ? { pet: a.pet } : {}), ...(a.card ? { card: key(a.card) } : {}),
       marks: (a.marks ?? []).map((m) => ({ kind: m.kind, text: m.text })), link: target(a.link) })));
     model.zones.push(...scene.zones.map((z) => ({ id: key(z.id), title: z.title, kind: z.kind, count: z.count, tool, group: group(z) })));
-    model.cards.push(...scene.cards.map((c) => ({ id: key(c.id), title: c.title, group: group(c), zone: key(c.zone), owner: c.owner ? key(c.owner) : undefined, tone: c.tone, link: target(c.link) })));
+    model.cards.push(...scene.cards.map((c) => ({ id: key(c.id), title: c.title, group: group(c), zone: key(c.zone), owner: c.owner ? key(c.owner) : undefined, tone: c.tone,
+      ...(Array.isArray(c.refs) && c.refs.length ? { refs: c.refs.slice(0, 4).map((r) => ({ kind: r.kind, repo: r.repo, number: r.number })) } : {}), link: target(c.link) })));
     model.links.push(...(scene.links ?? []).map((l) => ({ kind: l.kind, from: key(l.from), to: key(l.to), label: l.label, at: l.at })));
     for (const k of Object.keys(model.dropped)) model.dropped[k] += entry.dropped?.[k] ?? 0;
   }
@@ -138,6 +141,12 @@ export function createSpaceRenderer(root, host) {
   const header = h("header", { class: "space-header" }, h("h1", { class: "lead", id: "space-lead", text: "Space" }), summary,
     h("div", { class: "space-header-controls" }, tabs, h("label", { class: "space-project-label", for: "space-project" }, "Project", project)));
   const boardRoot = h("section", { class: "space-board", hidden: true });
+  const trackerQuery = h("input", { id: "space-tracker-q", type: "search", class: "space-tracker-q", autocomplete: "off", spellcheck: "false",
+    placeholder: "Filter by title, project, owner or #number", onchange: () => choose({ q: trackerQuery.value.trim() }),
+    onkeydown: (event) => { if (event.key === "Enter") choose({ q: trackerQuery.value.trim() }); } });
+  const trackerList = h("div", { class: "space-tracker-body" });
+  const trackerRoot = h("section", { class: "space-tracker", hidden: true },
+    h("div", { class: "space-tracker-header" }, h("label", { class: "space-tracker-label", for: "space-tracker-q" }, "Keyword", trackerQuery)), trackerList);
   const flowRoot = h("section", { class: "space-flow", hidden: true });
   const teamRoot = h("section", { class: "space-team", tabindex: "-1" });
   const actorPopover = h("aside", { id: "space-actor-popover", class: "space-actor-popover", role: "tooltip", tabindex: "-1", hidden: true,
@@ -146,17 +155,18 @@ export function createSpaceRenderer(root, host) {
   let popupResizeWatching = false, popupViewport = null, popupCloseTimer = 0;
   const detailRoot = h("aside", { class: "space-agent-detail", role: "dialog", "aria-modal": "true", "aria-labelledby": "space-agent-title", tabindex: "-1", hidden: true });
   const content = h("div", { class: "space-content" }, scroll, roster);
-  root.replaceChildren(header, notice, teamRoot, flowRoot, boardRoot, content, empty, actorPopover, detailRoot);
-  let selection = { view: "team", group: "", state: "", actor: "" };
+  root.replaceChildren(header, notice, teamRoot, flowRoot, boardRoot, trackerRoot, content, empty, actorPopover, detailRoot);
+  let selection = { view: "team", group: "", state: "", actor: "", q: "" };
+  let routeQ = "";
   let savedView = "team";
   let returnPoint = null, restorePoint = null, detailSignature = "";
-  try { const saved = localStorage.getItem("acon.space.section"); if (["team", "flow", "board", "room"].includes(saved)) savedView = saved; } catch { /* Persistence is optional. */ }
+  try { const saved = localStorage.getItem("acon.space.section"); if (SECTIONS.includes(saved)) savedView = saved; } catch { /* Persistence is optional. */ }
   const sectionButtons = new Map(), summaryButtons = new Map();
   function choose(patch) {
     const next = { ...selection, actor: "", ...patch };
     host.navigateSpace?.(Object.fromEntries(Object.entries(next).filter(([, value]) => value)));
   }
-  for (const [id, title] of [["team", "Team"], ["flow", "Flow"], ["board", "Board"], ["room", "Room"]]) {
+  for (const [id, title] of [["team", "Team"], ["flow", "Flow"], ["board", "Board"], ["tracker", "Tracker"], ["room", "Room"]]) {
     const button = h("button", { class: "btn", type: "button", text: title, "data-space-section-tab": id, onclick: () => choose({ view: id }) });
     tabs.append(button); sectionButtons.set(id, button);
   }
@@ -168,7 +178,7 @@ export function createSpaceRenderer(root, host) {
   summary.append(groupSummary);
   function setRoute(params = {}) {
     if (selection.actor && !params.actor) { restorePoint = returnPoint ?? { pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft }; returnPoint = null; }
-    selection = { actor: params.actor ?? "", view: ["team", "flow", "board", "room"].includes(params.view) ? params.view : savedView,
+    selection = { actor: params.actor ?? "", view: SECTIONS.includes(params.view) ? params.view : savedView, q: typeof params.q === "string" ? params.q.slice(0, 200) : "",
       group: params.group ?? "", state: ["working", "waiting", "blocked", "away", "idle"].includes(params.state) ? params.state : "" };
     if (selection.view !== savedView) {
       savedView = selection.view;
@@ -195,6 +205,8 @@ export function createSpaceRenderer(root, host) {
   const petIds = () => host.pets().map((pet) => pet.id);
   const activity = createActivityBuffer();
   const flow = createSpaceFlow(flowRoot, { h, sprite, petIds, openActor, activity, sectionTab: () => sectionButtons.get(selection.view), onTime: () => { if (lastModel && !root.hidden) renderDetail(lastModel); } });
+  const tracker = createSpaceTracker(trackerList, { h, sprite, petIds, openActor, navigate: host.navigate, sectionTab: () => sectionButtons.get(selection.view),
+    toolOrder: () => host.toolOrder?.() ?? [], wide: () => (window.innerWidth ?? 1024) >= 1024 });
   const board = createSpaceBoard(boardRoot, { h, sprite, petIds, openActor, navigate: host.navigate, sectionTab: () => sectionButtons.get(selection.view) });
   const team = createSpaceTeam(teamRoot, { h, sprite, petIds, openActor, choose, sectionTab: () => sectionButtons.get(selection.view) });
   function cancelPopoverClose() { if (popupCloseTimer) { clearTimeout(popupCloseTimer); popupCloseTimer = 0; } }
@@ -281,7 +293,7 @@ export function createSpaceRenderer(root, host) {
   }
   function openActor(id, element) {
     closePopover();
-    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus") ?? element?.getAttribute("data-flow-focus") ?? element?.getAttribute("data-board-focus") ?? element?.getAttribute("data-space-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
+    if (!selection.actor) returnPoint = { element, focusKey: element?.getAttribute("data-team-focus") ?? element?.getAttribute("data-flow-focus") ?? element?.getAttribute("data-board-focus") ?? element?.getAttribute("data-tracker-focus") ?? element?.getAttribute("data-space-focus"), actor: id, pageX: window.scrollX, pageY: window.scrollY, mainTop: root.closest("main")?.scrollTop ?? 0, columnTop: root.closest(".column")?.scrollTop ?? 0, sceneTop: scroll.scrollTop, sceneLeft: scroll.scrollLeft };
     choose({ actor: id });
   }
   function closeActor() { if (returnPoint) history.back(); else choose({ actor: "" }); }
@@ -355,7 +367,7 @@ export function createSpaceRenderer(root, host) {
   function restore() {
     if (!restorePoint) return;
     const point = restorePoint; restorePoint = null;
-    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"],[data-flow-focus="${CSS.escape(point.focusKey)}"],[data-board-focus="${CSS.escape(point.focusKey)}"],[data-space-focus="${CSS.escape(point.focusKey)}"]`) : null;
+    const keyed = point.focusKey ? root.querySelector(`[data-team-focus="${CSS.escape(point.focusKey)}"],[data-flow-focus="${CSS.escape(point.focusKey)}"],[data-board-focus="${CSS.escape(point.focusKey)}"],[data-tracker-focus="${CSS.escape(point.focusKey)}"],[data-space-focus="${CSS.escape(point.focusKey)}"]`) : null;
     const element = point.element?.isConnected ? point.element : keyed ?? (point.actor ? [...root.querySelectorAll("[data-space-actor],.space-actor,.space-roster-actor")].find((el) => el.dataset.spaceActor === point.actor || el.dataset.key === point.actor) : null);
     focusSpaceControl(element, sectionButtons.get(selection.view));
     const main = root.closest("main"); if (main) main.scrollTop = point.mainTop;
@@ -370,6 +382,7 @@ export function createSpaceRenderer(root, host) {
     activity.observe(model);
     flow.setVisible(selection.view === "flow" && !root.hidden);
     board.setVisible(selection.view === "board" && !root.hidden);
+    tracker.setVisible(selection.view === "tracker" && !root.hidden);
     const pack = host.packs()[0];
     const { sampledAt, samples: receivedSamples, ...facts } = model;
     let sourceGap = false, firstSource = false;
@@ -387,7 +400,9 @@ export function createSpaceRenderer(root, host) {
     root.dataset.spaceSection = selection.view;
     const room = selection.view === "room";
     setHidden(content, !room); setHidden(teamRoot, selection.view !== "team");
-    setHidden(flowRoot, selection.view !== "flow"); setHidden(boardRoot, selection.view !== "board");
+    setHidden(flowRoot, selection.view !== "flow"); setHidden(boardRoot, selection.view !== "board"); setHidden(trackerRoot, selection.view !== "tracker");
+    // A route change (reload, Back/Forward) wins over the field; typing between route changes is kept.
+    if (routeQ !== selection.q) { routeQ = selection.q; if (trackerQuery.value !== routeQ) trackerQuery.value = routeQ; }
     // A section switch (e.g. a Team Board/Flow shortcut) must not leave focus on a now-hidden control.
     const active = document.activeElement;
     if (active && active !== root && root.contains(active) && !detailRoot.contains(active) && active.offsetParent === null) sectionButtons.get(selection.view)?.focus({ preventScroll: true });
@@ -409,6 +424,7 @@ export function createSpaceRenderer(root, host) {
     renderDetail(model);
     model = filterSpaceModel(model, selection.group, selection.state);
     if (selection.view === "board") board.update(model, selection.group, selection.state);
+    if (selection.view === "tracker") tracker.update(model, selection.q, [selection.group, selection.state]);
     if (selection.view === "flow") flow.update(model, selection.group, selection.state);
     if (selection.view === "team") team.update({ ...model, groups: selection.group ? model.groups.filter((g) => g.id === selection.group) : model.groups });
     const hidden = Object.entries(model.dropped).filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k} omitted`);
@@ -532,5 +548,5 @@ export function createSpaceRenderer(root, host) {
     if (lastModel && !root.hidden && selection.view === "room") update(lastModel, true);
   });
   observer.observe(root);
-  return { update, setRoute, enter, hide() { closePopover(); board.setVisible(false); flow.setVisible(false); views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { closePopover(); observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); flow.destroy(); board.destroy(); views?.destroy(); root.replaceChildren(); } };
+  return { update, setRoute, enter, hide() { closePopover(); board.setVisible(false); tracker.setVisible(false); flow.setVisible(false); views?.suspend(); }, get viewStats() { return views?.stats ?? { view: "flat", renderCount: 0, pendingFrames: 0 }; }, destroy() { closePopover(); observer.disconnect(); document.removeEventListener("keydown", onDetailKey, true); team.destroy(); flow.destroy(); board.destroy(); tracker.destroy(); views?.destroy(); root.replaceChildren(); } };
 }
