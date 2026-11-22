@@ -950,8 +950,11 @@ function renderTabs() {
 }
 function updateTabOverflow() {
   const tabs = $("tabs");
-  const before = !tabs.hidden && tabs.scrollLeft > 1;
-  const after = !tabs.hidden && tabs.scrollWidth - tabs.clientWidth - tabs.scrollLeft > 1;
+  const first = tabs.querySelector(".tab:first-child");
+  const last = tabs.querySelector(".tab:last-child");
+  const bounds = tabs.getBoundingClientRect();
+  const before = !tabs.hidden && !!first && first.getBoundingClientRect().left < bounds.left - 1;
+  const after = !tabs.hidden && !!last && last.getBoundingClientRect().right > bounds.right + 1;
   tabs.classList.toggle("more-before", before);
   tabs.classList.toggle("more-after", after);
   tabs.classList.toggle("has-overflow", before || after);

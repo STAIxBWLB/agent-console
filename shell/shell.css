@@ -159,12 +159,12 @@ kbd { padding: 0 5px; border: 1px solid var(--acon-line-control); border-radius:
 .live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--acon-ok); }
 .live.stale .dot { background: var(--acon-warn); border-radius: 2px; }
 .live.offline .dot { background: var(--acon-err); border-radius: 0; transform: rotate(45deg); }
-.tabs { display: flex; flex-shrink: 0; gap: 4px; padding: 0 var(--acon-space-5); background: var(--acon-surface); border-bottom: 1px solid var(--acon-line); overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; scroll-padding-inline: 20px; }
+.tabs { display: flex; flex-shrink: 0; gap: 4px; padding: 0 var(--acon-space-5); background: var(--acon-surface); border-bottom: 1px solid var(--acon-line); overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
 .tabs::before, .tabs::after { content: ""; position: sticky; z-index: var(--shell-z-underlay); flex: 0 0 20px; pointer-events: none; opacity: 0; }
 .tabs::before { left: 0; margin-right: -24px; background: linear-gradient(to right, var(--acon-surface), transparent); }
 .tabs::after { right: 0; margin-left: -24px; background: linear-gradient(to left, var(--acon-surface), transparent); }
 .tabs.more-before::before, .tabs.more-after::after { opacity: 1; }
-.tab { flex: 0 0 auto; max-width: 100%; min-height: 40px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--acon-text-2); cursor: pointer; white-space: normal; overflow-wrap: anywhere; scroll-snap-align: start; }
+.tab { position: relative; z-index: var(--shell-z-raised); flex: 0 0 auto; max-width: 100%; min-height: 40px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--acon-text-2); cursor: pointer; white-space: normal; overflow-wrap: anywhere; scroll-snap-align: start; }
 .tab[aria-selected="true"] { border-bottom-color: var(--acon-accent); color: var(--acon-accent-text); font-weight: 600; }
 main { flex: 1; min-width: 0; padding: var(--acon-space-5); }
 #main:focus { outline: none; }

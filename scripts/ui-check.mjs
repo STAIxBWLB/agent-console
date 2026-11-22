@@ -381,11 +381,14 @@ async function checkTabs(page, requireLast = false) {
         while (sheet.cssRules.length > start) sheet.deleteRule(start);
       }
     }
-    const before = tabs.scrollLeft > 1;
-    const after = tabs.scrollWidth - tabs.clientWidth - tabs.scrollLeft > 1;
+    const before = tabs.querySelector(".tab:first-child").getBoundingClientRect().left < box.left - 1;
+    const after = tabs.querySelector(".tab:last-child").getBoundingClientRect().right > box.right + 1;
     if ((before || after) && !tabs.classList.contains("has-overflow")) findings.push({ kind: "tab-overflow-indicator", detail: "Overflow exists without has-overflow" });
     for (const [hidden, className, pseudo] of [[before, "more-before", "::before"], [after, "more-after", "::after"]]) {
-      if (!hidden) continue;
+      if (!hidden) {
+        if (tabs.classList.contains(className)) findings.push({ kind: "tab-overflow-indicator", detail: `No hidden tab at ${pseudo}, but the fade is on` });
+        continue;
+      }
       const style = getComputedStyle(tabs, pseudo);
       if (!tabs.classList.contains(className) || style.content === "none" || style.display === "none" || Number(style.opacity) === 0 || !(Number.parseFloat(style.width) > 0)) findings.push({ kind: "tab-overflow-indicator", detail: `Hidden edge has no visible ${pseudo} fade` });
     }
