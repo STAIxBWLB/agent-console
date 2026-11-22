@@ -61,7 +61,7 @@ test("static worker gets exactly the configured script origins on both hosts", a
 test("host timeout terminates and reports; ready returns the worker and later errors are reported", async () => {
   const shell = readFileSync(new URL("../shell/shell.js", import.meta.url), "utf8");
   const functionBody = shell.slice(shell.indexOf("function startPanelWorker("), shell.indexOf("function hostFor("));
-  type Event = { data?: unknown };
+  type Event = { data?: unknown; preventDefault?: () => void };
   class FakeWorker {
     static last: FakeWorker;
     listeners = new Map<string, (event: Event) => void>();
@@ -82,5 +82,10 @@ test("host timeout terminates and reports; ready returns the worker and later er
   timeout(); await expect(pending).rejects.toThrow("10 seconds"); expect(first.terminated).toBe(true); expect(errors[0]).not.toContain("secret");
   const ready = start({ tool: "demo" }); const second = FakeWorker.last;
   second.emit("message", { data: { acon: "ready" } }); expect(await ready).toBe(second);
-  second.emit("error"); expect(second.terminated).toBe(true); expect(errors.at(-1)).toContain("reload the page");
+  let prevented = false;
+  second.emit("error", { preventDefault: () => { prevented = true; } });
+  expect(second.terminated).toBe(false); expect(prevented).toBe(false); expect(errors.at(-1)).toContain("reload the page");
+  const rejected = start({ tool: "demo" }); const third = FakeWorker.last;
+  third.emit("error", { preventDefault: () => { prevented = true; } });
+  await expect(rejected).rejects.toThrow("reload the page"); expect(third.terminated).toBe(true); expect(prevented).toBe(true);
 });

@@ -1724,7 +1724,7 @@ function staticAssetFrame(url, title) {
 
 function startPanelWorker(tool) {
   return new Promise((resolve, reject) => {
-    let worker, timer, settled = false;
+    let worker, timer, settled = false, ready = false;
     const failure = (message) => {
       const error = new Error(message);
       clientError(tool.tool, "worker", error);
@@ -1734,10 +1734,14 @@ function startPanelWorker(tool) {
     try {
       const url = pluginPath(`/p/${tool.tool}/panel.js`);
       worker = new Worker("/panel-worker.js", { type: "module" });
-      worker.addEventListener("error", (event) => { event.preventDefault?.(); failure("panel worker failed; reload the page and check the worker module"); });
+      worker.addEventListener("error", (event) => {
+        const message = "panel worker failed; reload the page and check the worker module";
+        if (ready) clientError(tool.tool, "worker", new Error(message));
+        else if (!settled) { event.preventDefault?.(); failure(message); }
+      });
       const onMessage = (event) => {
         if (event.data?.acon === "ready" && !settled) {
-          settled = true; clearTimeout(timer); worker.removeEventListener("message", onMessage); resolve(worker);
+          ready = true; settled = true; clearTimeout(timer); worker.removeEventListener("message", onMessage); resolve(worker);
         } else if (event.data?.acon === "error" && !settled) {
           const allowed = new Set([
             "invalid panel module path; reload the page and use host.worker()",
