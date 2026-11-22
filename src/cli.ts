@@ -1,4 +1,4 @@
-import { createOutput } from "./cli-output.ts";
+import { Report, resolveColor, streamEnv, asciiMarkers, markerCell, MARKERS, paint, errorLine, terminalText, wrap, EXIT, type MarkerName, type Role } from "@staix/cli-output";
 import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
@@ -12,6 +12,60 @@ import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, reloadAgent, stableBun,
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+
+// Streaming unindented lines and role-separated error output await STAIxBWLB/cli-output#6.
+// The standard tokens, color policy, report layout and error text all come from the package.
+export interface OutputOptions { color?: string; ascii?: boolean; json?: boolean; env?: Readonly<Record<string, string | undefined>>; stdout?: NodeJS.WriteStream; stderr?: NodeJS.WriteStream }
+export function createOutput(options: OutputOptions = {}) {
+  const env = options.env ?? process.env, stdout = options.stdout ?? process.stdout, stderr = options.stderr ?? process.stderr;
+  const ascii = asciiMarkers(env, options.ascii);
+  const color = (stream: NodeJS.WriteStream) => {
+    if (options.json) return false;
+    const result = resolveColor(options.color, streamEnv(!!stream.isTTY, env), "acon");
+    return result instanceof Error ? false : result;
+  };
+  const columns = (stream: NodeJS.WriteStream) => {
+    const n = stream.isTTY ? stream.columns : Number(env.COLUMNS);
+    return n && Number.isFinite(n) && n >= 20 ? n : undefined;
+  };
+  const line = (value: unknown, role: Role = "value") => {
+    const text = terminalText(value).replace(/[\n\t]/g, " ");
+    const limit = columns(stdout);
+    const lines = limit === undefined ? [text] : wrap(text, limit, 0);
+    for (const part of lines) stdout.write(`${paint([{ text: part, role }], color(stdout))}\n`);
+  };
+  const report = (build: (out: Report) => void, initialBlank = false) => {
+    const value = new Report(columns(stdout), ascii); build(value);
+    if (initialBlank) stdout.write("\n");
+    const lines = value.render(color(stdout));
+    if (lines.length) stdout.write(`${lines.join("\n")}\n`);
+  };
+  const error = (value: unknown, next?: string) => {
+    const lines = errorLine("acon", terminalText(value).replace(/[\n\t]/g, " "), "", { tty: !!stderr.isTTY, ascii, ...(next ? { next } : {}) });
+    const limit = columns(stderr);
+    const first = limit === undefined ? [lines[0]!] : wrap(lines[0]!, limit, 2);
+    if (stderr.isTTY && color(stderr)) {
+      const marker = markerCell("fail", ascii).trimEnd();
+      first[0] = paint([{ text: marker, role: "error" }, { text: first[0]!.slice(marker.length) }], true);
+    }
+    if (next && color(stderr)) {
+      const prefix = markerCell("next", ascii).trimEnd();
+      lines[1] = paint([{ text: "  " }, { text: prefix, role: MARKERS.next.role }, { text: lines[1]!.slice(2 + prefix.length) }], true);
+    }
+    stderr.write(`${[...first, ...lines.slice(1)].join("\n")}\n`);
+  };
+  return {
+    line,
+    section: (title: string) => report((r) => { r.section(title); }, true),
+    bullet: (name: MarkerName, text: unknown) => report((r) => { r.bullet(name, terminalText(text)); }),
+    kv: (key: string, value: unknown) => report((r) => { r.kv([[key, value]]); }),
+    table: (rows: readonly { id: string; state: string; detail: string }[]) => report((r) => { r.table(["id", "state", "detail"], rows.map((row) => [row.id, row.state, row.detail]), 2); }),
+    error,
+    json: (value: unknown) => stdout.write(`${JSON.stringify(value)}\n`),
+    raw: (value: string) => stdout.write(value),
+    diagnostic: (value: string) => stderr.write(`${terminalText(value).replace(/[\n\t]/g, " ")}\n`),
+  };
+}
 
 const USAGE = `acon ${pkg.version}: local console for agent-hub, agent-mem, vault-mem and agent-research
 
@@ -128,7 +182,7 @@ async function install(home: string, source: string | undefined, flags: Set<stri
         if (!packages.length) output.bullet("absent", "No packages found.");
         output.bullet("next", "acon install <id>");
       }
-      return 0;
+      return EXIT.ok;
     }
     const r = await installPackage(source!, { home, index, force: flags.has("--force") });
     if (flags.has("--json")) output.json(r);
@@ -137,13 +191,13 @@ async function install(home: string, source: string | undefined, flags: Set<stri
       output.line(r.verified ? "every file matched its sha256 in the index." : "not hash-verified (installed by URL or directory); the package passed the same checks the console runs.");
       output.bullet("next", "acon ui");
     }
-    return 0;
+    return EXIT.ok;
   } catch (error) {
     const message = error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`;
     if (message.endsWith("; see acon install --list")) output.error(message.slice(0, -"; see acon install --list".length), "acon install --list");
     else if (source && message.endsWith("; use --force to replace it")) output.error(message.slice(0, -"; use --force to replace it".length), `acon install ${shellQuote(source)} --force`);
     else output.error(message);
-    return 1;
+    return EXIT.fail;
   }
 }
 
@@ -158,10 +212,10 @@ function token(home: string, file: string | undefined, force: boolean): number {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") output.error(`${path} already exists; it was not changed`, `acon token new --file ${shellQuote(path)} --force`);
     else output.error(`could not write ${path} (${code ?? (error as Error).message})`);
-    return 1;
+    return EXIT.fail;
   }
   output.raw(`${path}\n`);
-  return 0;
+  return EXIT.ok;
 }
 
 function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set<string>): number {
@@ -182,7 +236,7 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   const bun = stableBun(process.execPath, process.env.PATH);
   if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`);
   const plist = launchdPlist({ label, bun, script: launchScript(resolve(home)), args, env, logDir: join(resolve(home), "console", "logs") });
-  if (!flags.has("--apply")) { output.raw(plist); return 0; }
+  if (!flags.has("--apply")) { output.raw(plist); return EXIT.ok; }
   if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)");
   const uid = process.getuid?.();
   if (uid === undefined) return fail("could not read the user id");
@@ -197,7 +251,7 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
   const print = run("print", `gui/${uid}/${label}`);
   output.bullet("ok", `Wrote ${file} and loaded gui/${uid}/${label}`);
   output.raw(print.stdout.toString());
-  return print.exitCode === 0 ? 0 : 1;
+  return print.exitCode === 0 ? EXIT.ok : EXIT.fail;
 }
 
 /**
@@ -210,7 +264,7 @@ export function launchScript(home: string, packageRoot = resolve(import.meta.dir
   return join(packageRoot, "bin", "acon.js");
 }
 
-const fail = (message: string, code = 2): number => { output.error(message); return code; };
+const fail = (message: string, code: number = EXIT.usage): number => { output.error(message); return code; };
 
 function principalCommand(home: string, args: string[], flags: Set<string>): number {
   try {
@@ -226,13 +280,13 @@ function principalCommand(home: string, args: string[], flags: Set<string>): num
       setPrincipalEnabled(home, args[1]!, args[0] === "on");
       output.bullet("ok", `Principal ${args[1]} ${args[0] === "on" ? "enabled" : "disabled"}`);
     }
-    return 0;
+    return EXIT.ok;
   } catch (error) {
     const cause = error instanceof PrincipalError ? error.message : "principal registry IO failed";
     const brief = cause.split("; ")[0]!;
     const next = cause.includes("not registered") ? "acon principal list" : `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
     output.error(cause.includes("not registered") ? brief : `${brief}; expected an owned console directory and a mode 0600 registry`, next);
-    return 1;
+    return EXIT.fail;
   }
 }
 
@@ -244,9 +298,9 @@ export async function main(argv: string[]): Promise<number> {
     const arg = argv[i]!;
     if (arg === "--ascii") { ascii = true; continue; }
     if (arg === "--color" || arg.startsWith("--color=")) {
-      if (color !== undefined) { output.error("--color may be given once"); return 2; }
+      if (color !== undefined) { output.error("--color may be given once"); return EXIT.usage; }
       color = arg === "--color" ? argv[++i] : arg.slice(8);
-      if (!["auto", "always", "never"].includes(color ?? "")) { output.error("--color must be auto, always or never"); return 2; }
+      if (!["auto", "always", "never"].includes(color ?? "")) { output.error("--color must be auto, always or never"); return EXIT.usage; }
       continue;
     }
     filtered.push(arg);
@@ -264,13 +318,13 @@ export async function main(argv: string[]): Promise<number> {
     const help = DETAILS[name];
     output.diagnostic(`Usage: ${help?.usage ?? "acon <command> [options]"}`);
     output.diagnostic(`Run 'acon help${help ? ` ${name}` : ""}' for details.`);
-    return 2;
+    return EXIT.usage;
   }
   const { command, flags, args, values } = parsed;
-  if (["--version", "-v", "version"].includes(command)) { if (jsonFlag) output.json({ version: pkg.version }); else output.raw(`${pkg.version}\n`); return 0; }
+  if (["--version", "-v", "version"].includes(command)) { if (jsonFlag) output.json({ version: pkg.version }); else output.raw(`${pkg.version}\n`); return EXIT.ok; }
   if (["help", "--help", "-h"].includes(command)) {
     const detail = filtered[1];
-    if (detail && !Object.hasOwn(COMMANDS, detail)) { output.error(`unknown help command: ${detail}`); return 2; }
+    if (detail && !Object.hasOwn(COMMANDS, detail)) { output.error(`unknown help command: ${detail}`); return EXIT.usage; }
     const text = detail ? USAGE : OVERVIEW;
     if (jsonFlag) output.json({ help: text });
     else if (detail) {
@@ -288,7 +342,7 @@ export async function main(argv: string[]): Promise<number> {
       output.line("Use acon help <command> for details.");
       output.line("--read-only keeps declared readOnly principal tools available.");
     }
-    return 0;
+    return EXIT.ok;
   }
   if (command === "build") {
     try { parseStaticNodes(values["--nodes"]![0]!); }
@@ -296,10 +350,10 @@ export async function main(argv: string[]): Promise<number> {
     try {
       const result = await buildStatic(values["--nodes"]![0]!, values["--out"]?.[0]);
       output.bullet("ok", `static shell written to ${result.out}; serve that directory over https and allow its origin on each acon serve node`);
-      return 0;
+      return EXIT.ok;
     } catch (error) {
       output.error(`static build failed: ${(error as Error).message}`, "acon help build");
-      return 1;
+      return EXIT.fail;
     }
   }
   const home = familyHome();
@@ -310,7 +364,7 @@ export async function main(argv: string[]): Promise<number> {
   let serve: ServeOptions | undefined;
   if (command === "serve") {
     const config = serveConfig(serveArgs(values, flags), process.env);
-    if (typeof config === "string") { output.error(config); return 2; }
+    if (typeof config === "string") { output.error(config); return EXIT.usage; }
     serve = config;
   }
   const scan = scanPlugins(home);
@@ -323,7 +377,7 @@ export async function main(argv: string[]): Promise<number> {
       if (!scan.entries.length) output.bullet("absent", "No plugins registered.");
       if (scan.entries.length) output.table([...scan.entries].sort((a, b) => Number(a.status === "verified") - Number(b.status === "verified")).map((p) => ({ id: `${p.tool}${p.version ? `@${p.version}` : ""}`, state: p.status, detail: p.reason ?? p.module ?? "" })));
     }
-    return scan.error ? 1 : 0;
+    return scan.error ? EXIT.fail : EXIT.ok;
   }
   const log = (line: string) => output.diagnostic(`acon: ${line}`);
   const plugins = await loadPlugins(scan, { home, log });
@@ -340,9 +394,9 @@ export async function main(argv: string[]): Promise<number> {
     pluginsDir: scan.dir,
     pluginsError: scan.error,
     log,
-    ...(serve ? { serve } : { onIdle: () => { log("no requests for 5 minutes; exiting"); process.exit(0); } }),
+    ...(serve ? { serve } : { onIdle: () => { log("no requests for 5 minutes; exiting"); process.exit(EXIT.ok); } }),
   });
-  const shutdown = () => { void server.stop().finally(() => process.exit(0)); };
+  const shutdown = () => { void server.stop().finally(() => process.exit(EXIT.ok)); };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
   if (serve) {

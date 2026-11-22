@@ -2,7 +2,7 @@
  * Installs the committed console from this checkout as an immutable release (#26):
  * $AGENTHUB_HOME/console/releases/<version>-<sha>/, then points console/current at it by atomic rename and keeps
  * console/previous. A running `acon serve` started from current/bin/acon.js keeps its files: nothing it runs is
- * changed in place. acon has no runtime dependencies, so a release is the package files only.
+ * changed in place. The exact production dependency is installed into the staged release from the local Bun cache.
  *
  *   bun scripts/install-release.ts [--home DIR] [--json]
  */
@@ -39,9 +39,14 @@ export function installRelease(o: { root: string; home: string }): Release {
     const staging = join(releases, `.staging-${process.pid}`);
     rmSync(staging, { recursive: true, force: true });
     mkdirSync(staging, { mode: 0o755 });
-    const paths = ["package.json", ...pkg.files.map((f) => f.replace(/\/$/, ""))];
+    const paths = ["package.json", "bun.lock", ...pkg.files.map((f) => f.replace(/\/$/, ""))];
     const tar = Bun.spawnSync(["tar", "-x", "-C", staging], { stdin: git(o.root, "archive", "--format=tar", "HEAD", "--", ...paths), stderr: "pipe" });
     if (tar.exitCode !== 0) { rmSync(staging, { recursive: true, force: true }); throw new Error(`tar failed: ${tar.stderr.toString().trim()}`); }
+    const install = Bun.spawnSync([process.execPath, "install", "--production", "--frozen-lockfile", "--offline"], { cwd: staging, stdout: "pipe", stderr: "pipe" });
+    if (install.exitCode !== 0) {
+      rmSync(staging, { recursive: true, force: true });
+      throw new Error("release dependency is unavailable in the Bun cache; run bun install --frozen-lockfile in the checkout and retry");
+    }
     rmSync(dir, { recursive: true, force: true }); // a partial directory without bin/acon.js
     renameSync(staging, dir);
   }

@@ -1,6 +1,6 @@
 # acon serve (H1) image. Holds no credentials: configure auth with ACON_ACCESS_TEAM/ACON_ACCESS_AUD
 # or a mounted ACON_TOKEN_FILE, and the browser origin with ACON_ORIGINS or --origin.
-FROM oven/bun:1.4.3
+FROM oven/bun:1.4.4
 
 # Set by the release workflow (#45); a local build leaves revision empty.
 ARG OCI_REVISION=""

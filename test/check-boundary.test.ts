@@ -69,6 +69,17 @@ describe("runtime and browser vendor boundary (#72)", () => {
     for (const license of ["MIT", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "OFL-1.1"]) expect(run(fixture("1.2.3", license)).exitCode).toBe(0);
   });
 
+  test("only the CLI may import the exact pinned output package", () => {
+    const root = fixture();
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { "@staix/cli-output": "0.1.0" }, devDependencies: { library: "1.2.3" } }));
+    writeFileSync(join(root, "src", "cli.ts"), 'import "@staix/cli-output";');
+    expect(run(root).exitCode).toBe(0);
+    writeFileSync(join(root, "src", "other.ts"), 'import "@staix/cli-output";');
+    expect(run(root).stderr.toString()).toContain("src/other.ts: @staix/cli-output");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { "@staix/cli-output": "^0.1.0" }, devDependencies: { library: "1.2.3" } }));
+    expect(run(root).exitCode).toBe(1);
+  });
+
   test("runtime dependencies and bare src imports stay forbidden", () => {
     const root = fixture();
     writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { library: "1.2.3" }, devDependencies: { library: "1.2.3" } }));
