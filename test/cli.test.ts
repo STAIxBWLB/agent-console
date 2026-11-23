@@ -1,7 +1,7 @@
 import { Report, ROLE_SGR, SGR_RESET } from "@staix/cli-output";
 import pkg from "../package.json" with { type: "json" };
-import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { afterAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { launchScript, launchdReceipt } from "../src/cli.ts";
 import { bearerVerifier, serveConfig } from "../src/serve.ts";
 import { reloadAgent, stableBun } from "../src/setup.ts";
@@ -237,16 +237,20 @@ test("stale plugin warnings name a copyable setup command", async () => {
   const home = mkdtempSync("/tmp/acon-ui-");
   const plugins = join(home, "console", "plugins"); mkdirSync(plugins, { recursive: true, mode: 0o700 });
   writeFileSync(join(plugins, "demo.json"), JSON.stringify({ api: 1, tool: "demo", module: join(home, "missing.js"), sha256: "0".repeat(64) }));
+  writeFileSync(join(plugins, "bad.json"), "not JSON");
   for (const command of ["ui", "serve"] as const) {
     const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() }); const port = probe.port!; probe.stop(true);
     const args = command === "ui" ? ["ui", "--no-open"] : ["serve", "--port", String(port)];
     const proc = Bun.spawn([process.execPath, bin, ...args, "--color=never"], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", AGENTHUB_HOME: home, LANG: "en_US.UTF-8", COLUMNS: "80" }, stdout: "pipe", stderr: "pipe" });
     const reader = proc.stderr.getReader(); let text = "";
-    try { while (!text.includes("demo setup")) { const part = await reader.read(); if (part.done) break; text += new TextDecoder().decode(part.value); } }
+    try { while (!text.includes("demo setup") || !text.includes("acon plugins")) { const part = await reader.read(); if (part.done) break; text += new TextDecoder().decode(part.value); } }
     finally { reader.releaseLock(); proc.kill(); await proc.exited; }
     expect(text).toContain("⚠  demo not loaded (stale): module is missing");
     expect(text).toContain("→  demo setup");
     expect(text).not.toContain("`demo setup`");
+    expect(text).toContain("bad not loaded (invalid)");
+    expect(text).toContain("acon plugins");
+    expect(text).not.toContain("bad setup");
   }
 });
 
@@ -255,9 +259,9 @@ test("static build report goldens", async () => {
     const root = realpathSync(mkdtempSync("/tmp/acon-build-")); const dir = join(root, "dist");
     const result = await runCli(["build", "--static", "--nodes", "desk=https://node.example.com", "--out", dir, `--color=${color}`], { LANG: lang!, LC_ALL: lang!, COLUMNS: "80" });
     expect(result.code).toBe(0);
-    const plain = ` acon Static shell  ${pkg.version}\n\n▸ Build\n  ✓  Built static shell for 1 node\n  Directory:  <dir>\n    →  Serve '<dir>' over HTTPS\n  Allow the static origin on each acon serve node.\n`;
-    const ascii = ` acon Static shell  ${pkg.version}\n\n> Build\n  ok Built static shell for 1 node\n  Directory:  <dir>\n    -> Serve '<dir>' over HTTPS\n  Allow the static origin on each acon serve node.\n`;
-    const colored = `${ROLE_SGR.header} acon Static shell${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Build${SGR_RESET}\n  ${ROLE_SGR.success}✓ ${SGR_RESET} Built static shell for 1 node\n  ${ROLE_SGR.key}Directory:${SGR_RESET}  <dir>\n    ${ROLE_SGR.accent}→  Serve '<dir>' over HTTPS${SGR_RESET}\n  ${ROLE_SGR.hint}Allow the static origin on each acon serve node.${SGR_RESET}\n`;
+    const plain = ` acon Static shell  ${pkg.version}\n\n▸ Build\n  ✓  Built static shell for 1 node\n  Directory:  <dir>\n    →  Serve '<dir>' over HTTPS\n  Allow the static origin on each node with --origin or ACON_ORIGINS.\n`;
+    const ascii = ` acon Static shell  ${pkg.version}\n\n> Build\n  ok Built static shell for 1 node\n  Directory:  <dir>\n    -> Serve '<dir>' over HTTPS\n  Allow the static origin on each node with --origin or ACON_ORIGINS.\n`;
+    const colored = `${ROLE_SGR.header} acon Static shell${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Build${SGR_RESET}\n  ${ROLE_SGR.success}✓ ${SGR_RESET} Built static shell for 1 node\n  ${ROLE_SGR.key}Directory:${SGR_RESET}  <dir>\n    ${ROLE_SGR.accent}→  Serve '<dir>' over HTTPS${SGR_RESET}\n  ${ROLE_SGR.hint}Allow the static origin on each node with --origin or ACON_ORIGINS.${SGR_RESET}\n`;
     expect(result.out.replaceAll(dir, "<dir>")).toBe(color === "always" ? colored : lang === "C" ? ascii : plain);
   }
   const bad = await runCli(["build"], { COLUMNS: "80", NO_COLOR: "1" });
@@ -268,4 +272,59 @@ test("launchd receipt includes inspect command without dumping launchctl output"
   const report = new Report(80, false);
   launchdReceipt(report, "/tmp/acon.plist", "gui/100/acon.serve", "/tmp/logs");
   expect(report.render(false).join("\n")).toBe(` acon LaunchAgent  ${pkg.version}\n\n▸ Installation\n  ✓  LaunchAgent installed and loaded\n  Plist:    /tmp/acon.plist\n  Service:  gui/100/acon.serve\n  Logs:     /tmp/logs\n    →  launchctl print gui/100/acon.serve`);
+});
+
+describe("isolated CLI refusals (#142)", () => {
+  const root = realpathSync(mkdtempSync("/tmp/acon-errors-"));
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const cleanEnv = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, AGENTHUB_HOME: join(root, "hub"), LC_ALL: "en_US.UTF-8", COLUMNS: "80", NO_COLOR: "1" };
+  const run = async (args: string[], extra: Record<string, string> = {}) => {
+    const proc = Bun.spawn([process.execPath, bin, ...args], { env: { ...cleanEnv, ...extra }, stdout: "pipe", stderr: "pipe" });
+    const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    return { code, out, err: err.replace(/\s+/g, " ") };
+  };
+  const missing = join(root, "missing", "package");
+  const blocker = join(root, "blocker"); writeFileSync(blocker, "not a directory");
+  const cases: { name: string; args: string[]; env?: Record<string, string>; code: number; cause: string; next: string; usage?: string }[] = [
+    { name: "color", args: ["plugins", "--color=bad"], code: 2, cause: "--color must be auto, always or never", next: "--color=auto", usage: "Usage: acon plugins" },
+    { name: "label", args: ["setup", "launchd", "--label", "bad/label"], code: 2, cause: "--label bad/label", next: "acon setup launchd --label acon.serve", usage: "Usage: acon setup" },
+    { name: "missing install path", args: ["install", missing], code: 1, cause: "is not a directory", next: "ls -ld" },
+    { name: "token IO", args: ["token", "new", "--file", join(blocker, "token")], code: 1, cause: "could not write", next: "ls -ld" },
+    { name: "missing auth", args: ["serve", "--host", "0.0.0.0", "--origin", "https://console.example.com"], code: 2, cause: "without authentication", next: "ACON_ACCESS_TEAM" },
+    { name: "host", args: ["serve", "--host", "invalid host"], code: 2, cause: "not a host name or address", next: "Set --host" },
+    { name: "port", args: ["serve", "--port", "bad"], code: 2, cause: "must be 1-65535", next: "Set --port" },
+    { name: "origin", args: ["serve", "--origin", "bad"], code: 2, cause: "is not a URL", next: "Set --origin" },
+    { name: "read only", args: ["serve"], env: { ACON_READ_ONLY: "bad" }, code: 2, cause: "ACON_READ_ONLY must", next: "ACON_READ_ONLY=1" },
+    { name: "missing token", args: ["serve"], env: { ACON_TOKEN_FILE: join(root, "missing-token") }, code: 2, cause: "could not be read", next: "acon token new --file" },
+  ];
+  for (const c of cases) test(c.name, async () => {
+    const result = await run(c.args, c.env);
+    expect(result.code).toBe(c.code); expect(result.out).toBe("");
+    expect(result.err).toContain(c.cause); expect(result.err).toContain(c.next);
+    expect(result.err).toContain("→"); if (c.usage) { expect(result.err).toContain(c.usage); expect(result.err).toContain("Run 'acon help"); }
+  });
+  test("occupied port returns a controlled error", async () => {
+    const occupied = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    try {
+      const result = await run(["serve", "--port", String(occupied.port)]);
+      expect(result.code).toBe(1); expect(result.out).toBe("");
+      expect(result.err).toContain("port is already in use"); expect(result.err).toContain("unused --port");
+      expect(result.err).not.toContain("at startServer"); expect(result.err).not.toContain("Bun v");
+    } finally { occupied.stop(true); }
+  });
+  const simulated = async (kind: string) => {
+    const script = `import { main } from ${JSON.stringify(join(import.meta.dir, "..", "src", "cli.ts"))};
+      Object.defineProperty(process, "platform", { value: ${JSON.stringify(kind === "unsupported" ? "linux" : "darwin")} });
+      if (${JSON.stringify(kind)} === "uid") Object.defineProperty(process, "getuid", { value: undefined });
+      if (${JSON.stringify(kind)} === "bun") Object.defineProperty(process, "execPath", { value: "not-absolute-bun" });
+      if (${JSON.stringify(kind)} === "launchctl") Bun.spawnSync = ((argv) => ({ exitCode: argv[1] === "bootstrap" ? 5 : 1, stderr: Buffer.from("fixture failure") }));
+      process.exit(await main(["setup", "launchd", "--apply"]));`;
+    const proc = Bun.spawn([process.execPath, "-e", script], { env: cleanEnv, stdout: "pipe", stderr: "pipe" });
+    const [code, out, err] = await Promise.all([proc.exited, new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    return { code, out, err: err.replace(/\s+/g, " ") };
+  };
+  for (const [kind, cause, next] of [["unsupported", "needs macOS", "on macOS"], ["uid", "could not read the user id", "logged-in user"], ["bun", "not absolute", "absolute path"], ["launchctl", "bootstrap failed", "launchctl print"]]) test(`launchd ${kind}`, async () => {
+    const result = await simulated(kind!);
+    expect(result.code).toBe(1); expect(result.out).toBe(""); expect(result.err).toContain(cause!); expect(result.err).toContain(next!); expect(result.err).toContain("→");
+  });
 });
