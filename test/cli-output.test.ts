@@ -139,3 +139,16 @@ test("long plugin directory paths stay copyable", async () => {
   const result = await run(["plugins", "--color=never"], { AGENTHUB_HOME: home, COLUMNS: "40" });
   expect(result.out.split("\n")).toContain(`    ${home}/console/plugins`);
 });
+
+
+test("invalid principal id points to editing the registry, not its permissions", async () => {
+  const home = mkdtempSync("/tmp/acon-o-");
+  const dir = join(home, "console"); mkdirSync(dir, { mode: 0o700 });
+  writeFileSync(join(dir, "principals.json"), JSON.stringify({ version: 1, principals: [{ id: "Bad", enabled: true, tools: [], access: { email: "fixture@example.com" } }] }), { mode: 0o600 });
+  const result = await run(["principal", "list", "--color=never"], { AGENTHUB_HOME: home });
+  expect(result.code).toBe(1);
+  expect(result.err.replace(/\s+/g, " ")).toContain("choose an id such as assistant");
+  expect(result.err).toContain(`  → vi '${dir}/principals.json'`);
+  expect(result.err).not.toContain("ls -ld");
+  expect(result.err).not.toContain("expected an owned");
+});

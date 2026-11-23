@@ -391,7 +391,11 @@ for (const concurrent of [false, true]) test(`registry toggle uses one validated
     writeFileSync: (_file: string, text: string) => { staged = text; if (concurrent) current = external; },
     renameSync: () => { renames++; current = staged; }, unlinkSync: () => { cleanups++; },
   }) as (home: string, id: string, enabled: boolean) => void;
-  if (concurrent) { expect(() => toggle("fixture-home", "assistant", false)).toThrow("registry changed during edit; reread"); expect(current).toBe(external); expect(renames).toBe(0); }
+  if (concurrent) {
+    try { toggle("fixture-home", "assistant", false); throw new Error("expected conflict"); }
+    catch (error) { expect(error).toBeInstanceOf(PrincipalError); expect((error as PrincipalError).diagnostic).toEqual({ message: "principal registry changed during edit; reread it before retrying", next: { kind: "retry" } }); }
+    expect(current).toBe(external); expect(renames).toBe(0);
+  }
   else { toggle("fixture-home", "assistant", false); expect(JSON.parse(current).principals[0].enabled).toBe(false); expect(renames).toBe(1); }
   expect(snapshots).toBe(1); expect(checks).toBe(1); expect(cleanups).toBe(1);
 });

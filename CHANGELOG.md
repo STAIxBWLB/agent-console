@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Show plugin and principal lists as counted tables with status markers; plugin setup commands appear as separate next steps (#134).
+- Show plugin and principal lists as counted tables with status markers; plugin setup commands appear as separate next steps. Verified module paths remain available through `plugins --json` (#134).
 
 - Generate CLI help and the README command list from one source. `help --json` now returns structured command metadata instead of a help string. Command `--help`/`-h`, `help help`, and `help version` now exit 0; launchd platform, user-id and Bun-path failures exit 1 instead of 2 (#134).
 

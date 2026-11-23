@@ -249,8 +249,12 @@ function principalCommand(home: string, args: string[], flags: Set<string>): num
   } catch (error) {
     const diagnostic = error instanceof PrincipalError ? error.diagnostic : undefined;
     const message = diagnostic?.message ?? "principal registry IO failed";
-    const next = diagnostic?.next ?? `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
-    output.error(diagnostic?.next ? message : `${message}; expected an owned console directory and a mode 0600 registry`, next);
+    const action = diagnostic?.next;
+    const next = typeof action === "string" ? action
+      : action?.kind === "edit-registry" ? `vi ${shellQuote(join(home, "console", "principals.json"))}`
+      : action?.kind === "retry" ? `acon principal ${args[0]} ${shellQuote(args[1]!)}`
+      : `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
+    output.error(action ? message : `${message}; expected an owned console directory and a mode 0600 registry`, next);
     return EXIT.fail;
   }
 }

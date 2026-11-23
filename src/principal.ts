@@ -18,7 +18,7 @@ export interface PrincipalRecord {
 }
 export interface PrincipalRegistry { version: 1; principals: PrincipalRecord[] }
 export class PrincipalError extends Error {
-  constructor(message: string, readonly diagnostic?: { message: string; next?: string }) { super(message); }
+  constructor(message: string, readonly diagnostic?: { message: string; next?: string | { kind: "edit-registry" | "retry" } }) { super(message); }
 }
 class PrincipalIdError extends PrincipalError {}
 class RegistryEditConflictError extends PrincipalError {}
@@ -58,7 +58,7 @@ function readRegistrySnapshot(home: string): { text: string; registry: Principal
     if (!isPlainObject(value) || value.version !== 1 || !Array.isArray(value.principals) || Object.keys(value).some((k) => !["version", "principals"].includes(k))) throw new PrincipalError("invalid registry");
     const ids = new Set<string>(), credentials = new Set<string>();
     const principals = value.principals.map((p: unknown): PrincipalRecord => {
-      if (isPlainObject(p) && (!shortText(p.id) || !/^[a-z][a-z0-9-]*$/.test(p.id))) throw new PrincipalIdError("principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant", { message: "principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters)" });
+      if (isPlainObject(p) && (!shortText(p.id) || !/^[a-z][a-z0-9-]*$/.test(p.id))) throw new PrincipalIdError("principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant", { message: "principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant", next: { kind: "edit-registry" } });
       if (!isPlainObject(p) || !shortText(p.id) || typeof p.enabled !== "boolean" || !Array.isArray(p.tools) || p.tools.some((t: unknown) => !toolName(t)) || Object.keys(p).some((k) => !["id", "enabled", "tools", "ratePerMinute", "bearerTokenFile", "access"].includes(k))) throw new PrincipalError("invalid principal record");
       if (ids.has(p.id)) throw new PrincipalError("duplicate principal");
       ids.add(p.id);
@@ -97,7 +97,7 @@ export function setPrincipalEnabled(home: string, id: string, enabled: boolean):
   const temporary = join(home, "console", `.principals-${randomUUID()}.tmp`);
   try {
     writeFileSync(temporary, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    if (privateText(registryPath(home)) !== before) throw new RegistryEditConflictError("principal registry changed during edit; reread it before retrying acon principal on/off", { message: "principal registry changed during edit" });
+    if (privateText(registryPath(home)) !== before) throw new RegistryEditConflictError("principal registry changed during edit; reread it before retrying acon principal on/off", { message: "principal registry changed during edit; reread it before retrying", next: { kind: "retry" } });
     renameSync(temporary, registryPath(home));
   } catch (error) {
     if (error instanceof RegistryEditConflictError) throw error;
