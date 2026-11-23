@@ -267,5 +267,5 @@ test("static build report goldens", async () => {
 test("launchd receipt includes inspect command without dumping launchctl output", () => {
   const report = new Report(80, false);
   launchdReceipt(report, "/tmp/acon.plist", "gui/100/acon.serve", "/tmp/logs");
-  expect(report.render(false).join("\n")).toBe(` acon LaunchAgent  ${pkg.version}\n\n▸ Installation\n  ✓  LaunchAgent installed and loaded\n  Plist:    /tmp/acon.plist\n  Service:  gui/100/acon.serve\n  Logs:     /tmp/logs\n  →  launchctl print gui/100/acon.serve`);
+  expect(report.render(false).join("\n")).toBe(` acon LaunchAgent  ${pkg.version}\n\n▸ Installation\n  ✓  LaunchAgent installed and loaded\n  Plist:    /tmp/acon.plist\n  Service:  gui/100/acon.serve\n  Logs:     /tmp/logs\n    →  launchctl print gui/100/acon.serve`);
 });

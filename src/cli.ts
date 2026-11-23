@@ -2,7 +2,7 @@ import { Report, MARKERS, markerCell, resolveColor, streamEnv, asciiMarkers, pai
 import pkg from "../package.json" with { type: "json" };
 import { familyHome, loadPlugins, scanPlugins, type PluginEntry } from "./plugins.ts";
 import { startServer } from "./server.ts";
-import { buildStatic, parseStaticNodes } from "./static.ts";
+import { buildStatic, parseStaticNodes, StaticError } from "./static.ts";
 import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { PrincipalError, readPrincipalRegistry, setPrincipalEnabled } from "./principal.ts";
@@ -75,13 +75,14 @@ export const COMMANDS: Record<string, string[]> = Object.fromEntries(Object.entr
 export const VALUED: Record<string, string[]> = Object.fromEntries(Object.entries(HELP).map(([name, entry]) => [name, entry.flags.filter((f) => f.value).map((f) => f.name)]));
 const SUBCOMMANDS: Record<string, string> = { token: "new", setup: "launchd" };
 
-export function parse(argv: string[]): { command: string; flags: Set<string>; args: string[]; values: Record<string, string[]> } | string | { error: string; next: string } {
+export function parse(argv: string[]): { command: string; flags: Set<string>; args: string[]; values: Record<string, string[]> } | { error: string; next: string } {
   const [command = "help", ...all] = argv;
+  const refuse = (error: string, next = Object.hasOwn(HELP, command) ? `acon help ${command}` : "acon help") => ({ error, next });
   if (Object.hasOwn(HELP, command) && all.some((arg) => arg === "--help" || arg === "-h")) return { command: "help", flags: new Set(), args: [command], values: {} };
   if (["help", "--help", "-h"].includes(command)) return { command: "help", flags: new Set(), args: all, values: {} };
   if (["--version", "-v", "version"].includes(command)) return { command: "version", flags: new Set(), args: [], values: {} };
   const allowed = COMMANDS[command];
-  if (!allowed) return `unknown command: ${command}`;
+  if (!allowed) return refuse(`unknown command: ${command}`);
   const values: Record<string, string[]> = {};
   const rest: string[] = [];
   for (let i = 0; i < all.length; i += 1) {
@@ -89,22 +90,22 @@ export function parse(argv: string[]): { command: string; flags: Set<string>; ar
     const [name, inline] = arg.startsWith("--") && arg.includes("=") ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)] : [arg, undefined];
     if (VALUED[command]?.includes(name)) {
       const value = inline ?? all[++i];
-      if (value === undefined || value === "") return `${name} needs a value`;
+      if (value === undefined || value === "") return refuse(`${name} needs a value`);
       (values[name] ??= []).push(value);
     } else rest.push(arg);
   }
-  for (const name of ["--host", "--port", "--file", "--label", "--nodes", "--out"]) if ((values[name]?.length ?? 0) > 1) return `${name} may be given once`;
+  for (const name of ["--host", "--port", "--file", "--label", "--nodes", "--out"]) if ((values[name]?.length ?? 0) > 1) return refuse(`${name} may be given once`);
   const sub = SUBCOMMANDS[command];
-  if (sub && rest[0] !== sub) return `${command} takes the subcommand ${sub}: acon ${command} ${sub}`;
+  if (sub && rest[0] !== sub) return refuse(`${command} takes the subcommand ${sub}`, `acon help ${command}`);
   if (sub) rest.shift();
   const args = command === "install" || command === "principal" ? rest.filter((arg) => !arg.startsWith("--")) : [];
   const unknown = rest.find((arg) => !args.includes(arg) && !allowed.includes(arg));
-  if (unknown) return `unknown option for ${command}: ${unknown}`;
+  if (unknown) return refuse(`unknown option for ${command}: ${unknown}`);
   const flags = new Set(rest.filter((arg) => !args.includes(arg)));
   if (command === "install") {
-    if (flags.has("--list") ? args.length > 0 || flags.has("--force") : args.length !== 1) return "install takes one package name, https URL or directory, or --list";
+    if (flags.has("--list") ? args.length > 0 || flags.has("--force") : args.length !== 1) return refuse("install takes one package name, https URL or directory, or --list");
   }
-  if (command === "principal" && !(args.length === 2 && ["off", "on"].includes(args[0]!)) && !(args.length === 1 && args[0] === "list")) return "principal takes list [--json], off <id> or on <id>";
+  if (command === "principal" && !(args.length === 2 && ["off", "on"].includes(args[0]!)) && !(args.length === 1 && args[0] === "list")) return refuse("principal takes list [--json], off <id> or on <id>");
   if (command === "build" && (!flags.has("--static") || !values["--nodes"])) return { error: "build needs --static and --nodes id=https://origin", next: "acon build --static --nodes desk=https://node.example.com" };
   return { command, flags, args, values };
 }
@@ -227,7 +228,7 @@ export function launchdReceipt(report: Report, file: string, service: string, lo
   if (report.columns !== undefined && [file, logs].some((value) => Bun.stringWidth(value, { ambiguousIsNarrow: true }) + 13 > report.columns!)) {
     reportPath(report, "Plist", file); report.kv([["Service", service]]); reportPath(report, "Logs", logs);
   } else report.kv([["Plist", file], ["Service", service], ["Logs", logs]]);
-  report.bullet("next", `launchctl print ${service}`);
+  report.next(`launchctl print ${service}`);
 }
 
 /**
@@ -306,8 +307,8 @@ export async function main(argv: string[]): Promise<number> {
   }
   output = createOutput({ color, ascii, json: jsonFlag || filtered.includes("--json") });
   const parsed = parse(filtered);
-  if (typeof parsed === "string" || "error" in parsed) {
-    output.error(typeof parsed === "string" ? parsed : parsed.error, typeof parsed === "string" ? undefined : parsed.next);
+  if ("error" in parsed) {
+    output.error(parsed.error, parsed.next);
     const name = filtered[0] ?? "";
     const help = HELP[name];
     output.diagnostic(`Usage: ${help?.usage ?? "acon <command> [options]"}`);
@@ -344,7 +345,13 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (command === "build") {
     try { parseStaticNodes(values["--nodes"]![0]!); }
-    catch (error) { return fail((error as Error).message); }
+    catch (error) {
+      if (error instanceof StaticError) output.error(error.diagnostic.message, error.diagnostic.next);
+      else output.error((error as Error).message, "acon help build");
+      output.diagnostic(`Usage: ${HELP.build!.usage}`);
+      output.diagnostic("Run 'acon help build' for details.");
+      return EXIT.usage;
+    }
     try {
       const result = await buildStatic(values["--nodes"]![0]!, values["--out"]?.[0]);
       output.report((report) => {
@@ -356,7 +363,8 @@ export async function main(argv: string[]): Promise<number> {
       });
       return EXIT.ok;
     } catch (error) {
-      output.error(`static build failed: ${(error as Error).message}`);
+      if (error instanceof StaticError) output.error(`static build failed: ${error.diagnostic.message}`, error.diagnostic.next);
+      else output.error(`static build failed: ${(error as Error).message}`, "Check the output directory and its parent permissions");
       return EXIT.fail;
     }
   }
