@@ -21,6 +21,8 @@ export interface PluginEntry {
   file: string;
   status: PluginStatus;
   reason?: string;
+  /** Human diagnostic and actionable command, separate from the legacy JSON reason. */
+  diagnostic?: { message: string; next: string };
   /** From a versioned registration file, `<tool>@<version>.json` (#26). */
   version?: string;
   /** The verified module hash; with the tool it names this load (`ref`), so a page keeps the code it started with. */
@@ -196,13 +198,13 @@ function readEntry(file: string): PluginEntry {
   if (typeof m.module !== "string" || !isAbsolute(m.module) || !/\.(ts|js|mjs)$/.test(m.module)) return bad("module must be an absolute .ts, .js or .mjs path");
   if (typeof m.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(m.sha256)) return bad("sha256 must be 64 lowercase hex characters");
   const module = m.module;
-  if (!existsSync(module) || !statSync(module).isFile()) return { tool, file, module, status: "stale", reason: `module is missing; re-run \`${tool} setup\`` };
+  if (!existsSync(module) || !statSync(module).isFile()) return { tool, file, module, status: "stale", reason: `module is missing; re-run \`${tool} setup\``, diagnostic: { message: "module is missing", next: `${tool} setup` } };
   const unsafe = replaceableBy(module);
   if (unsafe) return { tool, file, module, status: "invalid", reason: unsafe };
   // Hash and import the resolved path that was checked, so a symlink on the way cannot be swapped afterwards.
   const real = realpathSync(module);
   const actual = createHash("sha256").update(readFileSync(real)).digest("hex");
-  if (actual !== m.sha256) return { tool, file, version, module: real, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\`` };
+  if (actual !== m.sha256) return { tool, file, version, module: real, status: "stale", reason: `module changed since setup; re-run \`${tool} setup\``, diagnostic: { message: "module changed since setup", next: `${tool} setup` } };
   return { tool, file, version, module: real, sha256: actual, status: "verified" };
 }
 

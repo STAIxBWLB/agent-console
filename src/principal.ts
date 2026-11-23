@@ -17,7 +17,9 @@ export interface PrincipalRecord {
   access?: { email?: string; serviceTokenId?: string };
 }
 export interface PrincipalRegistry { version: 1; principals: PrincipalRecord[] }
-export class PrincipalError extends Error {}
+export class PrincipalError extends Error {
+  constructor(message: string, readonly diagnostic?: { message: string; next?: string | { kind: "edit-registry" | "retry" } }) { super(message); }
+}
 class PrincipalIdError extends PrincipalError {}
 class RegistryEditConflictError extends PrincipalError {}
 export class BodyError extends Error {
@@ -56,7 +58,7 @@ function readRegistrySnapshot(home: string): { text: string; registry: Principal
     if (!isPlainObject(value) || value.version !== 1 || !Array.isArray(value.principals) || Object.keys(value).some((k) => !["version", "principals"].includes(k))) throw new PrincipalError("invalid registry");
     const ids = new Set<string>(), credentials = new Set<string>();
     const principals = value.principals.map((p: unknown): PrincipalRecord => {
-      if (isPlainObject(p) && (!shortText(p.id) || !/^[a-z][a-z0-9-]*$/.test(p.id))) throw new PrincipalIdError("principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant");
+      if (isPlainObject(p) && (!shortText(p.id) || !/^[a-z][a-z0-9-]*$/.test(p.id))) throw new PrincipalIdError("principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant", { message: "principal id must start with a lowercase letter and contain only lowercase letters, digits and dashes (at most 200 characters); choose an id such as assistant", next: { kind: "edit-registry" } });
       if (!isPlainObject(p) || !shortText(p.id) || typeof p.enabled !== "boolean" || !Array.isArray(p.tools) || p.tools.some((t: unknown) => !toolName(t)) || Object.keys(p).some((k) => !["id", "enabled", "tools", "ratePerMinute", "bearerTokenFile", "access"].includes(k))) throw new PrincipalError("invalid principal record");
       if (ids.has(p.id)) throw new PrincipalError("duplicate principal");
       ids.add(p.id);
@@ -79,7 +81,7 @@ function readRegistrySnapshot(home: string): { text: string; registry: Principal
     return { text, registry: { version: 1, principals } };
   } catch (error) {
     if (error instanceof PrincipalIdError) throw error;
-    throw new PrincipalError("principal registry is missing, unsafe or invalid; check console/principals.json version 1, unique ids/credentials, tool lists, positive rates, owner and mode 0600");
+    throw new PrincipalError("principal registry is missing, unsafe or invalid; check console/principals.json version 1, unique ids/credentials, tool lists, positive rates, owner and mode 0600", { message: "principal registry is missing, unsafe or invalid" });
   }
 }
 
@@ -90,16 +92,16 @@ export function readPrincipalRegistry(home: string): PrincipalRegistry {
 export function setPrincipalEnabled(home: string, id: string, enabled: boolean): void {
   const { text: before, registry } = readRegistrySnapshot(home);
   const record = registry.principals.find((p) => p.id === id);
-  if (!record) throw new PrincipalError("principal id is not registered; run acon principal list and choose an existing id");
+  if (!record) throw new PrincipalError("principal id is not registered; run acon principal list and choose an existing id", { message: "principal id is not registered", next: "acon principal list" });
   record.enabled = enabled;
   const temporary = join(home, "console", `.principals-${randomUUID()}.tmp`);
   try {
     writeFileSync(temporary, `${JSON.stringify(registry, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-    if (privateText(registryPath(home)) !== before) throw new RegistryEditConflictError("principal registry changed during edit; reread it before retrying acon principal on/off");
+    if (privateText(registryPath(home)) !== before) throw new RegistryEditConflictError("principal registry changed during edit; reread it before retrying acon principal on/off", { message: "principal registry changed during edit; reread it before retrying", next: { kind: "retry" } });
     renameSync(temporary, registryPath(home));
   } catch (error) {
     if (error instanceof RegistryEditConflictError) throw error;
-    throw new PrincipalError("principal registry could not be safely updated; check ownership, mode 0600 and concurrent edits, then retry acon principal on/off");
+    throw new PrincipalError("principal registry could not be safely updated; check ownership, mode 0600 and concurrent edits, then retry acon principal on/off", { message: "principal registry could not be safely updated" });
   } finally { try { unlinkSync(temporary); } catch { /* renamed or never created */ } }
 }
 
