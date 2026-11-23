@@ -100,7 +100,7 @@ describe("H2 static build (#46)", () => {
     const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     expect(code).toBe(0);
     expect(stderr).toBe("");
-    expect(stdout).toContain("static shell written");
+    expect(stdout).toContain("Built static shell for 1 node");
     expect(existsSync(env.AGENTHUB_HOME)).toBe(false);
     expect(readFileSync(join(root, "dist", "config.json"), "utf8")).not.toContain("private-marker");
   });

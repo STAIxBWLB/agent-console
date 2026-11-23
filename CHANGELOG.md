@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Show static builds and LaunchAgent installation as receipts. LaunchAgent setup no longer invokes or dumps `launchctl print`; it provides that command as a next step (#134).
+
 - Show serve settings as aligned rows and print the one-time local console URL whole on its own line. Plugin problems use warning and next-step rows (#134).
 
 - Show package lists as tables and installation receipts with verification markers; empty indexes no longer suggest a placeholder command (#134).

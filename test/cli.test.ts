@@ -1,8 +1,8 @@
-import { ROLE_SGR, SGR_RESET } from "@staix/cli-output";
+import { Report, ROLE_SGR, SGR_RESET } from "@staix/cli-output";
 import pkg from "../package.json" with { type: "json" };
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { launchScript } from "../src/cli.ts";
+import { launchScript, launchdReceipt } from "../src/cli.ts";
 import { bearerVerifier, serveConfig } from "../src/serve.ts";
 import { reloadAgent, stableBun } from "../src/setup.ts";
 import { tmpdir } from "node:os";
@@ -248,4 +248,24 @@ test("stale plugin warnings name a copyable setup command", async () => {
     expect(text).toContain("→  demo setup");
     expect(text).not.toContain("`demo setup`");
   }
+});
+
+test("static build report goldens", async () => {
+  for (const [color, lang] of [["never", "en_US.UTF-8"], ["never", "C"], ["always", "en_US.UTF-8"]]) {
+    const root = mkdtempSync("/tmp/acon-build-"); const dir = join(root, "dist");
+    const result = await runCli(["build", "--static", "--nodes", "desk=https://node.example.com", "--out", dir, `--color=${color}`], { LANG: lang!, COLUMNS: "80" });
+    expect(result.code).toBe(0);
+    const plain = ` acon Static shell  ${pkg.version}\n\n▸ Build\n  ✓  Built static shell for 1 node\n  Directory:  <dir>\n  →  acon help build\n`;
+    const ascii = ` acon Static shell  ${pkg.version}\n\n> Build\n  ok Built static shell for 1 node\n  Directory:  <dir>\n  -> acon help build\n`;
+    const colored = `${ROLE_SGR.header} acon Static shell${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Build${SGR_RESET}\n  ${ROLE_SGR.success}✓ ${SGR_RESET} Built static shell for 1 node\n  ${ROLE_SGR.key}Directory:${SGR_RESET}  <dir>\n  ${ROLE_SGR.accent}→ ${SGR_RESET} acon help build\n`;
+    expect(result.out.replaceAll(dir, "<dir>")).toBe(color === "always" ? colored : lang === "C" ? ascii : plain);
+  }
+  const bad = await runCli(["build"], { COLUMNS: "80", NO_COLOR: "1" });
+  expect(bad.code).toBe(2); expect(bad.err).toContain("  → acon build --static --nodes desk=https://node.example.com");
+});
+
+test("launchd receipt includes inspect command without dumping launchctl output", () => {
+  const report = new Report(80, false);
+  launchdReceipt(report, "/tmp/acon.plist", "gui/100/acon.serve", "/tmp/logs");
+  expect(report.render(false).join("\n")).toBe(` acon LaunchAgent  ${pkg.version}\n\n▸ Installation\n  ✓  LaunchAgent installed and loaded\n  Plist:    /tmp/acon.plist\n  Service:  gui/100/acon.serve\n  Logs:     /tmp/logs\n  →  launchctl print gui/100/acon.serve`);
 });
