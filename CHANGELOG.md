@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Update `@staix/cli-output` to 0.1.3 and keep long unbroken report tokens, including URLs and paths, whole, even when they exceed the terminal width. The fixture harness exercises all installed v1 fixtures (STAIxBWLB/cli-output#31).
+
 - CLI usage, configuration, file and startup refusals now report a cause and recovery step; occupied ports return a controlled diagnostic instead of a runtime stack trace (#142).
 
 - Show static builds and LaunchAgent installation as receipts. LaunchAgent setup no longer invokes or dumps `launchctl print`; it provides that command as a next step. Parser refusals and static build errors now show their corrective steps separately (#134).

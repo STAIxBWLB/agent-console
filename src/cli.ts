@@ -29,8 +29,8 @@ export function createOutput(options: OutputOptions = {}) {
     const text = terminalText(value, { singleLine: true });
     for (const spans of lineSpans(text, columns(stdout))) stdout.write(`${paint(spans.map((span) => ({ ...span, role })), color(stdout))}\n`);
   };
-  const report = (build: (out: Report) => void, initialBlank = false) => {
-    const value = new Report(columns(stdout), ascii); build(value);
+  const report = (build: (out: Report) => void, initialBlank = false, keepTokensWhole = false) => {
+    const value = new Report(columns(stdout), ascii, { keepTokensWhole }); build(value);
     if (initialBlank) stdout.write("\n");
     const lines = value.render(color(stdout));
     if (lines.length) stdout.write(`${lines.join("\n")}\n`);
@@ -50,9 +50,9 @@ export function createOutput(options: OutputOptions = {}) {
   };
   return {
     line,
-    report,
+    report: (build: (out: Report) => void) => report(build, false, true),
     warning: (message: string, next?: string) => {
-      const value = new Report(columns(stderr), ascii);
+      const value = new Report(columns(stderr), ascii, { keepTokensWhole: true });
       value.bullet("warn", terminalText(message, { singleLine: true }));
       if (next) value.next(terminalText(next, { singleLine: true }));
       const lines = value.render(color(stderr));
@@ -161,7 +161,7 @@ async function install(home: string, source: string | undefined, flags: Set<stri
 }
 
 // Quote a path or source as one POSIX shell argument for a copyable next step.
-// cli-output#31: keep a long path whole on its own line until Report supports unbreakable tokens.
+// Keep a long path on its own line, including paths containing spaces.
 function reportPath(report: Report, label: string, value: string): void {
   const pathText = terminalText(value, { singleLine: true });
   if (report.columns !== undefined && Bun.stringWidth(`  ${label}:  ${pathText}`, { ambiguousIsNarrow: true }) > report.columns) {
@@ -460,7 +460,7 @@ export async function main(argv: string[]): Promise<number> {
       report.header("acon", "Console", pkg.version);
       report.section("Session");
       report.bullet("ok", "Console ready");
-      // cli-output#31: the one-time URL must remain copyable at every width.
+      // The one-time URL must be unindented and copyable at every width.
       report.append([[{ text: url }]]);
       report.note("The link works once and expires in 60 s; run acon ui again for a new one.");
     });
