@@ -22,14 +22,14 @@ const MANIFEST: Record<PackageKind, string> = { pet: "pet.json", pack: "pack.jso
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 export class InstallError extends Error {
-  constructor(message: string) { super(printable(message, 2000)); }
+  constructor(message: string, readonly diagnostic?: { message: string; next: "list" | "force" }) { super(printable(message, 2000)); }
 }
 /** Drops C0/C1 control characters and DEL so index or manifest values cannot drive the terminal. */
 export const printable = (text: string, max = 200): string => {
   const clean = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
-  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+  return clean.length > max ? `${clean.slice(0, Math.max(0, max - 3))}...` : clean;
 };
-const fail = (message: string): never => { throw new InstallError(message); };
+const fail = (message: string, diagnostic?: { message: string; next: "list" | "force" }): never => { throw new InstallError(message, diagnostic); };
 
 /** https anywhere; http only for loopback hosts (tests and local mirrors). */
 export function allowedUrl(raw: string | URL): URL {
@@ -175,7 +175,7 @@ async function resolveSource(source: string, o: InstallOptions): Promise<Source>
   const indexUrl = o.index ?? DEFAULT_INDEX;
   const index = await fetchIndex(indexUrl, o.timeoutMs);
   const entry = index.packages.find((p) => p.id === source);
-  if (!entry) return fail(`${source} is not in the index at ${indexUrl}; see acon install --list`);
+  if (!entry) return fail(`${source} is not in the index at ${indexUrl}; see acon install --list`, { message: `${source} is not in the index at ${indexUrl}`, next: "list" });
   const manifestUrl = allowedUrl(new URL(entry.manifest, indexUrl));
   if (basename(manifestUrl.pathname) !== MANIFEST[entry.kind]) return fail(`index entry ${source}: manifest must be a ${MANIFEST[entry.kind]}`);
   return { kind: entry.kind, id: entry.id, manifestUrl, hashes: entry.files };
@@ -185,7 +185,7 @@ async function resolveSource(source: string, o: InstallOptions): Promise<Source>
 export async function installPackage(source: string, o: InstallOptions): Promise<InstallResult> {
   const src = await resolveSource(source, o);
   const root = rootOf(o.home, src.kind);
-  const refuseExisting = (id: string) => { if (!o.force && exists(join(root, id))) fail(`${src.kind} ${id} is already installed at ${join(root, id)}; use --force to replace it`); };
+  const refuseExisting = (id: string) => { if (!o.force && exists(join(root, id))) fail(`${src.kind} ${id} is already installed at ${join(root, id)}; use --force to replace it`, { message: `${src.kind} ${id} is already installed at ${join(root, id)}`, next: "force" }); };
   if (src.id) refuseExisting(src.id);
 
   const manifestName = MANIFEST[src.kind];
@@ -231,7 +231,7 @@ export async function installPackage(source: string, o: InstallOptions): Promise
     if (problem) fail(`${src.kind} ${id}: ${problem}`);
     const target = join(root, id);
     if (exists(target)) {
-      if (!o.force) fail(`${src.kind} ${id} is already installed at ${target}; use --force to replace it`);
+      if (!o.force) fail(`${src.kind} ${id} is already installed at ${target}; use --force to replace it`, { message: `${src.kind} ${id} is already installed at ${target}`, next: "force" });
       old = mkdtempSync(join(staging, `${id}-old-`));
       renameSync(target, join(old, id));
     }

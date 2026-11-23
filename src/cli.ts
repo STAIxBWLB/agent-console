@@ -117,28 +117,37 @@ async function install(home: string, source: string | undefined, flags: Set<stri
       const { packages } = await fetchIndex(index);
       if (flags.has("--json")) output.json({ index, packages });
       else {
-        output.line(" acon Packages", "header");
-        output.section("Index"); output.kv("Source", printable(index, 500));
-        output.section("Packages");
-        for (const p of packages) output.bullet("active", `${p.kind.padEnd(5)} ${p.id} ${Math.ceil(p.size / 1024)} KB ${printable(p.name, 64)}${p.description ? `: ${printable(p.description)}` : ""}`);
-        if (!packages.length) output.bullet("absent", "No packages found.");
-        output.bullet("next", "acon install <id>");
+        output.report((report) => {
+          report.header("acon", "Packages", pkg.version);
+          report.section("Index"); reportPath(report, "Source", printable(index, 500));
+          report.section("Packages", String(packages.length));
+          if (!packages.length) report.bullet("absent", "No packages found.");
+          else {
+            report.table(["KIND", "ID", "SIZE", "NAME"], packages.map((p) => [p.kind, p.id, `${Math.ceil(p.size / 1024)} KB`, `${printable(p.name, 64)}${p.description ? `: ${printable(p.description)}` : ""}`]), 3);
+            report.bullet("next", `acon install ${packages[0]!.id}`);
+          }
+        });
       }
       return EXIT.ok;
     }
     const r = await installPackage(source!, { home, index, force: flags.has("--force") });
     if (flags.has("--json")) output.json(r);
     else {
-      output.bullet("ok", `${r.replaced ? "Replaced" : "Installed"} ${r.kind} ${r.id} in ${r.dir} (${r.files.length} files)`);
-      output.line(r.verified ? "every file matched its sha256 in the index." : "not hash-verified (installed by URL or directory); the package passed the same checks the console runs.");
-      output.bullet("next", "acon ui");
+      output.report((report) => {
+        report.header("acon", "Package", pkg.version);
+        report.section("Installation");
+        report.bullet("ok", `${r.replaced ? "Replaced" : "Installed"} ${r.kind} ${r.id} (${r.files.length} files)`);
+        reportPath(report, "Directory", r.dir);
+        report.bullet(r.verified ? "ok" : "warn", r.verified ? "Every file matched its sha256 in the index." : "Not hash-verified (installed by URL or directory); the package passed the same checks the console runs.");
+        report.bullet("next", "acon ui");
+      });
     }
     return EXIT.ok;
   } catch (error) {
     const message = error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`;
-    if (message.endsWith("; see acon install --list")) output.error(message.slice(0, -"; see acon install --list".length), "acon install --list");
-    else if (source && message.endsWith("; use --force to replace it")) output.error(message.slice(0, -"; use --force to replace it".length), `acon install ${shellQuote(source)} --force`);
-    else output.error(message);
+    const diagnostic = error instanceof InstallError ? error.diagnostic : undefined;
+    const next = diagnostic?.next === "list" ? "acon install --list" : diagnostic?.next === "force" && source ? `acon install ${shellQuote(source)} --force` : undefined;
+    output.error(diagnostic?.message ?? message, next);
     return EXIT.fail;
   }
 }
