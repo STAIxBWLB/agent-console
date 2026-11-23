@@ -359,7 +359,8 @@ export async function main(argv: string[]): Promise<number> {
         report.section("Build");
         report.bullet("ok", `Built static shell for ${result.config.nodes.length} node${result.config.nodes.length === 1 ? "" : "s"}`);
         reportPath(report, "Directory", result.out);
-        report.bullet("next", "acon help build");
+        report.next(`Serve ${shellQuote(result.out)} over HTTPS`);
+        report.note("Allow the static origin on each acon serve node.");
       });
       return EXIT.ok;
     } catch (error) {

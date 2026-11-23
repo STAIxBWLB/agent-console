@@ -1,7 +1,7 @@
 import { Report, ROLE_SGR, SGR_RESET } from "@staix/cli-output";
 import pkg from "../package.json" with { type: "json" };
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { launchScript, launchdReceipt } from "../src/cli.ts";
 import { bearerVerifier, serveConfig } from "../src/serve.ts";
 import { reloadAgent, stableBun } from "../src/setup.ts";
@@ -252,12 +252,12 @@ test("stale plugin warnings name a copyable setup command", async () => {
 
 test("static build report goldens", async () => {
   for (const [color, lang] of [["never", "en_US.UTF-8"], ["never", "C"], ["always", "en_US.UTF-8"]]) {
-    const root = mkdtempSync("/tmp/acon-build-"); const dir = join(root, "dist");
-    const result = await runCli(["build", "--static", "--nodes", "desk=https://node.example.com", "--out", dir, `--color=${color}`], { LANG: lang!, COLUMNS: "80" });
+    const root = realpathSync(mkdtempSync("/tmp/acon-build-")); const dir = join(root, "dist");
+    const result = await runCli(["build", "--static", "--nodes", "desk=https://node.example.com", "--out", dir, `--color=${color}`], { LANG: lang!, LC_ALL: lang!, COLUMNS: "80" });
     expect(result.code).toBe(0);
-    const plain = ` acon Static shell  ${pkg.version}\n\n▸ Build\n  ✓  Built static shell for 1 node\n  Directory:  <dir>\n  →  acon help build\n`;
-    const ascii = ` acon Static shell  ${pkg.version}\n\n> Build\n  ok Built static shell for 1 node\n  Directory:  <dir>\n  -> acon help build\n`;
-    const colored = `${ROLE_SGR.header} acon Static shell${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Build${SGR_RESET}\n  ${ROLE_SGR.success}✓ ${SGR_RESET} Built static shell for 1 node\n  ${ROLE_SGR.key}Directory:${SGR_RESET}  <dir>\n  ${ROLE_SGR.accent}→ ${SGR_RESET} acon help build\n`;
+    const plain = ` acon Static shell  ${pkg.version}\n\n▸ Build\n  ✓  Built static shell for 1 node\n  Directory:  <dir>\n    →  Serve '<dir>' over HTTPS\n  Allow the static origin on each acon serve node.\n`;
+    const ascii = ` acon Static shell  ${pkg.version}\n\n> Build\n  ok Built static shell for 1 node\n  Directory:  <dir>\n    -> Serve '<dir>' over HTTPS\n  Allow the static origin on each acon serve node.\n`;
+    const colored = `${ROLE_SGR.header} acon Static shell${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Build${SGR_RESET}\n  ${ROLE_SGR.success}✓ ${SGR_RESET} Built static shell for 1 node\n  ${ROLE_SGR.key}Directory:${SGR_RESET}  <dir>\n    ${ROLE_SGR.accent}→  Serve '<dir>' over HTTPS${SGR_RESET}\n  ${ROLE_SGR.hint}Allow the static origin on each acon serve node.${SGR_RESET}\n`;
     expect(result.out.replaceAll(dir, "<dir>")).toBe(color === "always" ? colored : lang === "C" ? ascii : plain);
   }
   const bad = await runCli(["build"], { COLUMNS: "80", NO_COLOR: "1" });
