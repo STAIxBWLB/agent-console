@@ -1,10 +1,12 @@
+import { ROLE_SGR, SGR_RESET } from "@staix/cli-output";
+import pkg from "../package.json" with { type: "json" };
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { glbModel } from "./fixtures/asset-pack.ts";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowedUrl, fetchCapped, installPackage, LIMITS } from "../src/install.ts";
+import { allowedUrl, fetchCapped, installPackage, InstallError, LIMITS } from "../src/install.ts";
 import { pngImage } from "./fixtures/asset-pack.ts";
 
 // Loopback fixture host: tiny generated images only, no artwork.
@@ -95,7 +97,8 @@ describe("install by name (AC1)", () => {
   });
 
   test("an unknown name points at --list", async () => {
-    await expect(installPackage("nope", opts(home()))).rejects.toThrow("acon install --list");
+    try { await installPackage("nope", opts(home())); throw new Error("expected refusal"); }
+    catch (error) { expect(error).toBeInstanceOf(InstallError); expect((error as InstallError).diagnostic).toEqual({ message: `nope is not in the index at ${base}/console/index.json`, next: "list" }); }
   });
 
   test("a bare name goes to the index even when a same-named directory is in the cwd", async () => {
@@ -105,7 +108,7 @@ describe("install by name (AC1)", () => {
     const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", "gyul"], { cwd, env: { ...process.env, AGENTHUB_HOME: h, ACON_ASSETS_INDEX: `${base}/console/index.json` }, stdout: "pipe", stderr: "pipe" });
     const out = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
-    expect(out).toContain("every file matched its sha256");
+    expect(out).toContain("Every file matched its sha256");
     expect(readFileSync(join(h, "console", "pets", "gyul", "spritesheet.png")).equals(sheet)).toBe(true);
   });
 
@@ -135,7 +138,7 @@ describe("install by URL and directory (AC2)", () => {
     const r = await installPackage(`${base}/pets/gyul/pet.json`, opts(h));
     expect(r.verified).toBe(false);
     const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", `${base}/console/packs/office/pack.json`], { env: { ...process.env, AGENTHUB_HOME: h }, stdout: "pipe", stderr: "pipe" });
-    expect(await new Response(proc.stdout).text()).toContain("not hash-verified");
+    expect(await new Response(proc.stdout).text()).toContain("Not hash-verified");
     expect(await proc.exited).toBe(0);
   });
 
@@ -219,4 +222,15 @@ describe("existing ids (AC4)", () => {
     expect(existsSync(join(dir, "marker"))).toBe(false);
     expect(leftovers(h)).toEqual([]);
   });
+});
+
+test("install list goldens", async () => {
+  const h = home();
+  const run = async (extra: string[], lang = "en_US.UTF-8") => {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, "..", "bin", "acon.js"), "install", "--list", ...extra], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", AGENTHUB_HOME: h, ACON_ASSETS_INDEX: `${base}/console/index.json`, COLUMNS: "80", LANG: lang }, stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text(); expect(await proc.exited).toBe(0); return out.replaceAll(base, "<origin>");
+  };
+  expect(await run(["--color=never"])).toBe(` acon Packages  ${pkg.version}\n\n▸ Index\n  Source:  <origin>/console/index.json\n\n▸ Packages (2)\n  KIND  ID      SIZE  NAME\n  pet   gyul    1 KB  Gyul: Fixture pet\n  pack  office  1 KB  Office\n  →  acon install gyul\n`);
+  expect(await run(["--color=never"], "C")).toBe(` acon Packages  ${pkg.version}\n\n> Index\n  Source:  <origin>/console/index.json\n\n> Packages (2)\n  KIND  ID      SIZE  NAME\n  pet   gyul    1 KB  Gyul: Fixture pet\n  pack  office  1 KB  Office\n  -> acon install gyul\n`);
+  expect(await run(["--color=always"])).toBe(`${ROLE_SGR.header} acon Packages${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Index${SGR_RESET}\n  ${ROLE_SGR.key}Source:${SGR_RESET}  <origin>/console/index.json\n\n${ROLE_SGR.section}▸ Packages${SGR_RESET}${ROLE_SGR.hint} (2)${SGR_RESET}\n  ${ROLE_SGR.key}KIND${SGR_RESET}  ${ROLE_SGR.key}ID    ${SGR_RESET}  ${ROLE_SGR.key}SIZE${SGR_RESET}  ${ROLE_SGR.key}NAME${SGR_RESET}\n  pet   gyul    1 KB  Gyul: Fixture pet\n  pack  office  1 KB  Office\n  ${ROLE_SGR.accent}→ ${SGR_RESET} acon install gyul\n`);
 });
