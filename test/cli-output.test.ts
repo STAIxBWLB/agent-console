@@ -152,3 +152,14 @@ test("invalid principal id points to editing the registry, not its permissions",
   expect(result.err).not.toContain("ls -ld");
   expect(result.err).not.toContain("expected an owned");
 });
+
+test("CLI reports keep long path and URL tokens whole", () => {
+  let stdout = "";
+  const stream = { isTTY: false, write: (value: string) => { stdout += value; return true; } } as unknown as NodeJS.WriteStream;
+  const out = createOutput({ stdout: stream, stderr: stream, color: "never", env: { LANG: "en_US.UTF-8", COLUMNS: "40" } });
+  const path = `/srv/${"a".repeat(60)}/file`;
+  const url = `https://example.com/${"b".repeat(60)}`;
+  out.report((report) => { report.bullet("warn", `Inspect ${path} now`); report.table(["ID", "DETAIL"], [["item", `Open ${url} now`]], 1); });
+  expect(stdout.split("\n").some((line) => line.trim() === path)).toBe(true);
+  expect(stdout.split("\n").some((line) => line.trim() === url)).toBe(true);
+});

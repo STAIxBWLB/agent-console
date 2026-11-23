@@ -28,12 +28,12 @@ export function boundaryProblems(root: string): string[] {
   const problems: string[] = [];
   for (const key of ["peerDependencies", "optionalDependencies"]) if (pkg[key]) problems.push(`package.json must not declare ${key}`);
   const deps = pkg.dependencies as Record<string, unknown> | undefined;
-  if (deps && (Object.keys(deps).length !== 1 || deps["@staix/cli-output"] !== "0.1.1")) problems.push("package.json must not declare dependencies other than exactly @staix/cli-output 0.1.1");
+  if (deps && (Object.keys(deps).length !== 1 || deps["@staix/cli-output"] !== "0.1.3")) problems.push("package.json must not declare dependencies other than exactly @staix/cli-output 0.1.3");
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   for (const name of readdirSync(join(root, "src")).filter((f) => f.endsWith(".ts"))) {
     // The parser sees every form: side-effect, multi-line, re-export, dynamic and require.
     for (const { path } of transpiler.scanImports(readFileSync(join(root, "src", name), "utf8"))) {
-      const sharedCli = name === "cli.ts" && path === "@staix/cli-output" && deps?.["@staix/cli-output"] === "0.1.1";
+      const sharedCli = name === "cli.ts" && path === "@staix/cli-output" && deps?.["@staix/cli-output"] === "0.1.3";
       if (!sharedCli && !/^(node:|bun:|\.\.?\/)/.test(path) && path !== "bun") problems.push(`src/${name}: ${path}`);
     }
   }

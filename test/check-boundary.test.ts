@@ -71,12 +71,12 @@ describe("runtime and browser vendor boundary (#72)", () => {
 
   test("only the CLI may import the exact pinned output package", () => {
     const root = fixture();
-    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { "@staix/cli-output": "0.1.1" }, devDependencies: { library: "1.2.3" } }));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { "@staix/cli-output": "0.1.3" }, devDependencies: { library: "1.2.3" } }));
     writeFileSync(join(root, "src", "cli.ts"), 'import "@staix/cli-output";');
     expect(run(root).exitCode).toBe(0);
     writeFileSync(join(root, "src", "other.ts"), 'import "@staix/cli-output";');
     expect(run(root).stderr.toString()).toContain("src/other.ts: @staix/cli-output");
-    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { "@staix/cli-output": "^0.1.1" }, devDependencies: { library: "1.2.3" } }));
+    writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: { "@staix/cli-output": "^0.1.3" }, devDependencies: { library: "1.2.3" } }));
     expect(run(root).exitCode).toBe(1);
   });
 
