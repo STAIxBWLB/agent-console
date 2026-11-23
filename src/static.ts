@@ -6,26 +6,30 @@ import { FRAME_CSP } from "./server.ts";
 export interface StaticNode { id: string; url: string }
 export interface StaticConfig { api: 1; nodes: StaticNode[] }
 export interface StaticBuild { out: string; config: StaticConfig }
+/** Keep existing Error messages for library callers while CLI consumers render the remedy separately. */
+export class StaticError extends Error {
+  constructor(message: string, readonly diagnostic: { message: string; next: string }) { super(message); }
+}
 const NODE_ID = /^[a-z][a-z0-9-]{0,31}$/;
 const MAX_NODES = 32;
 
 /** Build configuration contains public origins only, never credentials, paths or plugin records. */
 export function parseStaticNodes(raw: string): StaticConfig {
-  if (!raw || raw.length > 8192) throw new Error("--nodes needs 1-32 id=https://origin entries; pass --nodes desk=https://node.example.com");
+  if (!raw || raw.length > 8192) throw new StaticError("--nodes needs 1-32 id=https://origin entries; pass --nodes desk=https://node.example.com", { message: "--nodes needs 1-32 id=https://origin entries", next: "acon help build" });
   const parts = raw.split(",");
-  if (parts.length > MAX_NODES) throw new Error("--nodes has more than 32 nodes; split the build into at most 32 nodes");
+  if (parts.length > MAX_NODES) throw new StaticError("--nodes has more than 32 nodes; split the build into at most 32 nodes", { message: "--nodes has more than 32 nodes", next: "Split the build into at most 32 nodes" });
   const ids = new Set<string>();
   const nodes = parts.map((part): StaticNode => {
     const equal = part.indexOf("=");
     const id = part.slice(0, equal);
     const address = part.slice(equal + 1);
-    if (equal < 1 || !NODE_ID.test(id) || ids.has(id)) throw new Error("--nodes needs unique lowercase node ids (1-32 letters, digits or hyphens, starting with a letter); correct the id=origin entries");
+    if (equal < 1 || !NODE_ID.test(id) || ids.has(id)) throw new StaticError("--nodes needs unique lowercase node ids (1-32 letters, digits or hyphens, starting with a letter); correct the id=origin entries", { message: "--nodes needs unique lowercase node ids (1-32 letters, digits or hyphens, starting with a letter)", next: "Correct the id=origin entries" });
     let url: URL;
     try { url = new URL(address); }
-    catch { throw new Error("--nodes contains an invalid URL; use an exact https origin such as desk=https://node.example.com"); }
+    catch { throw new StaticError("--nodes contains an invalid URL; use an exact https origin such as desk=https://node.example.com", { message: "--nodes contains an invalid URL", next: "Use an exact https origin such as desk=https://node.example.com" }); }
     if (address.length > 1024 || url.username || url.password || url.search || url.hash || url.origin !== address.replace(/\/$/, "") ||
       (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url.hostname)))) {
-      throw new Error("--nodes accepts exact https origins without credentials, paths, queries or fragments (http only for loopback); correct the node URL before building");
+      throw new StaticError("--nodes accepts exact https origins without credentials, paths, queries or fragments (http only for loopback); correct the node URL before building", { message: "--nodes accepts exact https origins without credentials, paths, queries or fragments (http only for loopback)", next: "Correct the node URL before building" });
     }
     ids.add(id);
     return { id, url: url.origin };
@@ -55,7 +59,7 @@ const headerLines = (headers: Record<string, string>) => Object.entries(headers)
 export async function buildStatic(raw: string, out = "dist"): Promise<StaticBuild> {
   const config = parseStaticNodes(raw);
   const target = resolve(out);
-  try { await lstat(target); throw new Error("static output already exists; choose a new --out directory or move the existing output first"); }
+  try { await lstat(target); throw new StaticError("static output already exists; choose a new --out directory or move the existing output first", { message: "static output already exists", next: "Choose a new --out directory or move the existing output first" }); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await mkdir(dirname(target), { recursive: true });
   const parent = await realpath(dirname(target));
@@ -73,7 +77,7 @@ export async function buildStatic(raw: string, out = "dist"): Promise<StaticBuil
     for (const [sourceName, destinationName] of FILES) {
       const sourceUrl = new URL(sourceName, shellRoot);
       const info = await lstat(sourceUrl);
-      if (!info.isFile() || info.isSymbolicLink()) throw new Error("a static shell source is not a regular file; reinstall the console package before building");
+      if (!info.isFile() || info.isSymbolicLink()) throw new StaticError("a static shell source is not a regular file; reinstall the console package before building", { message: "a static shell source is not a regular file", next: "Reinstall the console package before building" });
       const file = join(stage, destinationName);
       await mkdir(dirname(file), { recursive: true });
       await writeFile(file, await readFile(sourceUrl));

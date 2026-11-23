@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { COMMANDS, VALUED, parse } from "../src/cli.ts";
-import { HELP, type HelpCommand } from "../src/cli-help.ts";
+import { HELP, commandLines, type HelpCommand } from "../src/cli-help.ts";
 
 const verbs = new Set(["Open", "Run", "Build", "Create", "Prepare", "List", "Install", "Show"]);
 function lintHelp(data: Record<string, HelpCommand>): string[] {
@@ -16,11 +16,11 @@ function lintHelp(data: Record<string, HelpCommand>): string[] {
     for (const flag of described) if (!accepted.has(flag)) issues.push(`flag-unknown:${command}:${flag}`);
     for (const example of entry.examples) {
       const result = parse(example.split(/\s+/).slice(1));
-      if (!example.startsWith(`acon ${command}`) || typeof result === "string" || result.command !== command) issues.push(`example:${command}`);
+      if (!example.startsWith(`acon ${command}`) || ("error" in result) || result.command !== command) issues.push(`example:${command}`);
     }
     for (const flag of ["--help", "-h"]) {
       const result = parse([command, flag]);
-      if (typeof result === "string" || result.command !== "help") issues.push(`help-flag:${command}:${flag}`);
+      if (("error" in result) || result.command !== "help") issues.push(`help-flag:${command}:${flag}`);
     }
   }
   return issues.sort();
@@ -68,4 +68,20 @@ test("build help explains multiple nodes and extra help arguments name the actua
   const extra = run(["help", "serve", "extra"]);
   expect(extra.exitCode).toBe(2);
   expect(extra.stderr.toString()).toContain("unexpected argument: extra");
+});
+
+test("README command facts match the help source", () => {
+  const readme = Bun.file(join(import.meta.dir, "..", "README.md"));
+  return readme.text().then((text) => {
+    const actual = /<!-- facts:commands -->\n```text\n([\s\S]*?)\n```\n<!-- \/facts:commands -->/.exec(text)?.[1];
+    expect(actual).toBe(commandLines().join("\n"));
+  });
+});
+
+test("parser refusals carry their next step as data", () => {
+  for (const args of [["bad-command"], ["plugins", "--bad"], ["serve", "--port"], ["serve", "--port", "1", "--port", "2"], ["token"], ["install"], ["principal"], ["build", "--static"]]) {
+    const result = parse(args);
+    expect("error" in result).toBe(true);
+    if ("error" in result) { expect(result.error).toBeTruthy(); expect(result.next).toStartWith("acon "); }
+  }
 });
