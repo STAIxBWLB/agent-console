@@ -51,6 +51,13 @@ export function createOutput(options: OutputOptions = {}) {
   return {
     line,
     report,
+    warning: (message: string, next?: string) => {
+      const value = new Report(columns(stderr), ascii);
+      value.bullet("warn", terminalText(message, { singleLine: true }));
+      if (next) value.bullet("next", terminalText(next, { singleLine: true }));
+      const lines = value.render(color(stderr));
+      if (lines.length) stderr.write(`${lines.join("\n")}\n`);
+    },
     section: (title: string) => report((r) => { r.section(title); }, true),
     bullet: (name: MarkerName, text: unknown) => report((r) => { r.bullet(name, terminalText(text)); }),
     kv: (key: string, value: unknown) => report((r) => { r.kv([[key, value]]); }),
@@ -395,19 +402,29 @@ export async function main(argv: string[]): Promise<number> {
     const info = { origin: server.origin, port: server.port, mode: serve.mode, readOnly: Boolean(serve.readOnly), origins: serve.origins, pid: process.pid, plugins: plugins.map(summary) };
     if (flags.has("--json")) output.json(info);
     else {
-      output.bullet("ok", `Serving on ${serve.hostname}:${server.port} (${serve.mode === "access" ? "Cloudflare Access" : serve.mode === "bearer" ? "bearer token" : "loopback, no auth"})${serve.readOnly ? ", read-only" : ""}; allowed origins: ${serve.origins.join(", ")}`);
-      if (scan.error) log(scan.error);
-      for (const p of plugins) if (p.status !== "ready") log(`${p.tool} not loaded (${p.status}): ${p.reason}`);
+      output.report((report) => {
+        report.header("acon", "Server", pkg.version);
+        report.section("Serving");
+        report.kv([["Address", `${serve.hostname}:${server.port}`], ["Auth", serve.mode === "access" ? "Cloudflare Access" : serve.mode === "bearer" ? "bearer token" : "loopback, no auth"], ["Read-only", serve.readOnly ? "yes" : "no"], ["Origins", serve.origins.join(", ") || "none"], ["PID", process.pid]]);
+      });
+      if (scan.error) output.warning(scan.error, "acon plugins");
+      for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? "acon plugins");
     }
     return await new Promise<number>(() => {});
   }
   const url = server.issue();
   if (flags.has("--json")) output.json({ url, origin: server.origin, pid: process.pid, plugins: plugins.map(summary) });
   else {
-    output.bullet("ok", `Console at ${url}`);
-    output.line("The link works once and expires in 60 s; run acon ui again for a new one.");
-    if (scan.error) log(scan.error);
-    for (const p of plugins) if (p.status !== "ready") log(`${p.tool} not loaded (${p.status}): ${p.reason}`);
+    output.report((report) => {
+      report.header("acon", "Console", pkg.version);
+      report.section("Session");
+      report.bullet("ok", "Console ready");
+      // cli-output#31: the one-time URL must remain copyable at every width.
+      report.append([[{ text: url }]]);
+      report.bullet("absent", "The link works once and expires in 60 s; run acon ui again for a new one.");
+    });
+    if (scan.error) output.warning(scan.error, "acon plugins");
+    for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? "acon plugins");
   }
   if (!flags.has("--no-open")) openBrowser(url);
   return await new Promise<number>(() => {});

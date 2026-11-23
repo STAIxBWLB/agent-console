@@ -1,3 +1,5 @@
+import { ROLE_SGR, SGR_RESET } from "@staix/cli-output";
+import pkg from "../package.json" with { type: "json" };
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { launchScript } from "../src/cli.ts";
@@ -201,4 +203,31 @@ describe("acon setup launchd (#45 AC3)", () => {
     expect(custom.code).toBe(0);
     expect(custom.out).toContain("<string>com.example.acon</string>");
   });
+});
+
+test("console and server startup reports", async () => {
+  const run = async (command: "ui" | "serve", color: string, lang: string, columns = "80") => {
+    const probe = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+    const port = probe.port!; probe.stop(true);
+    const args = command === "ui" ? ["ui", "--no-open"] : ["serve", "--port", String(port)];
+    const proc = Bun.spawn([process.execPath, bin, ...args, `--color=${color}`], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", AGENTHUB_HOME: mkdtempSync(join(tmpdir(), "acon-cli-")), LANG: lang, COLUMNS: columns }, stdout: "pipe", stderr: "pipe" });
+    const reader = proc.stdout.getReader(); let out = "";
+    try {
+      while (!(command === "ui" ? out.includes("one.") : out.includes("PID:"))) {
+        const value = await reader.read(); if (value.done) break; out += new TextDecoder().decode(value.value);
+      }
+    } finally { reader.releaseLock(); proc.kill(); await proc.exited; }
+    return out;
+  };
+  const normalize = (text: string) => text.replace(/http:\/\/127[.]0[.]0[.]1:\d+\/#[0-9a-f]{64}/g, "<url>").replace(/:(?:[0-9]{2,5})(?=\b)/g, ":<port>").replace(/(PID:[^\n]*?)([0-9]+)(?=\n)/, "$1<pid>");
+  const commonUi = "<url>\n  -  The link works once and expires in 60 s; run acon ui again for a new one.\n";
+  expect(normalize(await run("ui", "never", "en_US.UTF-8"))).toBe(` acon Console  ${pkg.version}\n\n▸ Session\n  ✓  Console ready\n${commonUi}`);
+  expect(normalize(await run("ui", "never", "C"))).toBe(` acon Console  ${pkg.version}\n\n> Session\n  ok Console ready\n${commonUi}`);
+  expect(normalize(await run("ui", "always", "en_US.UTF-8"))).toBe(`${ROLE_SGR.header} acon Console${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Session${SGR_RESET}\n  ${ROLE_SGR.success}✓ ${SGR_RESET} Console ready\n<url>\n  ${ROLE_SGR.hint}- ${SGR_RESET} The link works once and expires in 60 s; run acon ui again for a new one.\n`);
+  const serverRows = "  Address:    127.0.0.1:<port>\n  Auth:       loopback, no auth\n  Read-only:  no\n  Origins:    http://127.0.0.1:<port>, http://localhost:<port>\n  PID:        <pid>\n";
+  expect(normalize(await run("serve", "never", "en_US.UTF-8"))).toBe(` acon Server  ${pkg.version}\n\n▸ Serving\n${serverRows}`);
+  expect(normalize(await run("serve", "never", "C"))).toBe(` acon Server  ${pkg.version}\n\n> Serving\n${serverRows}`);
+  expect(normalize(await run("serve", "always", "en_US.UTF-8"))).toBe(`${ROLE_SGR.header} acon Server${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Serving${SGR_RESET}\n  ${ROLE_SGR.key}Address:${SGR_RESET}    127.0.0.1:<port>\n  ${ROLE_SGR.key}Auth:${SGR_RESET}       loopback, no auth\n  ${ROLE_SGR.key}Read-only:${SGR_RESET}  no\n  ${ROLE_SGR.key}Origins:${SGR_RESET}    http://127.0.0.1:<port>, http://localhost:<port>\n  ${ROLE_SGR.key}PID:${SGR_RESET}        <pid>\n`);
+  const narrow = await run("ui", "never", "C", "40");
+  expect(narrow.split("\n").some((line) => /^http:\/\/127[.]0[.]0[.]1:\d+\/#(?:[0-9a-f]{64})$/.test(line))).toBe(true);
 });

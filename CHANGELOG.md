@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Show serve settings as aligned rows and print the one-time local console URL whole on its own line. Plugin problems use warning and next-step rows (#134).
+
 - Show package lists as tables and installation receipts with verification markers; empty indexes no longer suggest a placeholder command (#134).
 
 - Show plugin and principal lists as counted tables with status markers; plugin setup commands appear as separate next steps. Verified module paths remain available through `plugins --json` (#134).
