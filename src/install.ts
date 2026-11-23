@@ -22,14 +22,14 @@ const MANIFEST: Record<PackageKind, string> = { pet: "pet.json", pack: "pack.jso
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
 
 export class InstallError extends Error {
-  constructor(message: string, readonly diagnostic?: { message: string; next: "list" | "force" }) { super(printable(message, 2000)); }
+  constructor(message: string, readonly diagnostic?: { message: string; next: "list" | "force" | "path" }) { super(printable(message, 2000)); }
 }
 /** Drops C0/C1 control characters and DEL so index or manifest values cannot drive the terminal. */
 export const printable = (text: string, max = 200): string => {
   const clean = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
   return clean.length > max ? `${clean.slice(0, Math.max(0, max - 3))}...` : clean;
 };
-const fail = (message: string, diagnostic?: { message: string; next: "list" | "force" }): never => { throw new InstallError(message, diagnostic); };
+const fail = (message: string, diagnostic?: { message: string; next: "list" | "force" | "path" }): never => { throw new InstallError(message, diagnostic); };
 
 /** https anywhere; http only for loopback hosts (tests and local mirrors). */
 export function allowedUrl(raw: string | URL): URL {
@@ -167,7 +167,7 @@ async function resolveSource(source: string, o: InstallOptions): Promise<Source>
   const local = resolve(source);
   // A bare id always means the index package; a directory must be written as a path (D1/D2).
   if (source.includes("/") || source.startsWith(".") || isAbsolute(source)) {
-    if (!lstatSync(local, { throwIfNoEntry: false })?.isDirectory()) return fail(`${source} is not a directory`);
+    if (!lstatSync(local, { throwIfNoEntry: false })?.isDirectory()) return fail(`${source} is not a directory`, { message: `${source} is not a directory`, next: "path" });
     const kind: PackageKind = exists(join(local, "pet.json")) ? "pet" : exists(join(local, "pack.json")) ? "pack" : fail(`${source} has no pet.json or pack.json`);
     return { kind, dir: local };
   }

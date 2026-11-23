@@ -7,12 +7,12 @@ import { loadPets, petDirs } from "./pets.ts";
 import { loadAssetPacks } from "./assets.ts";
 import { PrincipalError, readPrincipalRegistry, setPrincipalEnabled } from "./principal.ts";
 import { DEFAULT_INDEX, fetchIndex, installPackage, InstallError, printable } from "./install.ts";
-import { serveConfig, type ServeArgs, type ServeOptions } from "./serve.ts";
-import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, reloadAgent, stableBun, tokenPath } from "./setup.ts";
+import { serveConfigDiagnostic, type ServeArgs, type ServeOptions } from "./serve.ts";
+import { LABEL, LAUNCHD_ENV, launchdPlist, newTokenFile, reloadAgentDiagnostic, stableBun, tokenPath } from "./setup.ts";
 import { HELP, GLOBAL_FLAGS, commandLines } from "./cli-help.ts";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { lstatSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 
 // Error-span wrapping awaits STAIxBWLB/cli-output#19; all roles and rendering come from the package.
 export interface OutputOptions { color?: string; ascii?: boolean; json?: boolean; env?: Readonly<Record<string, string | undefined>>; stdout?: NodeJS.WriteStream; stderr?: NodeJS.WriteStream }
@@ -154,7 +154,7 @@ async function install(home: string, source: string | undefined, flags: Set<stri
   } catch (error) {
     const message = error instanceof InstallError ? error.message : `install failed (${printable(String((error as NodeJS.ErrnoException).code ?? (error as Error).message), 500)})`;
     const diagnostic = error instanceof InstallError ? error.diagnostic : undefined;
-    const next = diagnostic?.next === "list" ? "acon install --list" : diagnostic?.next === "force" && source ? `acon install ${shellQuote(source)} --force` : undefined;
+    const next = diagnostic?.next === "list" ? "acon install --list" : diagnostic?.next === "force" && source ? `acon install ${shellQuote(source)} --force` : diagnostic?.next === "path" && source ? `ls -ld ${shellQuote(dirname(resolve(source)))}` : undefined;
     output.error(diagnostic?.message ?? message, next);
     return EXIT.fail;
   }
@@ -178,8 +178,10 @@ function token(home: string, file: string | undefined, force: boolean): number {
   try { newTokenFile(path, force); }
   catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "EEXIST") output.error(`${path} already exists; it was not changed`, `acon token new --file ${shellQuote(path)} --force`);
-    else output.error(`could not write ${path} (${code ?? (error as Error).message})`);
+    let targetExists = false;
+    if (code === "EEXIST") { try { targetExists = Boolean(lstatSync(path, { throwIfNoEntry: false })); } catch { /* parent is not a directory */ } }
+    if (targetExists) output.error(`${path} already exists; it was not changed`, `acon token new --file ${shellQuote(path)} --force`);
+    else output.error(`could not write ${path} (${code ?? (error as Error).message})`, `ls -ld ${shellQuote(dirname(path))}`);
     return EXIT.fail;
   }
   output.raw(`${path}\n`);
@@ -188,10 +190,10 @@ function token(home: string, file: string | undefined, force: boolean): number {
 
 function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set<string>): number {
   const label = values["--label"]?.[0] ?? "acon.serve";
-  if (!LABEL.test(label)) return fail(`--label ${label} must be letters, digits, dots and hyphens`);
+  if (!LABEL.test(label)) return usageError(`--label ${label} must be letters, digits, dots and hyphens`, "setup", "acon setup launchd --label acon.serve");
   // The same refusals as acon serve, checked now rather than in a crash-looping agent.
-  const config = serveConfig(serveArgs(values, flags), process.env);
-  if (typeof config === "string") return fail(config);
+  const config = serveConfigDiagnostic(serveArgs(values, flags), process.env);
+  if ("error" in config) return fail(config.error, EXIT.usage, config.next);
   const env: Record<string, string> = { AGENTHUB_HOME: resolve(home), PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
   for (const name of LAUNCHD_ENV) {
     const value = process.env[name];
@@ -202,20 +204,22 @@ function setupLaunchd(home: string, values: Record<string, string[]>, flags: Set
     ...(values["--origin"] ?? []).flatMap((o) => ["--origin", o]), ...(flags.has("--read-only") ? ["--read-only"] : []),
   ];
   const bun = stableBun(process.execPath, process.env.PATH);
-  if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`, EXIT.fail);
+  if (!isAbsolute(bun)) return fail(`the bun path ${bun} is not absolute`, EXIT.fail, "Install Bun at an absolute path and retry acon setup launchd");
   const plist = launchdPlist({ label, bun, script: launchScript(resolve(home)), args, env, logDir: join(resolve(home), "console", "logs") });
   if (!flags.has("--apply")) { output.raw(plist); return EXIT.ok; }
-  if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)", EXIT.fail);
+  if (process.platform !== "darwin") return fail("--apply needs macOS (launchctl)", EXIT.fail, "Run acon setup launchd --apply on macOS");
   const uid = process.getuid?.();
-  if (uid === undefined) return fail("could not read the user id", EXIT.fail);
+  if (uid === undefined) return fail("could not read the user id", EXIT.fail, "Run acon setup launchd --apply as a logged-in user");
   mkdirSync(join(resolve(home), "console", "logs"), { recursive: true, mode: 0o700 });
   const dir = join(homedir(), "Library", "LaunchAgents");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${label}.plist`);
   writeFileSync(file, plist, { mode: 0o644 });
   const run = (...argv: string[]) => Bun.spawnSync(["launchctl", ...argv], { stdout: "pipe", stderr: "pipe" });
-  const failed = reloadAgent((...argv) => { const r = run(...argv); return { exitCode: r.exitCode, stderr: r.stderr.toString() }; }, `gui/${uid}`, label, file);
-  if (failed) return fail(failed, 1);
+  let failed: ReturnType<typeof reloadAgentDiagnostic>;
+  try { failed = reloadAgentDiagnostic((...argv) => { const r = run(...argv); return { exitCode: r.exitCode, stderr: r.stderr.toString() }; }, `gui/${uid}`, label, file); }
+  catch (error) { return fail(`launchctl could not run (${(error as NodeJS.ErrnoException).code ?? (error as Error).message})`, EXIT.fail, "which launchctl"); }
+  if (failed) return fail(failed.message, EXIT.fail, failed.next);
   output.report((report) => launchdReceipt(report, file, `gui/${uid}/${label}`, join(resolve(home), "console", "logs")));
   return EXIT.ok;
 }
@@ -241,7 +245,14 @@ export function launchScript(home: string, packageRoot = resolve(import.meta.dir
   return join(packageRoot, "bin", "acon.js");
 }
 
-const fail = (message: string, code: number = EXIT.usage): number => { output.error(message); return code; };
+const fail = (message: string, code: number = EXIT.usage, next?: string): number => { output.error(message, next); return code; };
+function usageError(message: string, name: string, next?: string): number {
+  const help = HELP[name];
+  output.error(message, next ?? (help ? `acon help ${name}` : "acon help"));
+  output.diagnostic(`Usage: ${help?.usage ?? "acon <command> [options]"}`);
+  output.diagnostic(`Run 'acon help${help ? ` ${name}` : ""}' for details.`);
+  return EXIT.usage;
+}
 
 function principalCommand(home: string, args: string[], flags: Set<string>): number {
   try {
@@ -277,7 +288,7 @@ function principalCommand(home: string, args: string[], flags: Set<string>): num
     const message = diagnostic?.message ?? "principal registry IO failed";
     const action = diagnostic?.next;
     const next = typeof action === "string" ? action
-      : action?.kind === "edit-registry" ? `vi ${shellQuote(join(home, "console", "principals.json"))}`
+      : action?.kind === "edit-registry" ? `\${EDITOR:-vi} ${shellQuote(join(home, "console", "principals.json"))}`
       : action?.kind === "retry" ? `acon principal ${args[0]} ${shellQuote(args[1]!)}`
       : `ls -ld ${shellQuote(join(home, "console"))} ${shellQuote(join(home, "console", "principals.json"))}`;
     output.error(action ? message : `${message}; expected an owned console directory and a mode 0600 registry`, next);
@@ -293,9 +304,9 @@ export async function main(argv: string[]): Promise<number> {
     const arg = argv[i]!;
     if (arg === "--ascii") { ascii = true; continue; }
     if (arg === "--color" || arg.startsWith("--color=")) {
-      if (color !== undefined) { output.error("--color may be given once"); return EXIT.usage; }
+      if (color !== undefined) return usageError("--color may be given once", argv.find((word) => Object.hasOwn(HELP, word)) ?? "");
       color = arg === "--color" ? argv[++i] : arg.slice(8);
-      if (!["auto", "always", "never"].includes(color ?? "")) { output.error("--color must be auto, always or never"); return EXIT.usage; }
+      if (!["auto", "always", "never"].includes(color ?? "")) return usageError("--color must be auto, always or never", argv.find((word) => Object.hasOwn(HELP, word)) ?? "", "Use --color=auto, --color=always or --color=never");
       continue;
     }
     filtered.push(arg);
@@ -360,7 +371,7 @@ export async function main(argv: string[]): Promise<number> {
         report.bullet("ok", `Built static shell for ${result.config.nodes.length} node${result.config.nodes.length === 1 ? "" : "s"}`);
         reportPath(report, "Directory", result.out);
         report.next(`Serve ${shellQuote(result.out)} over HTTPS`);
-        report.note("Allow the static origin on each acon serve node.");
+        report.note("Allow the static origin on each node with --origin or ACON_ORIGINS.");
       });
       return EXIT.ok;
     } catch (error) {
@@ -376,8 +387,8 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "setup") return setupLaunchd(home, values, flags);
   let serve: ServeOptions | undefined;
   if (command === "serve") {
-    const config = serveConfig(serveArgs(values, flags), process.env);
-    if (typeof config === "string") { output.error(config); return EXIT.usage; }
+    const config = serveConfigDiagnostic(serveArgs(values, flags), process.env);
+    if ("error" in config) { output.error(config.error, config.next); return EXIT.usage; }
     serve = config;
   }
   const scan = scanPlugins(home);
@@ -406,7 +417,8 @@ export async function main(argv: string[]): Promise<number> {
   const plugins = await loadPlugins(scan, { home, log });
   const { pets, problems: petProblems } = loadPets(petDirs(home));
   const { packs: assetPacks, problems: assetProblems } = loadAssetPacks([join(home, "console", "assets")]);
-  const server = startServer({
+  let server: ReturnType<typeof startServer>;
+  try { server = startServer({
     plugins,
     reload: (previous) => loadPlugins(scanPlugins(home), { home, log }, previous),
     pets,
@@ -418,7 +430,12 @@ export async function main(argv: string[]): Promise<number> {
     pluginsError: scan.error,
     log,
     ...(serve ? { serve } : { onIdle: () => { log("no requests for 5 minutes; exiting"); process.exit(EXIT.ok); } }),
-  });
+  }); } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EADDRINUSE") output.error("could not start the console: the requested port is already in use", "Choose an unused --port or set ACON_PORT");
+    else output.error(`could not start the console (${code ?? (error as Error).message})`, "acon help serve");
+    return EXIT.fail;
+  }
   const shutdown = () => { void server.stop().finally(() => process.exit(EXIT.ok)); };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
@@ -432,7 +449,7 @@ export async function main(argv: string[]): Promise<number> {
         report.kv([["Address", `${serve.hostname}:${server.port}`], ["Auth", serve.mode === "access" ? "Cloudflare Access" : serve.mode === "bearer" ? "bearer token" : "loopback, no auth"], ["Read-only", serve.readOnly ? "yes" : "no"], ["Origins", serve.origins.join(", ") || "none"], ["PID", process.pid]]);
       });
       if (scan.error) output.warning(scan.error, "acon plugins");
-      for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? (/^[a-z][a-z0-9-]{0,31}$/.test(p.tool) ? `${p.tool} setup` : "acon plugins"));
+      for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? (p.status !== "invalid" && /^[a-z][a-z0-9-]{0,31}$/.test(p.tool) ? `${p.tool} setup` : "acon plugins"));
     }
     return await new Promise<number>(() => {});
   }
@@ -448,7 +465,7 @@ export async function main(argv: string[]): Promise<number> {
       report.note("The link works once and expires in 60 s; run acon ui again for a new one.");
     });
     if (scan.error) output.warning(scan.error, "acon plugins");
-    for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? (/^[a-z][a-z0-9-]{0,31}$/.test(p.tool) ? `${p.tool} setup` : "acon plugins"));
+    for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? (p.status !== "invalid" && /^[a-z][a-z0-9-]{0,31}$/.test(p.tool) ? `${p.tool} setup` : "acon plugins"));
   }
   if (!flags.has("--no-open")) openBrowser(url);
   return await new Promise<number>(() => {});

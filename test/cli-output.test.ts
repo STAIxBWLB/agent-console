@@ -148,7 +148,7 @@ test("invalid principal id points to editing the registry, not its permissions",
   const result = await run(["principal", "list", "--color=never"], { AGENTHUB_HOME: home });
   expect(result.code).toBe(1);
   expect(result.err.replace(/\s+/g, " ")).toContain("choose an id such as assistant");
-  expect(result.err).toContain(`  → vi '${dir}/principals.json'`);
+  expect(result.err).toContain(`  → \${EDITOR:-vi} '${dir}/principals.json'`);
   expect(result.err).not.toContain("ls -ld");
   expect(result.err).not.toContain("expected an owned");
 });

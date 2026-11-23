@@ -64,10 +64,13 @@ export type Launchctl = (...argv: string[]) => { exitCode: number; stderr: strin
  * wait until `print` no longer finds the service (at most `timeoutMs`) before loading the new plist.
  */
 export function reloadAgent(run: Launchctl, domain: string, label: string, file: string, timeoutMs = 10_000, sleep = (ms: number) => Bun.sleepSync(ms)): string | undefined {
+  return reloadAgentDiagnostic(run, domain, label, file, timeoutMs, sleep)?.message;
+}
+export function reloadAgentDiagnostic(run: Launchctl, domain: string, label: string, file: string, timeoutMs = 10_000, sleep = (ms: number) => Bun.sleepSync(ms)): { message: string; next: string } | undefined {
   run("bootout", `${domain}/${label}`); // not loaded yet is fine
   for (let waited = 0; waited < timeoutMs && run("print", `${domain}/${label}`).exitCode === 0; waited += 200) sleep(200);
   const boot = run("bootstrap", domain, file);
-  return boot.exitCode === 0 ? undefined : `launchctl bootstrap failed (${boot.exitCode})${boot.stderr.trim() ? `: ${boot.stderr.trim()}` : ""}`;
+  return boot.exitCode === 0 ? undefined : { message: `launchctl bootstrap failed (${boot.exitCode})${boot.stderr.trim() ? `: ${boot.stderr.trim()}` : ""}`, next: `launchctl print ${domain}/${label}` };
 }
 
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

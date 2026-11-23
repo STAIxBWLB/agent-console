@@ -125,17 +125,21 @@ export function accessVerifier(o: AccessVerifierOptions): (jwt: string) => Promi
 }
 
 /** Reads a token file that only its owner may read; returns a constant-time checker or a refusal. */
-export function bearerVerifier(file: string): ((header: string | null) => boolean) | string {
+export interface ConfigRefusal { error: string; next: string; legacy: string }
+const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+const refusal = (legacy: string, error: string, next: string): ConfigRefusal => ({ legacy, error, next });
+function bearerVerifierDetail(file: string): ((header: string | null) => boolean) | ConfigRefusal {
   let token: string;
   try {
     const stat = statSync(file);
-    if (!stat.isFile()) return `ACON_TOKEN_FILE ${file} is not a regular file`;
-    if (stat.mode & 0o077) return `ACON_TOKEN_FILE ${file} must not be readable by group or others (chmod 600)`;
+    if (!stat.isFile()) return refusal(`ACON_TOKEN_FILE ${file} is not a regular file`, `ACON_TOKEN_FILE ${file} is not a regular file`, `ls -ld ${quote(file)}`);
+    if (stat.mode & 0o077) return refusal(`ACON_TOKEN_FILE ${file} must not be readable by group or others (chmod 600)`, `ACON_TOKEN_FILE ${file} is readable by group or others`, `chmod 600 ${quote(file)}`);
     token = readFileSync(file, "utf8").trim();
   } catch (error) {
-    return `ACON_TOKEN_FILE ${file} could not be read (${(error as NodeJS.ErrnoException).code ?? "error"})`;
+    const code = (error as NodeJS.ErrnoException).code ?? "error";
+    return refusal(`ACON_TOKEN_FILE ${file} could not be read (${code})`, `ACON_TOKEN_FILE ${file} could not be read (${code})`, code === "ENOENT" ? `acon token new --file ${quote(file)}` : `ls -ld ${quote(file)}`);
   }
-  if (token.length < 32 || /\s/.test(token)) return "ACON_TOKEN_FILE must hold one token of at least 32 characters";
+  if (token.length < 32 || /\s/.test(token)) return refusal("ACON_TOKEN_FILE must hold one token of at least 32 characters", "ACON_TOKEN_FILE must hold one token of at least 32 characters", `acon token new --file ${quote(file)} --force`);
   // Hashing both sides first gives equal-length inputs, so timingSafeEqual never leaks the token length.
   const want = createHash("sha256").update(token).digest();
   return (header) => {
@@ -145,40 +149,50 @@ export function bearerVerifier(file: string): ((header: string | null) => boolea
   };
 }
 
+export function bearerVerifier(file: string): ((header: string | null) => boolean) | string {
+  const value = bearerVerifierDetail(file);
+  return typeof value === "function" ? value : value.legacy;
+}
+
 export interface ServeArgs { host?: string; port?: string; origins: string[]; readOnly?: boolean }
 
 /** Builds the serve options from flags and the environment; a string is a refusal to print. */
 export function serveConfig(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | string {
-  const raw = env.ACON_READ_ONLY;
-  if (raw !== undefined && raw !== "" && raw !== "0" && raw !== "1") return "ACON_READ_ONLY must be 1 (read-only) or 0";
-  const config = authConfig(args, env, certsUrl);
-  return typeof config === "string" || !(args.readOnly || raw === "1") ? config : { ...config, readOnly: true };
+  const result = serveConfigDiagnostic(args, env, certsUrl);
+  return "error" in result ? result.legacy : result;
 }
 
-function authConfig(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | string {
+export function serveConfigDiagnostic(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | ConfigRefusal {
+  const raw = env.ACON_READ_ONLY;
+  if (raw !== undefined && raw !== "" && raw !== "0" && raw !== "1") return refusal("ACON_READ_ONLY must be 1 (read-only) or 0", "ACON_READ_ONLY must be 1 (read-only) or 0", "Set ACON_READ_ONLY=1 or ACON_READ_ONLY=0");
+  const config = authConfig(args, env, certsUrl);
+  return "error" in config || !(args.readOnly || raw === "1") ? config : { ...config, readOnly: true };
+}
+
+function authConfig(args: ServeArgs, env: Record<string, string | undefined>, certsUrl?: string): ServeOptions | ConfigRefusal {
   const hostname = args.host ?? "127.0.0.1";
-  if (!/^[A-Za-z0-9.:[\]-]+$/.test(hostname)) return `--host ${hostname} is not a host name or address`;
+  if (!/^[A-Za-z0-9.:[\]-]+$/.test(hostname)) return refusal(`--host ${hostname} is not a host name or address`, `--host ${hostname} is not a host name or address`, "Set --host to a valid host name or address");
   const port = Number(args.port ?? (env.ACON_PORT || "8787"));
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) return "--port (or ACON_PORT) must be 1-65535";
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) return refusal("--port (or ACON_PORT) must be 1-65535", "--port (or ACON_PORT) must be 1-65535", "Set --port or ACON_PORT to an integer from 1 to 65535");
   const origins: string[] = [];
   for (const raw of [...args.origins, ...(env.ACON_ORIGINS ?? "").split(",").map((v) => v.trim()).filter(Boolean)]) {
     let url: URL;
-    try { url = new URL(raw); } catch { return `--origin ${raw} is not a URL`; }
-    if (url.origin !== raw.replace(/\/$/, "") || (url.protocol !== "https:" && !(url.protocol === "http:" && (isLoopback(url.hostname) || isMesh(url.hostname))))) return `--origin ${raw} must be an exact https origin (http only for loopback or a WARP address in 100.64.0.0/10), without a path`;
+    try { url = new URL(raw); } catch { return refusal(`--origin ${raw} is not a URL`, `--origin ${raw} is not a URL`, "Set --origin to an exact HTTPS origin"); }
+    if (url.origin !== raw.replace(/\/$/, "") || (url.protocol !== "https:" && !(url.protocol === "http:" && (isLoopback(url.hostname) || isMesh(url.hostname))))) return refusal(`--origin ${raw} must be an exact https origin (http only for loopback or a WARP address in 100.64.0.0/10), without a path`, `--origin ${raw} is not an allowed exact origin`, "Set --origin to an exact HTTPS origin without a path");
     if (!origins.includes(url.origin)) origins.push(url.origin);
   }
   const loopback = isLoopback(hostname);
   const bind = `${hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname}:${port}`;
   if (loopback) origins.push(`http://${bind}`);
-  else if (!origins.length) return `acon serve --host ${hostname} needs at least one --origin (or ACON_ORIGINS): the exact browser origin, such as https://console.example.com`;
+  else if (!origins.length) return refusal(`acon serve --host ${hostname} needs at least one --origin (or ACON_ORIGINS): the exact browser origin, such as https://console.example.com`, `acon serve --host ${hostname} needs at least one browser origin`, "Set --origin or ACON_ORIGINS to the exact browser origin");
   const hosts = [...new Set([...origins.map((o) => new URL(o).host), bind, `127.0.0.1:${port}`, `localhost:${port}`])];
 
   const team = env.ACON_ACCESS_TEAM, aud = env.ACON_ACCESS_AUD, tokenFile = env.ACON_TOKEN_FILE;
-  if ((team && !aud) || (!team && aud)) return "set both ACON_ACCESS_TEAM and ACON_ACCESS_AUD for Cloudflare Access";
-  if (team && aud && tokenFile) return "set either Cloudflare Access (ACON_ACCESS_TEAM, ACON_ACCESS_AUD) or ACON_TOKEN_FILE, not both";
+  if ((team && !aud) || (!team && aud)) return refusal("set both ACON_ACCESS_TEAM and ACON_ACCESS_AUD for Cloudflare Access", "Cloudflare Access settings are incomplete", "Set both ACON_ACCESS_TEAM and ACON_ACCESS_AUD");
+  if (team && aud && tokenFile) return refusal("set either Cloudflare Access (ACON_ACCESS_TEAM, ACON_ACCESS_AUD) or ACON_TOKEN_FILE, not both", "Cloudflare Access and bearer settings cannot both be used", "Set either the Access variables or ACON_TOKEN_FILE");
   if (team && aud) {
     let verify: ReturnType<typeof accessVerifier>;
-    try { verify = accessVerifier({ team, aud, ...(certsUrl ? { certsUrl } : {}) }); } catch (error) { return (error as Error).message; }
+    try { verify = accessVerifier({ team, aud, ...(certsUrl ? { certsUrl } : {}) }); } catch (error) { return refusal((error as Error).message, (error as Error).message, "Set ACON_ACCESS_TEAM to a valid Access team domain"); }
     const verifyAccess = async (req: Request): Promise<VerifiedAccessIdentity | null> => {
       const jwt = req.headers.get("cf-access-jwt-assertion");
       if (!jwt) return null;
@@ -192,10 +206,10 @@ function authConfig(args: ServeArgs, env: Record<string, string | undefined>, ce
     } };
   }
   if (tokenFile) {
-    const check = bearerVerifier(tokenFile);
-    if (typeof check === "string") return check;
+    const check = bearerVerifierDetail(tokenFile);
+    if (typeof check !== "function") return check;
     return { hostname, port, origins, hosts, mode: "bearer", authenticate: async (req) => check(req.headers.get("authorization")) ? "bearer" : null, checkToken: (token) => check(`Bearer ${token}`) };
   }
-  if (!loopback) return `refusing to serve on ${hostname} without authentication: set ACON_ACCESS_TEAM and ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN_FILE (bearer token)`;
+  if (!loopback) return refusal(`refusing to serve on ${hostname} without authentication: set ACON_ACCESS_TEAM and ACON_ACCESS_AUD (Cloudflare Access) or ACON_TOKEN_FILE (bearer token)`, `refusing to serve on ${hostname} without authentication`, "Set ACON_ACCESS_TEAM and ACON_ACCESS_AUD or ACON_TOKEN_FILE");
   return { hostname, port, origins, hosts, mode: "loopback", authenticate: async () => "loopback" };
 }
