@@ -54,7 +54,7 @@ export function createOutput(options: OutputOptions = {}) {
     warning: (message: string, next?: string) => {
       const value = new Report(columns(stderr), ascii);
       value.bullet("warn", terminalText(message, { singleLine: true }));
-      if (next) value.bullet("next", terminalText(next, { singleLine: true }));
+      if (next) value.next(terminalText(next, { singleLine: true }));
       const lines = value.render(color(stderr));
       if (lines.length) stderr.write(`${lines.join("\n")}\n`);
     },
@@ -408,7 +408,7 @@ export async function main(argv: string[]): Promise<number> {
         report.kv([["Address", `${serve.hostname}:${server.port}`], ["Auth", serve.mode === "access" ? "Cloudflare Access" : serve.mode === "bearer" ? "bearer token" : "loopback, no auth"], ["Read-only", serve.readOnly ? "yes" : "no"], ["Origins", serve.origins.join(", ") || "none"], ["PID", process.pid]]);
       });
       if (scan.error) output.warning(scan.error, "acon plugins");
-      for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? "acon plugins");
+      for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? (/^[a-z][a-z0-9-]{0,31}$/.test(p.tool) ? `${p.tool} setup` : "acon plugins"));
     }
     return await new Promise<number>(() => {});
   }
@@ -421,10 +421,10 @@ export async function main(argv: string[]): Promise<number> {
       report.bullet("ok", "Console ready");
       // cli-output#31: the one-time URL must remain copyable at every width.
       report.append([[{ text: url }]]);
-      report.bullet("absent", "The link works once and expires in 60 s; run acon ui again for a new one.");
+      report.note("The link works once and expires in 60 s; run acon ui again for a new one.");
     });
     if (scan.error) output.warning(scan.error, "acon plugins");
-    for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? "acon plugins");
+    for (const p of plugins) if (p.status !== "ready") output.warning(`${p.tool} not loaded (${p.status}): ${p.diagnostic?.message ?? p.reason}`, p.diagnostic?.next ?? (/^[a-z][a-z0-9-]{0,31}$/.test(p.tool) ? `${p.tool} setup` : "acon plugins"));
   }
   if (!flags.has("--no-open")) openBrowser(url);
   return await new Promise<number>(() => {});
