@@ -28,9 +28,10 @@ const reset = () => {
   };
 };
 let listDescription = "Fixture pet";
+let emptyIndex = false;
 const index = () => JSON.stringify({
   version: 1,
-  packages: [
+  packages: emptyIndex ? [] : [
     { kind: "pet", id: "gyul", name: "Gyul", description: listDescription, manifest: "../pets/gyul/pet.json", size: sheet.length + petJson.length, files: { "pet.json": sha(petJson), "spritesheet.png": sha(sheet) } },
     { kind: "pack", id: "office", name: "Office", manifest: "packs/office/pack.json", size: 1, files: { "pack.json": sha(packJson), "floor.png": sha(floor), "desk.glb": sha(glb) } },
   ],
@@ -62,7 +63,7 @@ afterAll(() => server.stop(true));
 
 const roots: string[] = [];
 const home = () => { const d = mkdtempSync(join(tmpdir(), "acon-install-")); roots.push(d); return d; };
-afterEach(() => { reset(); while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
+afterEach(() => { emptyIndex = false; reset(); while (roots.length) rmSync(roots.pop()!, { recursive: true, force: true }); });
 reset();
 const opts = (h: string, more = {}) => ({ home: h, index: `${base}/console/index.json`, ...more });
 const leftovers = (h: string) => existsSync(join(h, "console", ".install")) ? readdirSync(join(h, "console", ".install")) : [];
@@ -105,10 +106,11 @@ describe("install by name (AC1)", () => {
     const h = home(); const cwd = home();
     const decoy = join(cwd, "gyul");
     mkdirSync(decoy); writeFileSync(join(decoy, "pet.json"), petJson); writeFileSync(join(decoy, "spritesheet.png"), pngImage(6, 6));
-    const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", "gyul"], { cwd, env: { ...process.env, AGENTHUB_HOME: h, ACON_ASSETS_INDEX: `${base}/console/index.json` }, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", "gyul"], { cwd, env: { ...process.env, AGENTHUB_HOME: h, ACON_ASSETS_INDEX: `${base}/console/index.json`, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" }, stdout: "pipe", stderr: "pipe" });
     const out = await new Response(proc.stdout).text();
     expect(await proc.exited).toBe(0);
     expect(out).toContain("Every file matched its sha256");
+    expect(out).toContain("✓  Installed pet gyul");
     expect(readFileSync(join(h, "console", "pets", "gyul", "spritesheet.png")).equals(sheet)).toBe(true);
   });
 
@@ -137,8 +139,10 @@ describe("install by URL and directory (AC2)", () => {
     const h = home();
     const r = await installPackage(`${base}/pets/gyul/pet.json`, opts(h));
     expect(r.verified).toBe(false);
-    const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", `${base}/console/packs/office/pack.json`], { env: { ...process.env, AGENTHUB_HOME: h }, stdout: "pipe", stderr: "pipe" });
-    expect(await new Response(proc.stdout).text()).toContain("Not hash-verified");
+    const proc = Bun.spawn(["bun", join(import.meta.dir, "..", "bin", "acon.js"), "install", `${base}/console/packs/office/pack.json`], { env: { ...process.env, AGENTHUB_HOME: h, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" }, stdout: "pipe", stderr: "pipe" });
+    const out = await new Response(proc.stdout).text();
+    expect(out).toContain("Not hash-verified");
+    expect(out).toContain("⚠  Not hash-verified");
     expect(await proc.exited).toBe(0);
   });
 
@@ -233,4 +237,14 @@ test("install list goldens", async () => {
   expect(await run(["--color=never"])).toBe(` acon Packages  ${pkg.version}\n\n▸ Index\n  Source:  <origin>/console/index.json\n\n▸ Packages (2)\n  KIND  ID      SIZE  NAME\n  pet   gyul    1 KB  Gyul: Fixture pet\n  pack  office  1 KB  Office\n  →  acon install gyul\n`);
   expect(await run(["--color=never"], "C")).toBe(` acon Packages  ${pkg.version}\n\n> Index\n  Source:  <origin>/console/index.json\n\n> Packages (2)\n  KIND  ID      SIZE  NAME\n  pet   gyul    1 KB  Gyul: Fixture pet\n  pack  office  1 KB  Office\n  -> acon install gyul\n`);
   expect(await run(["--color=always"])).toBe(`${ROLE_SGR.header} acon Packages${SGR_RESET}${ROLE_SGR.hint}  ${pkg.version}${SGR_RESET}\n\n${ROLE_SGR.section}▸ Index${SGR_RESET}\n  ${ROLE_SGR.key}Source:${SGR_RESET}  <origin>/console/index.json\n\n${ROLE_SGR.section}▸ Packages${SGR_RESET}${ROLE_SGR.hint} (2)${SGR_RESET}\n  ${ROLE_SGR.key}KIND${SGR_RESET}  ${ROLE_SGR.key}ID    ${SGR_RESET}  ${ROLE_SGR.key}SIZE${SGR_RESET}  ${ROLE_SGR.key}NAME${SGR_RESET}\n  pet   gyul    1 KB  Gyul: Fixture pet\n  pack  office  1 KB  Office\n  ${ROLE_SGR.accent}→ ${SGR_RESET} acon install gyul\n`);
+});
+
+
+test("an empty package index has no install next step", async () => {
+  emptyIndex = true;
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, "..", "bin", "acon.js"), "install", "--list", "--color=never"], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", AGENTHUB_HOME: home(), ACON_ASSETS_INDEX: `${base}/console/index.json`, LANG: "en_US.UTF-8", COLUMNS: "80" }, stdout: "pipe", stderr: "pipe" });
+  const text = await new Response(proc.stdout).text();
+  expect(await proc.exited).toBe(0);
+  expect(text).toContain("No packages found.");
+  expect(text).not.toContain("acon install");
 });
